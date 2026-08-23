@@ -1,0 +1,208 @@
+.
+├── .dockerignore
+├── .env.example
+├── .gitignore
+├── .gitkeep
+├── .manus
+│   └── db
+│       ├── db-query-1768037447350.json
+│       ├── db-query-1768038851170.json
+│       ├── db-query-1768038907691.json
+│       ├── db-query-1768039365058.json
+│       ├── db-query-1768299374377.json
+│       ├── db-query-1768301199064.json
+│       ├── db-query-1768301220455.json
+│       ├── db-query-1768301305240.json
+│       ├── db-query-1768301401758.json
+│       ├── db-query-1768301470986.json
+│       ├── db-query-1768301624265.json
+│       ├── db-query-1768301629877.json
+│       ├── db-query-1768306481246.json
+│       ├── db-query-1768306498255.json
+│       ├── db-query-1768306546121.json
+│       ├── db-query-1768309712440.json
+│       ├── db-query-1768309736089.json
+│       ├── db-query-1768310273635.json
+│       ├── db-query-1768310291768.json
+│       ├── db-query-error-1768037357457.json
+│       ├── db-query-error-1768299238870.json
+│       ├── db-query-error-1768299366120.json
+│       ├── db-query-error-1768306443312.json
+│       ├── db-query-error-1768306489129.json
+│       ├── db-query-error-1768306494106.json
+│       ├── db-query-error-1768306501826.json
+│       └── db-query-error-1768310257198.json
+├── .prettierignore
+├── .prettierrc
+├── CHECKLIST_COMPLETO.md
+├── CORRECAO_SUCESSO.md
+├── Dockerfile
+├── GUIA_DE_TESTES.md
+├── HIERARCHICAL_AUTH_PLAN.md
+├── PROJECT_STRUCTURE.txt
+├── README.md
+├── README_DEPLOY.md
+├── RELATORIO_FINAL_CHECKLIST.md
+├── SISTEMA_ALERTAS_COMPLETO.md
+├── TESTE_BADGE_RISCO.md
+├── client
+│   ├── index.html
+│   ├── public
+│   │   └── .gitkeep
+│   └── src
+│       ├── App.tsx
+│       ├── _core
+│       │   └── hooks
+│       ├── components
+│       │   ├── AIChatBox.tsx
+│       │   ├── CalendarSidebar.tsx
+│       │   ├── CalendarView.tsx
+│       │   ├── DashboardLayout.tsx
+│       │   ├── DashboardLayoutSkeleton.tsx
+│       │   ├── ErrorBoundary.tsx
+│       │   ├── EventModal.tsx
+│       │   ├── GlobalSearch.tsx
+│       │   ├── ManusDialog.tsx
+│       │   ├── Map.tsx
+│       │   ├── ReportTemplateModal.tsx
+│       │   ├── SendAnamneseDialog.tsx
+│       │   └── ui
+│       ├── const.ts
+│       ├── contexts
+│       │   └── ThemeContext.tsx
+│       ├── hooks
+│       │   ├── useComposition.ts
+│       │   ├── useMobile.tsx
+│       │   └── usePersistFn.ts
+│       ├── index.css
+│       ├── lib
+│       │   ├── exportPDF.ts
+│       │   ├── trpc.ts
+│       │   └── utils.ts
+│       ├── main.tsx
+│       ├── pages
+│       │   ├── AnamnesePdf.tsx
+│       │   ├── AnamneseView.tsx
+│       │   ├── Audit.tsx
+│       │   ├── AuditDashboard.tsx
+│       │   ├── CalendarPage.tsx
+│       │   ├── ClientProfile.tsx
+│       │   ├── Clients.tsx
+│       │   ├── ComponentShowcase.tsx
+│       │   ├── Dashboard.tsx
+│       │   ├── Home.tsx
+│       │   ├── NewClient.tsx
+│       │   ├── NotFound.tsx
+│       │   ├── Notifications.tsx
+│       │   ├── PublicAnamnese.tsx
+│       │   ├── Reports.tsx
+│       │   ├── RiskAlerts.tsx
+│       │   ├── Schedule.tsx
+│       │   ├── Settings.tsx
+│       │   └── Users.tsx
+│       └── styles
+│           └── fullcalendar-dark.css
+├── components.json
+├── database
+│   └── schema.sql
+├── docker-compose.yml
+├── drizzle
+│   ├── 0000_special_boomer.sql
+│   ├── 0001_adorable_misty_knight.sql
+│   ├── 0002_lumpy_bill_hollister.sql
+│   ├── 0003_nasty_marvel_apes.sql
+│   ├── 0004_brown_skullbuster.sql
+│   ├── 0005_optimal_ronan.sql
+│   ├── 0006_superb_caretaker.sql
+│   ├── 0007_handy_naoko.sql
+│   ├── 0008_worried_santa_claus.sql
+│   ├── 0009_faithful_preak.sql
+│   ├── 0010_charming_zemo.sql
+│   ├── 0011_chilly_the_spike.sql
+│   ├── 0012_famous_micromacro.sql
+│   ├── 0013_cheerful_guardian.sql
+│   ├── 0014_flaky_jimmy_woo.sql
+│   ├── 0015_shallow_jane_foster.sql
+│   ├── 0017_overrated_gorgon.sql
+│   ├── 0018_spooky_sumo.sql
+│   ├── meta
+│   │   ├── 0000_snapshot.json
+│   │   ├── 0001_snapshot.json
+│   │   ├── 0002_snapshot.json
+│   │   ├── 0003_snapshot.json
+│   │   ├── 0004_snapshot.json
+│   │   ├── 0005_snapshot.json
+│   │   ├── 0006_snapshot.json
+│   │   ├── 0007_snapshot.json
+│   │   ├── 0008_snapshot.json
+│   │   ├── 0009_snapshot.json
+│   │   ├── 0010_snapshot.json
+│   │   ├── 0011_snapshot.json
+│   │   ├── 0012_snapshot.json
+│   │   ├── 0013_snapshot.json
+│   │   ├── 0014_snapshot.json
+│   │   ├── 0015_snapshot.json
+│   │   ├── 0016_snapshot.json
+│   │   ├── 0017_snapshot.json
+│   │   ├── 0018_snapshot.json
+│   │   └── _journal.json
+│   ├── relations.ts
+│   └── schema.ts
+├── drizzle.config.ts
+├── package.json
+├── patches
+│   └── wouter@3.7.1.patch
+├── pnpm-lock.yaml
+├── server
+│   ├── _core
+│   │   ├── context.ts
+│   │   ├── cookies.ts
+│   │   ├── dataApi.ts
+│   │   ├── env.ts
+│   │   ├── imageGeneration.ts
+│   │   ├── index.ts
+│   │   ├── llm.ts
+│   │   ├── localAuth.ts
+│   │   ├── map.ts
+│   │   ├── notification.ts
+│   │   ├── oauth.ts
+│   │   ├── sdk.ts
+│   │   ├── systemRouter.ts
+│   │   ├── trpc.ts
+│   │   ├── types
+│   │   │   ├── cookie.d.ts
+│   │   │   └── manusTypes.ts
+│   │   ├── vite.ts
+│   │   └── voiceTranscription.ts
+│   ├── anamnesis.test.ts
+│   ├── audit-dashboard.test.ts
+│   ├── audit-expanded.test.ts
+│   ├── audit-pdf-export.test.ts
+│   ├── audit.test.ts
+│   ├── auditPdfGenerator.ts
+│   ├── auth.logout.test.ts
+│   ├── clients.test.ts
+│   ├── conflicts.test.ts
+│   ├── db.ts
+│   ├── forms.test.ts
+│   ├── gallery.test.ts
+│   ├── report-templates.test.ts
+│   ├── riskAssessment.ts
+│   ├── routers.ts
+│   ├── search-period.test.ts
+│   ├── search.test.ts
+│   ├── storage.ts
+│   └── users.test.ts
+├── shared
+│   ├── _core
+│   │   └── errors.ts
+│   ├── anamnese.schema.json
+│   ├── const.ts
+│   └── types.ts
+├── test-isolation.mjs
+├── todo.md
+├── tsconfig.json
+├── vite.config.ts
+└── vitest.config.ts
+
+23 directories, 182 files

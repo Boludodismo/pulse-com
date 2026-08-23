@@ -1,0 +1,45 @@
+# Project TODO
+
+- [x] Inspecionar a estrutura atual do módulo de estoque e os padrões visuais do projeto.
+- [x] Pesquisar marcas usadas no mercado brasileiro e especificações técnicas verificáveis por categoria de insumo de tatuagem.
+- [x] Definir a taxonomia do catálogo, os campos técnicos, as regras de busca e o fluxo de cadastro.
+- [x] Documentar e salvar as regras de busca do catálogo técnico, com campos pesquisáveis, filtros e comportamento por marca, linha e SKU.
+- [x] Documentar e salvar o fluxo de cadastro que conecta catálogo, lote, validade, fornecedor e status de evidência técnica ao estoque.
+- [x] Preparar uma prévia visual e uma especificação funcional para aprovação do usuário, sem alterar dados persistentes.
+- [x] Verificar a imagem final da prévia do catálogo técnico e consolidar a visualização para apresentação.
+- [x] Apresentar a prévia visual e a especificação funcional ao usuário, explicitando o estado atual e a proposta antes da implementação.
+- [ ] Implementar o catálogo de materiais, a busca e o cadastro somente após aprovação explícita da prévia.
+- [ ] Cobrir a implementação aprovada com testes, validar a interface e salvar uma versão publicada.
+- [x] Pesquisar modelos reais, variações e especificações por SKU para cada marca e categoria prioritária de material.
+- [x] Organizar cartuchos por marca, linha, configuração, quantidade de agulhas, diâmetro, taper e indicação de aplicação.
+- [x] Organizar tintas, batoques e os demais insumos por marca, modelo/apresentação e especificações publicadas.
+- [x] Atualizar o arquivo de catálogo dinâmico e a prévia visual para refletir a navegação granular por modelos.
+- [x] Salvar um checkpoint com a curadoria granular, a auditoria e a prévia atualizada.
+- [x] Apresentar a versão ampliada para nova aprovação antes de implementar no estoque.
+- [x] Confirmar que a proposta exibe a prévia granular vinculada e não a versão resumida anterior.
+- [x] Verificar a imagem final da prévia granular antes de consolidar a apresentação.
+- [x] Mapear os fornecedores atualmente cadastrados e sua relação disponível com marcas, itens e categorias.
+- [x] Expandir o catálogo de cartuchos por marca, linha, família, configuração, pontas, diâmetro, taper e apresentação.
+- [x] Confirmar a consolidação do arquivo aprofundado de cartuchos com as lacunas por SKU preservadas.
+- [x] Integrar o aprofundamento de cartuchos aos materiais de apresentação e à prévia revisada.
+- [x] Definir busca combinada por marca e modelo com resultado técnico e fornecedores cadastrados compatíveis.
+- [x] Confirmar a especificação salva da busca por marca, modelo e fornecedor.
+- [x] Atualizar a prévia visual e a proposta para exibir filtros, tabela de variações e painel de fornecedores.
+- [x] Verificar a imagem final da prévia profissional, incluindo filtros por marca/modelo/fornecedor, tabela de variações e painel de fornecedores.
+- [x] Apresentar a revisão de cartuchos e fornecedores para aprovação antes da implementação.
+- [x] Criar tabelas de marcas, linhas, variações técnicas e portfólio de fornecedores, mantendo o estoque atual intacto.
+- [x] Popular a primeira base de cartuchos pesquisados com marca, linha, SKU, configuração, pontas, diâmetro, taper, apresentação, aplicação e evidência.
+- [x] Expor procedimentos de catálogo para busca combinada, filtros técnicos e fornecedores vinculados.
+- [x] Garantir consulta direta de qualquer variação por ID, sem depender do limite de paginação da busca.
+- [x] Testar a adição ao estoque com uma variação além da primeira página de resultados e revalidar a API.
+- [x] Revalidar os tipos e o teste isolado do catálogo após a consulta direta por ID, registrando a limitação dos testes legados concorrentes se necessária.
+- [x] Construir a aba Catálogo técnico no estoque com busca, filtros, tabela de variações, painel de fornecedores e vínculo ao cadastro de material.
+- [x] Permitir cadastrar e validar o portfólio de marca/linha/SKU de cada fornecedor.
+- [x] Criar e executar testes de dados, busca, fornecedores e fluxo de adicionar ao estoque.
+- [ ] Validar visualmente o catálogo técnico em uma sessão sem cache após a publicação da versão.
+- [ ] Salvar o checkpoint publicado da implementação do catálogo técnico e fornecedores.
+- [ ] Corrigir a renderização da rota de estoque e comprovar no navegador que a aba Catálogo técnico lista resultados.
+- [ ] Restaurar e validar na interface os fluxos de criar, atualizar e desativar portfólio de fornecedor por marca, linha e SKU.
+- [ ] Adicionar e executar teste integrado do fluxo de busca técnica, seleção de fornecedor e adição ao estoque.
+- [x] Corrigir a montagem pública da rota de estoque, que voltou a exibir a tela de autenticação em sessão sem login.
+- [x] Validar tipos, testes unitários de busca/criação/vínculo e compilação de produção do catálogo técnico.

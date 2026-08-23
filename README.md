@@ -1,803 +1,661 @@
-Analise o arquivo ZIP anexado e coloque o sistema em funcionamento como uma aplicação SaaS completa para gestão de estúdios e profissionais de tatuagem.
+# 🎨 Tattoo Studio CRM - Sistema de Gestão para Estúdios de Tatuagem
+
+Sistema completo de gestão para estúdios de tatuagem com autenticação hierárquica, isolamento de dados entre estúdios e funcionalidades completas de CRM.
+
+---
+
+## 📋 Índice
+
+- [Sobre o Projeto](#sobre-o-projeto)
+- [Tecnologias Utilizadas](#tecnologias-utilizadas)
+- [Estrutura do Projeto](#estrutura-do-projeto)
+- [Pré-requisitos](#pré-requisitos)
+- [Instalação](#instalação)
+- [Configuração](#configuração)
+- [Executando o Projeto](#executando-o-projeto)
+- [Funcionalidades](#funcionalidades)
+- [Arquitetura](#arquitetura)
+- [Banco de Dados](#banco-de-dados)
+- [Testes](#testes)
+- [Deploy](#deploy)
+- [Contribuindo](#contribuindo)
+
+---
+
+## 🎯 Sobre o Projeto
+
+Sistema de CRM desenvolvido especificamente para estúdios de tatuagem, oferecendo gestão completa de clientes, agendamentos, colaboradores e relatórios. O sistema implementa autenticação hierárquica com 3 níveis de acesso e isolamento total de dados entre estúdios.
+
+### **Níveis Hierárquicos:**
+
+1. **SUPERADMIN**: Acesso global a todos os estúdios
+2. **ADMIN**: Acesso total ao próprio estúdio
+3. **COLLABORATOR**: Acesso restrito aos próprios clientes
+
+---
+
+## 🛠️ Tecnologias Utilizadas
+
+### **Frontend**
+- **React 19** - Biblioteca UI
+- **TypeScript** - Tipagem estática
+- **Vite** - Build tool e dev server
+- **TailwindCSS 4** - Framework CSS
+- **shadcn/ui** - Componentes UI
+- **Wouter** - Roteamento
+- **tRPC Client** - Cliente type-safe para API
+- **React Query** - Gerenciamento de estado servidor
+
+### **Backend**
+- **Node.js 22** - Runtime JavaScript
+- **Express 4** - Framework web
+- **tRPC 11** - API type-safe
+- **Drizzle ORM** - ORM TypeScript-first
+- **MySQL/TiDB** - Banco de dados
+- **SuperJSON** - Serialização de dados
+- **Vitest** - Framework de testes
+
+### **Autenticação**
+- **Manus OAuth** - Sistema de autenticação OAuth
+- **JWT** - Tokens de sessão
+
+### **Infraestrutura**
+- **Docker** - Containerização
+- **pnpm** - Gerenciador de pacotes
+- **ESLint** - Linter
+- **TypeScript** - Type checking
+
+---
+
+## 📁 Estrutura do Projeto
+
+```
+tattoo_crm/
+├── client/                    # Frontend React
+│   ├── src/
+│   │   ├── components/       # Componentes React reutilizáveis
+│   │   │   ├── ui/          # Componentes base (shadcn/ui)
+│   │   │   ├── DashboardLayout.tsx
+│   │   │   ├── GlobalSearch.tsx
+│   │   │   └── ...
+│   │   ├── pages/           # Páginas da aplicação
+│   │   │   ├── Dashboard.tsx
+│   │   │   ├── Clients.tsx
+│   │   │   ├── Schedule.tsx
+│   │   │   └── ...
+│   │   ├── hooks/           # Custom React hooks
+│   │   ├── contexts/        # React contexts
+│   │   ├── lib/            # Utilitários e configurações
+│   │   │   ├── trpc.ts     # Cliente tRPC
+│   │   │   └── utils.ts
+│   │   ├── App.tsx         # Componente raiz
+│   │   ├── main.tsx        # Entry point
+│   │   └── index.css       # Estilos globais
+│   ├── public/             # Arquivos estáticos
+│   └── index.html          # HTML base
+│
+├── server/                   # Backend Node.js
+│   ├── _core/              # Núcleo do sistema
+│   │   ├── trpc.ts         # Configuração tRPC
+│   │   ├── context.ts      # Context builder
+│   │   ├── oauth.ts        # Autenticação OAuth
+│   │   ├── env.ts          # Variáveis de ambiente
+│   │   ├── llm.ts          # Integração LLM
+│   │   ├── notification.ts # Sistema de notificações
+│   │   └── ...
+│   ├── routers.ts          # Rotas tRPC principais
+│   ├── db.ts               # Queries e helpers do banco
+│   ├── storage.ts          # Integração S3
+│   └── *.test.ts           # Testes unitários
+│
+├── drizzle/                 # Migrations e schema do banco
+│   ├── schema.ts           # Schema TypeScript
+│   ├── relations.ts        # Relacionamentos
+│   ├── meta/               # Metadata das migrations
+│   └── *.sql               # Arquivos de migration
+│
+├── shared/                  # Código compartilhado
+│   ├── const.ts            # Constantes
+│   ├── types.ts            # Tipos TypeScript
+│   └── _core/              # Utilitários compartilhados
+│
+├── database/                # Schema SQL exportado
+│   └── schema.sql          # DDL completo do banco
+│
+├── package.json            # Dependências raiz
+├── vite.config.ts          # Configuração Vite
+├── drizzle.config.ts       # Configuração Drizzle ORM
+├── tsconfig.json           # Configuração TypeScript
+├── vitest.config.ts        # Configuração Vitest
+├── .env.example            # Exemplo de variáveis de ambiente
+├── .gitignore              # Arquivos ignorados pelo Git
+└── README.md               # Este arquivo
+```
+
+---
+
+## ✅ Pré-requisitos
+
+Antes de começar, certifique-se de ter instalado:
+
+- **Node.js** >= 22.0.0
+- **pnpm** >= 9.0.0 (ou npm/yarn)
+- **MySQL** >= 8.0 ou **TiDB** (compatível com MySQL)
+- **Git** (para versionamento)
+
+### **Instalação do pnpm (se necessário):**
+
+```bash
+npm install -g pnpm
+```
+
+---
 
-OBJETIVO PRINCIPAL
+## 🚀 Instalação
 
-O sistema é o Tatueipos CRM, um CRM/SaaS completo para tatuadores e estúdios de tatuagem.
+### **1. Clone o repositório**
 
-Neste momento, o objetivo principal não é redesenhar, reescrever ou criar um novo sistema. O objetivo é utilizar integralmente o projeto existente no arquivo ZIP, instalar suas dependências, configurar banco de dados e variáveis de ambiente, realizar o build e publicar uma versão funcional para testes.
+```bash
+git clone <url-do-repositorio>
+cd tattoo_crm
+```
 
-Preserve ao máximo:
+### **2. Instale as dependências**
 
-* estrutura atual;
-* frontend;
-* backend;
-* banco de dados;
-* layout;
-* componentes;
-* regras de negócio;
-* rotas;
-* módulos;
-* funcionalidades existentes;
-* sistema de permissões;
-* isolamento de dados entre estúdios.
+```bash
+# Instalar dependências raiz e de todos os workspaces
+pnpm install
+```
 
-Não substitua funcionalidades existentes por versões simplificadas e não recrie o projeto do zero.
+Isso instalará as dependências do frontend, backend e raiz do projeto.
 
-⸻
+---
 
-1. ARQUITETURA EXISTENTE
+## ⚙️ Configuração
 
-O projeto é uma aplicação full-stack.
+### **1. Configure as variáveis de ambiente**
 
-Frontend
+Copie o arquivo `.env.example` para `.env` na raiz do projeto:
 
-* React 19
-* TypeScript
-* Vite
-* Tailwind CSS
-* componentes baseados em shadcn/ui e Radix UI
-* Wouter para roteamento
-* React Query
-* tRPC Client
-* FullCalendar
-* Recharts
-* React Hook Form
+```bash
+cp .env.example .env
+```
 
-Backend
+### **2. Edite o arquivo `.env`**
 
-* Node.js
-* Express
-* TypeScript
-* tRPC
-* Drizzle ORM
-* SuperJSON
-* autenticação por sessão/JWT
+Abra o arquivo `.env` e configure as variáveis necessárias:
 
-Banco de dados
+```env
+# Database
+DATABASE_URL=mysql://user:password@localhost:3306/tattoo_crm
 
-* MySQL compatível com MySQL 8+
-* Drizzle ORM
-* schema já existente no projeto
-* relações entre usuários, estúdios, clientes, artistas, agenda, financeiro, estoque, procedimentos e demais módulos
+# JWT
+JWT_SECRET=your-super-secret-jwt-key-here
 
-Infraestrutura
+# OAuth (Manus)
+OAUTH_SERVER_URL=https://api.manus.im
+VITE_OAUTH_PORTAL_URL=https://auth.manus.im
+VITE_APP_ID=your-app-id
 
-* Dockerfile existente
-* configuração preparada para deploy
-* pnpm como gerenciador de pacotes
-* aplicação executada em produção pelo backend Node/Express, que também disponibiliza o frontend compilado
+# Owner Info
+OWNER_OPEN_ID=your-owner-openid
+OWNER_NAME=Your Name
 
-⸻
+# Manus Built-in APIs
+BUILT_IN_FORGE_API_URL=https://forge.manus.im
+BUILT_IN_FORGE_API_KEY=your-forge-api-key
+VITE_FRONTEND_FORGE_API_KEY=your-frontend-forge-key
+VITE_FRONTEND_FORGE_API_URL=https://forge.manus.im
 
-2. CONCEITO SaaS E MULTI-TENANT
+# Analytics (optional)
+VITE_ANALYTICS_ENDPOINT=https://analytics.example.com
+VITE_ANALYTICS_WEBSITE_ID=your-website-id
 
-O sistema foi desenvolvido para funcionar como SaaS com múltiplos estúdios e usuários.
+# App Config
+VITE_APP_TITLE=POD CRM - Estúdios de Tatuagem
+VITE_APP_LOGO=/logo.png
+```
 
-É obrigatório preservar o isolamento de dados entre os tenants.
+### **3. Configure o banco de dados**
 
-Existem três níveis principais de acesso:
+#### **Opção A: Usando MySQL local**
 
-SUPERADMIN
+```bash
+# Crie o banco de dados
+mysql -u root -p
+CREATE DATABASE tattoo_crm CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+EXIT;
+```
 
-Administrador geral da plataforma.
+#### **Opção B: Usando Docker**
 
-Pode acessar e administrar os diferentes estúdios cadastrados, conforme as regras já existentes no sistema.
+```bash
+docker-compose up -d mysql
+```
 
-ADMIN
+### **4. Aplique o schema no banco**
 
-Administrador de um estúdio específico.
+```bash
+# Opção 1: Usando Drizzle (recomendado)
+pnpm db:push
 
-Possui acesso aos recursos e informações correspondentes ao próprio estúdio.
+# Opção 2: Importando SQL diretamente
+mysql -u root -p tattoo_crm < database/schema.sql
+```
 
-COLLABORATOR
+### **5. (Opcional) Popule com dados de teste**
+
+```bash
+# Execute o script de seed (se disponível)
+node scripts/seed.mjs
+```
+
+---
+
+## 🏃 Executando o Projeto
+
+### **Modo Desenvolvimento**
+
+#### **Opção 1: Rodar tudo junto (recomendado)**
+
+```bash
+# Na raiz do projeto
+pnpm dev
+```
+
+Isso iniciará:
+- Frontend em `http://localhost:5173`
+- Backend em `http://localhost:3000`
 
-Colaborador/tatuador.
+#### **Opção 2: Rodar separadamente**
 
-Possui acesso restrito de acordo com o estúdio, artista associado e permissões existentes.
+**Terminal 1 - Backend:**
+```bash
+pnpm dev:server
+```
 
-Não remover nem enfraquecer essas regras de acesso.
+**Terminal 2 - Frontend:**
+```bash
+pnpm dev:client
+```
 
-⸻
+### **Modo Produção**
 
-3. PRINCIPAIS FUNCIONALIDADES EXISTENTES
+```bash
+# Build do projeto
+pnpm build
 
-Dashboard
+# Iniciar servidor de produção
+pnpm start
+```
 
-O sistema possui dashboard com visão operacional e indicadores do estúdio, incluindo dados relacionados a:
+### **Acessando a aplicação**
 
-* clientes;
-* agendamentos;
-* receita;
-* movimentações;
-* desempenho;
-* clientes relevantes;
-* aniversariantes;
-* alertas;
-* informações operacionais.
+- **Frontend**: http://localhost:5173 (dev) ou http://localhost:3000 (prod)
+- **Backend API**: http://localhost:3000/api/trpc
 
-⸻
+---
 
-4. CLIENTES
+## 🎯 Funcionalidades
 
-O CRM possui gestão de clientes com:
+### **1. Dashboard**
+- Visão geral do estúdio
+- Métricas principais (clientes, agendamentos, receita)
+- Top 5 clientes
+- Aniversariantes do mês
+
+### **2. Gestão de Clientes**
+- CRUD completo de clientes
+- Sistema de fidelidade (Bronze, Prata, Ouro, Platina, Diamante)
+- Histórico de atendimentos
+- Busca e filtros avançados
+- Vinculação com artista responsável
 
-* cadastro;
-* edição;
-* consulta;
-* exclusão conforme permissões;
-* pesquisa;
-* filtros;
-* perfil individual;
-* histórico de atendimentos;
-* observações;
-* vínculo com artista responsável;
-* dados de contato;
-* informações relacionadas aos procedimentos;
-* histórico financeiro;
-* registros de agenda;
-* anamnese;
-* imagens quando aplicável;
-* sistema de fidelidade.
+### **3. Agenda**
+- Gerenciamento de agendamentos (lista)
+- Filtros por status, artista, período
+- Criação, edição e exclusão de agendamentos
+- Indicadores de status (agendado, confirmado, concluído, cancelado)
 
-Existem níveis de fidelidade como:
+### **4. Calendário Visual**
+- Visualização mensal de agendamentos
+- Navegação entre meses
+- Modal com detalhes do agendamento
+- Cores por status
 
-* Bronze;
-* Prata;
-* Ouro;
-* Platina;
-* Diamante.
+### **5. Relatórios**
+- Relatórios financeiros
+- Relatórios de agendamentos
+- Relatórios de clientes
+- Gráficos de performance
+- Exportação para PDF
 
-Preservar os relacionamentos entre clientes, artistas, agenda, procedimentos e financeiro.
+### **6. Notificações**
+- Sistema de notificações em tempo real
+- Alertas de aniversários
+- Lembretes de agendamentos
+- Notificações de sistema
 
-⸻
+### **7. Alertas de Risco**
+- Sistema baseado em fichas de anamnese
+- Níveis de risco (Baixo, Médio, Alto, Crítico)
+- Dashboard de alertas
+- Filtros por nível de risco
 
-5. ARTISTAS / TATUADORES
+### **8. Gestão de Usuários**
+- CRUD de usuários
+- Controle de permissões (superadmin/admin/collaborator)
+- Vinculação de colaborador com artista
+- Ativação/desativação de usuários
 
-Existe módulo próprio para gerenciamento de artistas/tatuadores.
+### **9. Auditoria**
+- Log completo de ações no sistema
+- Filtros por usuário, ação, entidade
+- Exportação de logs
+- Dashboard de auditoria
 
-O sistema deve preservar:
+### **10. Configurações**
+- Configurações do estúdio
+- Preferências do sistema
+- Integrações
 
-* cadastro de artistas;
-* edição;
-* vínculo com usuários;
-* vínculo com clientes;
-* agenda;
-* procedimentos;
-* relatórios;
-* informações profissionais;
-* permissões relacionadas.
+---
 
-⸻
+## 🏗️ Arquitetura
 
-6. AGENDA E AGENDAMENTOS
+### **Frontend (React + Vite)**
 
-O sistema possui agenda completa.
+O frontend é uma SPA (Single Page Application) construída com React 19 e Vite. Utiliza tRPC para comunicação type-safe com o backend.
 
-Inclui:
+**Fluxo de dados:**
+```
+User → React Component → tRPC Hook → tRPC Client → Backend API
+```
 
-* criação de agendamento;
-* edição;
-* exclusão conforme permissões;
-* consulta;
-* filtros;
-* artista responsável;
-* cliente;
-* horário;
-* data;
-* duração;
-* status;
-* observações;
-* acompanhamento do atendimento.
+**Principais bibliotecas:**
+- **React Query**: Cache e sincronização de dados do servidor
+- **Wouter**: Roteamento client-side
+- **TailwindCSS**: Estilização
+- **shadcn/ui**: Componentes UI prontos
 
-Os agendamentos possuem status como:
+### **Backend (Node.js + Express + tRPC)**
 
-* agendado;
-* confirmado;
-* concluído;
-* cancelado;
+O backend é uma API REST/tRPC construída com Node.js e Express. Utiliza Drizzle ORM para acesso ao banco de dados.
 
-e outros estados existentes no código.
+**Fluxo de requisição:**
+```
+HTTP Request → Express Middleware → tRPC Router → Procedure → DB Query → Response
+```
 
-Existe também visualização em calendário utilizando FullCalendar, incluindo diferentes formas de visualização e identificação visual de compromissos.
+**Principais componentes:**
+- **tRPC Routers**: Definição de endpoints type-safe
+- **Middlewares**: Autenticação, autorização, logging
+- **Drizzle ORM**: Acesso type-safe ao banco de dados
+- **Context**: Injeção de dependências (user, db, etc.)
 
-⸻
+### **Autenticação**
 
-7. CONFIRMAÇÃO DE AGENDAMENTO
+O sistema utiliza OAuth 2.0 da Manus para autenticação:
 
-O sistema possui fluxo relacionado à confirmação de agendamento.
+1. Usuário clica em "Sign in"
+2. Redirecionado para portal OAuth da Manus
+3. Após autenticação, retorna com código de autorização
+4. Backend troca código por token JWT
+5. Token armazenado em cookie httpOnly
+6. Cada requisição valida o token e injeta usuário no context
 
-Preservar:
+### **Isolamento de Dados**
 
-* página pública de confirmação quando existente;
-* identificação do agendamento;
-* resposta do cliente;
-* status relacionado;
-* links gerados pelo backend;
-* integração com lembretes.
+Cada estúdio possui um `studioId` único. Todas as queries filtram automaticamente por `studioId` baseado no usuário logado:
 
-A URL pública deverá utilizar o domínio da aplicação em produção e não depender de endereço antigo do Manus.
+- **SUPERADMIN**: Sem filtro (vê todos os estúdios)
+- **ADMIN**: Filtra por `studioId` do usuário
+- **COLLABORATOR**: Filtra por `studioId` + `artistId` do usuário
 
-⸻
+---
 
-8. LEMBRETES E NOTIFICAÇÕES
+## 🗄️ Banco de Dados
 
-Existe sistema de:
+### **Schema**
 
-* notificações;
-* alertas;
-* lembretes de agendamento;
-* notificações de sistema;
-* eventos relacionados aos clientes;
-* aniversários;
-* registros de envio.
+O banco de dados utiliza MySQL 8+ com as seguintes tabelas principais:
 
-Existem processos de backend executados periodicamente para tarefas automáticas.
+- **studios**: Estúdios cadastrados
+- **users**: Usuários do sistema
+- **clients**: Clientes dos estúdios
+- **artists**: Artistas/tatuadores
+- **appointments**: Agendamentos
+- **transactions**: Transações financeiras
+- **auditLogs**: Logs de auditoria
+- **anamnesisRecords**: Fichas de anamnese
+- **notifications**: Notificações do sistema
 
-Esses processos precisam continuar funcionando em produção.
+### **Relacionamentos**
 
-O serviço Node não deve ser transformado em uma hospedagem exclusivamente estática ou serverless incompatível com esses processos.
+```
+studios 1:N users
+studios 1:N clients
+studios 1:N artists
+studios 1:N appointments
 
-⸻
+users N:1 studios
+users N:1 artists (opcional, para collaborators)
 
-9. WHATSAPP E MENSAGENS
+clients N:1 studios
+clients N:1 artists (opcional)
 
-O projeto possui estruturas relacionadas a:
+appointments N:1 studios
+appointments N:1 clients
 
-* integrações WhatsApp;
-* templates de mensagens;
-* fila de mensagens;
-* lembretes;
-* processamento de mensagens;
-* configuração de integração.
+transactions N:1 studios
+transactions N:1 clients
+```
 
-Não remova essas estruturas mesmo que alguma integração externa ainda precise ser configurada posteriormente.
+### **Migrations**
 
-A aplicação deve funcionar mesmo que as credenciais externas do WhatsApp ainda não estejam configuradas.
+O projeto utiliza Drizzle Kit para gerenciar migrations:
 
-⸻
+```bash
+# Gerar nova migration
+pnpm db:generate
 
-10. ANAMNESE
+# Aplicar migrations
+pnpm db:push
 
-Existe módulo de anamnese integrado ao CRM.
+# Ver status das migrations
+pnpm db:check
+```
 
-Inclui estruturas para:
+### **Schema SQL Completo**
 
-* solicitações;
-* preenchimentos;
-* registros;
-* visualização;
-* página pública;
-* associação com cliente;
-* geração/visualização de documento;
-* avaliação de risco.
+O schema completo está disponível em `database/schema.sql` e pode ser importado diretamente no MySQL.
 
-Preservar integralmente esse módulo.
+---
 
-⸻
+## 🧪 Testes
 
-11. ALERTAS DE RISCO
+O projeto utiliza Vitest para testes unitários e de integração.
 
-O sistema possui classificação relacionada à anamnese e risco do atendimento.
+### **Executar testes**
 
-Existem níveis como:
+```bash
+# Rodar todos os testes
+pnpm test
 
-* baixo;
-* médio;
-* alto;
-* crítico.
+# Rodar testes em modo watch
+pnpm test:watch
 
-O CRM possui tela própria de alertas e filtros relacionados.
+# Rodar testes com coverage
+pnpm test:coverage
 
-Não alterar a lógica sem primeiro identificar exatamente sua implementação atual.
+# Rodar teste específico
+pnpm test server/auth.logout.test.ts
+```
 
-⸻
+### **Estrutura de testes**
 
-12. PROCEDIMENTOS / SESSÕES DE TATUAGEM
+Os testes estão localizados junto aos arquivos que testam:
 
-Existe módulo específico de procedimentos técnicos.
+```
+server/
+├── routers.ts
+├── auth.logout.test.ts
+├── clients.test.ts
+├── audit.test.ts
+└── ...
+```
 
-O sistema possui estruturas para:
+### **Exemplo de teste**
 
-* procedimentos;
-* sessões;
-* consumíveis utilizados;
-* imagens;
-* eventos;
-* resumo;
-* acompanhamento;
-* registro técnico;
-* associação com cliente;
-* associação com profissional;
-* controle operacional.
+```typescript
+import { describe, it, expect } from 'vitest';
+import { appRouter } from './routers';
 
-Também existem kits de procedimento e itens vinculados aos kits.
+describe('Auth', () => {
+  it('should logout user', async () => {
+    const caller = appRouter.createCaller(mockContext);
+    const result = await caller.auth.logout();
+    expect(result.success).toBe(true);
+  });
+});
+```
 
-Preservar esse módulo e suas relações com estoque e cliente.
+---
 
-⸻
+## 🚢 Deploy
 
-13. ESTOQUE
+### **Deploy com Docker**
 
-Existe módulo de estoque integrado ao sistema.
+```bash
+# Build da imagem
+docker build -t tattoo-crm .
 
-Possui estruturas relacionadas a:
+# Rodar container
+docker run -p 3000:3000 --env-file .env tattoo-crm
+```
 
-* materiais;
-* movimentações;
-* entrada;
-* saída;
-* consumo;
-* produtos;
-* catálogo;
-* marcas;
-* linhas;
-* variantes;
-* fornecedores;
-* procedimentos;
-* kits;
-* compras.
+### **Deploy com Docker Compose**
 
-As baixas e movimentações precisam permanecer relacionadas ao banco oficial do CRM.
+```bash
+# Subir todos os serviços (app + mysql)
+docker-compose up -d
 
-Não criar um segundo sistema de estoque paralelo.
+# Ver logs
+docker-compose logs -f
 
-⸻
+# Parar serviços
+docker-compose down
+```
 
-14. CATÁLOGO DE MATERIAIS
+### **Deploy em Cloud**
 
-O sistema contém estrutura de catálogo detalhado.
+O projeto pode ser deployado em:
 
-Existem entidades para:
+- **Vercel** (frontend estático + serverless functions)
+- **Railway** (fullstack com banco de dados)
+- **Google Cloud Run** (containers)
+- **AWS ECS** (containers)
+- **DigitalOcean App Platform**
 
-* marcas;
-* linhas de produto;
-* variantes;
-* materiais;
-* fornecedores;
-* ofertas de fornecedores.
+### **Variáveis de Ambiente em Produção**
 
-Preservar essas tabelas e suas relações.
+Certifique-se de configurar todas as variáveis do `.env.example` no ambiente de produção.
 
-⸻
+---
 
-15. FORNECEDORES
+## 🤝 Contribuindo
 
-Existe módulo de fornecedores.
+### **Fluxo de Contribuição**
 
-Inclui:
+1. Fork o projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
+5. Abra um Pull Request
 
-* cadastro;
-* consulta;
-* edição;
-* vínculo com catálogo;
-* produtos;
-* ofertas;
-* compras.
+### **Padrões de Código**
 
-⸻
+- **TypeScript**: Sempre tipar variáveis e funções
+- **ESLint**: Seguir regras do `.eslintrc`
+- **Commits**: Usar conventional commits (`feat:`, `fix:`, `docs:`, etc.)
+- **Testes**: Adicionar testes para novas funcionalidades
 
-16. PEDIDOS DE COMPRA
+### **Estrutura de Commits**
 
-O banco possui estruturas para:
+```
+feat: adiciona nova funcionalidade X
+fix: corrige bug Y
+docs: atualiza documentação Z
+refactor: refatora código W
+test: adiciona testes para V
+chore: atualiza dependências
+```
 
-* pedidos de compra;
-* itens dos pedidos;
-* fornecedores;
-* materiais;
-* movimentação correspondente.
+---
 
-Preservar toda essa estrutura.
+## 📝 Scripts Disponíveis
 
-⸻
+```json
+{
+  "dev": "Inicia dev server (frontend + backend)",
+  "dev:client": "Inicia apenas frontend",
+  "dev:server": "Inicia apenas backend",
+  "build": "Build de produção",
+  "start": "Inicia servidor de produção",
+  "test": "Executa testes",
+  "test:watch": "Executa testes em modo watch",
+  "test:coverage": "Executa testes com coverage",
+  "db:push": "Aplica schema no banco",
+  "db:generate": "Gera nova migration",
+  "db:check": "Verifica status das migrations",
+  "lint": "Executa linter",
+  "type-check": "Verifica tipos TypeScript"
+}
+```
 
-17. FINANCEIRO
+---
 
-Existe módulo financeiro integrado ao CRM.
+## 📄 Licença
 
-Possui estrutura para:
+Este projeto é proprietário e confidencial. Todos os direitos reservados.
 
-* transações;
-* receitas;
-* informações financeiras;
-* vínculo com clientes;
-* vínculo com atendimentos;
-* indicadores;
-* relatórios;
-* colaboradores quando aplicável.
+---
 
-Não remover ou simplificar campos existentes.
+## 👥 Autores
 
-⸻
+- **Willian A Cunha** - Proprietário e desenvolvedor principal
 
-18. COLABORADORES E REPASSES
+---
 
-Existem funcionalidades relacionadas a:
+## 📞 Suporte
 
-* taxas de colaboradores;
-* relatórios de colaboradores;
-* valores;
-* repasses;
-* informações relacionadas ao trabalho executado.
+Para suporte, entre em contato através de:
+- Email: [seu-email@exemplo.com]
+- Issues: [GitHub Issues]
 
-Preservar essas regras.
+---
 
-⸻
+## 🔄 Changelog
 
-19. RELATÓRIOS
+### **v1.0.0** (2026-01-13)
+- ✅ Sistema de autenticação hierárquica implementado
+- ✅ Isolamento de dados entre estúdios validado
+- ✅ 10 funcionalidades principais operacionais
+- ✅ Testes unitários implementados
+- ✅ Documentação completa
 
-O sistema possui módulo de relatórios.
+---
 
-Pode incluir:
+## 🎯 Roadmap
 
-* financeiro;
-* clientes;
-* agendamentos;
-* artistas;
-* colaboradores;
-* performance;
-* indicadores;
-* gráficos;
-* modelos de relatório;
-* exportação.
+- [ ] Sistema de cadastro de novos estúdios
+- [ ] Página de registro público
+- [ ] Redesign visual (preto + dourado)
+- [ ] Integração com WhatsApp
+- [ ] App mobile (React Native)
+- [ ] Sistema de pagamentos (Stripe)
+- [ ] Relatórios avançados com BI
 
-Existem recursos relacionados à geração de PDF e planilhas.
+---
 
-O projeto utiliza bibliotecas como:
-
-* jsPDF;
-* jsPDF AutoTable;
-* XLSX;
-* Recharts.
-
-Não remover essas dependências sem verificar seu uso.
-
-⸻
-
-20. AUDITORIA
-
-Existe sistema de auditoria.
-
-O sistema mantém registros relacionados a:
-
-* usuário;
-* ação executada;
-* entidade alterada;
-* histórico;
-* operações realizadas.
-
-Possui telas de auditoria e dashboard correspondente.
-
-Esse mecanismo é importante para um SaaS multiusuário e deve ser preservado.
-
-⸻
-
-21. PESQUISA GLOBAL
-
-Existe funcionalidade de busca no sistema.
-
-Preservar o mecanismo atual de pesquisa e seus filtros.
-
-⸻
-
-22. IMPORTAÇÃO E EXPORTAÇÃO DE CONTATOS
-
-Existe tela relacionada a importação e exportação de contatos.
-
-Preservar essa funcionalidade e suas regras existentes.
-
-⸻
-
-23. CONFIGURAÇÕES DO ESTÚDIO
-
-Existe módulo de configurações relacionado ao estúdio e ao funcionamento do CRM.
-
-Preservar configurações, preferências e integrações já cadastradas no projeto.
-
-⸻
-
-24. AUTENTICAÇÃO
-
-Para este primeiro deploy, utilizar prioritariamente a autenticação local existente no projeto, sem depender do Manus.
-
-Configuração esperada:
-
-AUTH_MODE=local
-
-VITE_AUTH_MODE=local
-
-VITE_APP_ID=tatueipos
-
-O sistema deve permitir criação/inicialização de um administrador local por meio das variáveis:
-
-LOCAL_ADMIN_EMAIL
-
-LOCAL_ADMIN_PASSWORD
-
-LOCAL_ADMIN_NAME
-
-Utilizar um JWT_SECRET seguro.
-
-Não remover estruturas antigas de OAuth se ainda forem utilizadas por partes do sistema. Apenas evitar que o funcionamento inicial dependa do Manus.
-
-⸻
-
-25. BANCO DE DADOS
-
-Utilizar MySQL.
-
-A conexão deve ocorrer por:
-
-DATABASE_URL
-
-No Railway, preferencialmente criar um serviço MySQL dentro do mesmo projeto e utilizar a URL interna fornecida pela plataforma.
-
-O projeto possui um processo preparado para inicializar o banco.
-
-Executar:
-
-pnpm run db:bootstrap
-
-antes da inicialização da aplicação quando necessário.
-
-IMPORTANTE:
-
-Não executar cegamente todo o histórico antigo de migrations em um banco novo antes de verificar sua compatibilidade.
-
-O pacote possui migrations históricas e o objetivo do deploy preparado é inicializar um banco novo utilizando o schema atual.
-
-Não alterar nem excluir dados de um banco existente sem autorização.
-
-⸻
-
-26. VARIÁVEIS DE AMBIENTE PARA O PRIMEIRO TESTE
-
-Configure aproximadamente:
-
-DATABASE_URL=<URL DO MYSQL>
-AUTH_MODE=local
-VITE_AUTH_MODE=local
-VITE_APP_ID=tatueipos
-LOCAL_ADMIN_EMAIL=<EMAIL DO ADMINISTRADOR>
-LOCAL_ADMIN_PASSWORD=<SENHA FORTE>
-LOCAL_ADMIN_NAME=Administrador
-JWT_SECRET=<SEGREDO FORTE E ALEATÓRIO>
-STORAGE_PROVIDER=disabled
-TZ=America/Sao_Paulo
-NODE_ENV=production
-
-A variável:
-
-APP_BASE_URL
-
-deve apontar para a URL pública final.
-
-Enquanto estiver utilizando domínio temporário do Railway, utilizar o endereço público fornecido pela plataforma ou permitir a detecção automática já prevista no projeto.
-
-Posteriormente o domínio principal será:
-
-https://tatueipos.com
-
-⸻
-
-27. STORAGE
-
-Existem recursos de imagens e arquivos no projeto.
-
-Para o primeiro teste, é aceitável:
-
-STORAGE_PROVIDER=disabled
-
-Isso deve permitir testar o núcleo do CRM sem depender do storage original do Manus.
-
-Não excluir o código de armazenamento existente.
-
-Posteriormente poderá ser configurado um provedor compatível com S3, Cloudflare R2 ou serviço equivalente.
-
-⸻
-
-28. DEPENDÊNCIAS ANTIGAS DO MANUS
-
-O projeto foi originalmente desenvolvido utilizando serviços do Manus e pode conter referências residuais relacionadas a:
-
-* OAuth;
-* Forge;
-* storage;
-* mapas;
-* IA;
-* URLs antigas.
-
-Não eliminar essas referências indiscriminadamente.
-
-O objetivo é desacoplar apenas aquilo que impedir a execução independente do CRM.
-
-Para o primeiro teste:
-
-* utilizar autenticação local;
-* deixar storage externo desativado caso necessário;
-* manter funções independentes funcionando;
-* não deixar uma integração opcional impedir a inicialização completa da aplicação.
-
-⸻
-
-29. DEPLOY
-
-O projeto já possui:
-
-* Dockerfile;
-* railway.json;
-* scripts específicos de build;
-* inicialização do banco;
-* endpoint de health check.
-
-Utilize preferencialmente o Dockerfile existente.
-
-O fluxo esperado é:
-
-1. extrair o ZIP;
-2. identificar a raiz correta do projeto;
-3. instalar dependências com pnpm;
-4. configurar MySQL;
-5. configurar variáveis de ambiente;
-6. executar o bootstrap seguro do banco;
-7. realizar build;
-8. iniciar o backend Node;
-9. verificar /health;
-10. disponibilizar URL pública;
-11. testar autenticação;
-12. testar os principais módulos.
-
-O comando de produção esperado está relacionado a:
-
-node dist/index.js
-
-O build específico preparado para Railway pode utilizar:
-
-pnpm run build:railway
-
-O pre-deploy:
-
-pnpm run db:bootstrap
-
-⸻
-
-30. HEALTH CHECK
-
-Existe endpoint:
-
-/health
-
-Utilize esse endpoint para confirmar:
-
-* aplicação ativa;
-* disponibilidade do backend;
-* conexão com banco quando prevista pela implementação.
-
-⸻
-
-31. REQUISITOS DE SEGURANÇA
-
-Não exponha em logs ou frontend:
-
-* senha do banco;
-* JWT secret;
-* senha do administrador;
-* chaves privadas;
-* credenciais de APIs.
-
-Não colocar secrets diretamente no código-fonte.
-
-Utilizar variáveis de ambiente.
-
-Preservar:
-
-* isolamento de tenant;
-* validações do backend;
-* autenticação;
-* autorização;
-* permissões;
-* auditoria.
-
-⸻
-
-32. O QUE NÃO DEVE SER FEITO
-
-Não:
-
-* recriar o CRM do zero;
-* substituir o backend por outro framework sem necessidade;
-* migrar MySQL para PostgreSQL apenas por conveniência;
-* transformar o projeto em aplicação somente frontend;
-* remover tRPC;
-* remover Drizzle;
-* remover módulos existentes;
-* apagar migrations ou schema sem análise;
-* alterar identidade visual;
-* modificar layout sem necessidade;
-* renomear estruturas indiscriminadamente;
-* eliminar funcionalidades que apresentarem erro apenas para concluir o deploy;
-* substituir dados reais por mocks;
-* criar um novo sistema paralelo;
-* remover multi-tenancy;
-* remover permissões;
-* remover auditoria;
-* vincular novamente o funcionamento obrigatório ao Manus.
-
-⸻
-
-33. TRATAMENTO DE ERROS
-
-Caso alguma etapa falhe:
-
-1. identificar o erro real nos logs;
-2. localizar o arquivo responsável;
-3. fazer a menor correção necessária;
-4. preservar a arquitetura;
-5. testar novamente;
-6. documentar exatamente o que foi alterado.
-
-Não resolva erros excluindo módulos inteiros.
-
-Não altere regras de negócio sem evidência técnica de que isso é necessário.
-
-⸻
-
-34. VALIDAÇÃO OBRIGATÓRIA APÓS O DEPLOY
-
-Após colocar o projeto no ar, verificar pelo menos:
-
-* página inicial carregando;
-* login local;
-* criação da sessão;
-* permanência da sessão após atualização da página;
-* dashboard;
-* clientes;
-* artistas;
-* agenda;
-* calendário;
-* anamnese;
-* procedimentos;
-* estoque;
-* fornecedores;
-* financeiro;
-* relatórios;
-* notificações;
-* usuários;
-* permissões;
-* auditoria;
-* isolamento por estúdio;
-* acesso às rotas públicas;
-* conexão com MySQL;
-* /health;
-* inexistência de erros críticos no console do navegador;
-* inexistência de erros críticos nos logs do servidor.
-
-⸻
-
-35. RESULTADO ESPERADO
-
-Quero receber uma versão funcional do Tatueipos CRM publicada para testes, utilizando o código existente no ZIP anexado.
-
-A prioridade é:
-
-preservar o sistema atual, fazê-lo funcionar fora do Manus e disponibilizá-lo em uma URL pública para testes.
-
-Não quero uma demonstração fictícia e não quero uma reconstrução simplificada.
-
-Quero o projeto real anexado executando com:
-
-React + Node.js + Express + tRPC + Drizzle + MySQL, mantendo seus módulos e regras de negócio.
-
-Ao finalizar, informe objetivamente:
-
-1. URL pública da aplicação;
-2. status do deploy;
-3. status do MySQL;
-4. se o login está funcionando;
-5. quais variáveis de ambiente foram necessárias;
-6. quais arquivos precisaram ser alterados;
-7. quais funcionalidades foram efetivamente testadas;
-8. quais integrações externas ainda precisam de credenciais;
-9. qualquer erro restante;
-10. próximos passos necessários para conectar tatueipos.com.
-
-Não considere o trabalho concluído apenas porque o build terminou. Considere concluído somente depois que a aplicação estiver acessível, o banco conectado e o login funcional.
+**Desenvolvido com ❤️ para estúdios de tatuagem**
