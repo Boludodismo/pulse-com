@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
   ChevronLeft, ChevronRight, Plus, Edit2, Trash2,
-  Calendar as CalendarIcon, Check, Clock, User, FileText, Pencil, ExternalLink, Stethoscope, Users,
+  Calendar as CalendarIcon, Check, Clock, User, FileText, Pencil, ExternalLink, Stethoscope, Users, TriangleAlert,
 } from "lucide-react";
 import { EventModal } from "@/components/EventModal";
 
@@ -460,6 +460,7 @@ export default function CalendarPage() {
                       className={`absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 overflow-hidden cursor-grab active:cursor-grabbing z-10 transition-opacity hover:opacity-90 ${draggedApt?.id === apt.id ? "opacity-40" : ""}`}
                       style={{ top: `${top}px`, height: `${height}px`, backgroundColor: color + "cc", borderLeft: `3px solid ${color}` }}>
                       <div className="text-white text-[11px] font-semibold truncate leading-tight flex items-center gap-1">
+                        {apt.confirmationAttention === 'pending' && <TriangleAlert className="h-3 w-3 shrink-0 text-yellow-200 fill-amber-500/50" />}
                         {hasPod && <Stethoscope className="h-2.5 w-2.5 shrink-0" />}
                         {apt.clientName || "Cliente"}
                       </div>
@@ -509,6 +510,7 @@ export default function CalendarPage() {
                             onDoubleClick={(e) => { e.stopPropagation(); openEditApt(apt); }}
                             className="text-[10px] text-white px-1 py-0.5 rounded truncate flex items-center gap-1 cursor-pointer hover:opacity-80"
                             style={{ backgroundColor: color + "cc" }}>
+                            {apt.confirmationAttention === 'pending' && <TriangleAlert className="h-2.5 w-2.5 shrink-0 text-yellow-200 fill-amber-500/50" />}
                             {hasPod && <Stethoscope className="h-2 w-2 shrink-0" />}
                             {apt.clientName || "Cliente"}
                           </div>
@@ -591,6 +593,7 @@ export default function CalendarPage() {
                     className={`absolute left-1 right-1 rounded-lg px-2 py-1.5 overflow-hidden cursor-grab active:cursor-grabbing z-10 hover:opacity-90 transition-opacity ${draggedApt?.id === apt.id ? "opacity-40" : ""}`}
                     style={{ top: `${top}px`, height: `${height}px`, backgroundColor: color + "cc", borderLeft: `4px solid ${color}` }}>
                     <div className="text-white text-xs font-semibold truncate flex items-center gap-1">
+                      {apt.confirmationAttention === 'pending' && <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-yellow-200 fill-amber-500/50" />}
                       {hasPod && <Stethoscope className="h-3 w-3 shrink-0" />}
                       {apt.clientName || "Cliente"}
                     </div>
@@ -747,6 +750,21 @@ export default function CalendarPage() {
                 </span>
               )}
             </div>
+            {selectedApt.confirmationAttention === 'pending' && (
+              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 flex items-start gap-2">
+                <TriangleAlert className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-300">Resposta do cliente exige atenção</p>
+                  <p className="text-xs text-gray-300 mt-1">
+                    {selectedApt.confirmationStatus === 'atraso'
+                      ? `Atraso aproximado de ${selectedApt.confirmationDelayMinutes || '?'} minutos. Abra o agendamento para decidir se ainda será possível atender.`
+                      : selectedApt.confirmationStatus === 'reagendar'
+                        ? 'O cliente solicitou reagendamento.'
+                        : 'O cliente informou que não conseguirá comparecer.'}
+                  </p>
+                </div>
+              </div>
+            )}
             {/* Observações */}
             {selectedApt.notes && (
               <div className="bg-white/5 rounded-lg p-3 text-sm text-gray-300">{selectedApt.notes}</div>
