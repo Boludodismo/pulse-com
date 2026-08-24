@@ -44,6 +44,7 @@ import {
   appointmentReminders,
   InsertAppointmentReminder,
   AppointmentReminder,
+  postSaleFollowups,
   collaboratorRates,
   procedureKits,
   procedureKitItems,
@@ -56,6 +57,7 @@ import {
 	supplierCatalogOfferings,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { POST_SALE_STAGES, type PostSaleStage } from "../shared/postSale";
 
 // ============ DATE HELPERS ============
 /** Converte Date | string | null para string ISO (YYYY-MM-DD HH:MM:SS) compatível com MySQL mode:'string' */
@@ -479,6 +481,155 @@ export async function deleteAppointment(id: number) {
   if (!db) throw new Error("Database not available");
   await db.delete(appointments).where(eq(appointments.id, id));
   return { success: true };
+}
+
+// ============ PÓS-VENDA AUTOMÁTICO ============
+
+function addDaysAtTen(dateValue: string, days: number) {
+  const base = new Date(dateValue.replace(" ", "T"));
+  base.setDate(base.getDate() + days);
+  base.setHours(10, 0, 0, 0);
+  return toLocalDateStr(base);
+}
+
+export async function syncPostSaleFollowupsForAppointment(appointment: typeof appointments.$inferSelect) {
+  const database = await getDb();
+  if (!database) return;
+
+  if (appointment.status !== "concluido") {
+    await database.update(postSaleFollowups)
+      .set({ status: "cancelled" })
+      .where(and(
+        eq(postSaleFollowups.appointmentId, appointment.id),
+        inArray(postSaleFollowups.status, ["scheduled", "due", "postponed", "failed"]),
+      ));
+    return;
+  }
+
+  const existing = await database.select().from(postSaleFollowups)
+    .where(eq(postSaleFollowups.appointmentId, appointment.id));
+  const now = toLocalDateStr(new Date());
+
+  for (const item of POST_SALE_STAGES) {
+    const scheduledAt = addDaysAtTen(appointment.date, item.days);
+    const status = scheduledAt <= now ? "due" as const : "scheduled" as const;
+    const found = existing.find((row) => row.stage === item.stage);
+    if (found) {
+      if (!["sent", "completed"].includes(found.status)) {
+        await database.update(postSaleFollowups).set({
+          clientId: appointment.clientId,
+          artistId: appointment.artistId,
+          studioId: appointment.studioId,
+          scheduledAt,
+          status,
+          lastError: null,
+        }).where(eq(postSaleFollowups.id, found.id));
+      }
+    } else {
+      await database.insert(postSaleFollowups).values({
+        appointmentId: appointment.id,
+        clientId: appointment.clientId,
+        artistId: appointment.artistId,
+        studioId: appointment.studioId,
+        stage: item.stage,
+        scheduledAt,
+        status,
+        deliveryMode: "manual",
+      });
+    }
+  }
+}
+
+export async function refreshDuePostSaleFollowups() {
+  const database = await getDb();
+  if (!database) return;
+  await database.update(postSaleFollowups).set({ status: "due" }).where(and(
+    inArray(postSaleFollowups.status, ["scheduled", "postponed"]),
+    lte(postSaleFollowups.scheduledAt, toLocalDateStr(new Date())),
+  ));
+}
+
+export async function listPostSaleFollowups(studioId?: number | null) {
+  const database = await getDb();
+  if (!database) return [];
+  await refreshDuePostSaleFollowups();
+  const query = database.select({
+    id: postSaleFollowups.id,
+    appointmentId: postSaleFollowups.appointmentId,
+    clientId: postSaleFollowups.clientId,
+    artistId: postSaleFollowups.artistId,
+    studioId: postSaleFollowups.studioId,
+    stage: postSaleFollowups.stage,
+    scheduledAt: postSaleFollowups.scheduledAt,
+    status: postSaleFollowups.status,
+    deliveryMode: postSaleFollowups.deliveryMode,
+    message: postSaleFollowups.message,
+    sentAt: postSaleFollowups.sentAt,
+    completedAt: postSaleFollowups.completedAt,
+    lastError: postSaleFollowups.lastError,
+    clientName: clients.name,
+    clientPhone: clients.phone,
+    clientEmail: clients.email,
+    appointmentDate: appointments.date,
+    artistName: appointments.artist,
+    service: appointments.service,
+  }).from(postSaleFollowups)
+    .leftJoin(clients, eq(postSaleFollowups.clientId, clients.id))
+    .leftJoin(appointments, eq(postSaleFollowups.appointmentId, appointments.id));
+  const condition = studioId != null
+    ? and(eq(postSaleFollowups.studioId, studioId), ne(postSaleFollowups.status, "cancelled"))
+    : ne(postSaleFollowups.status, "cancelled");
+  return await query.where(condition).orderBy(postSaleFollowups.scheduledAt);
+}
+
+export async function getPostSaleFollowup(id: number) {
+  const rows = await listPostSaleFollowups();
+  return rows.find((row) => row.id === id);
+}
+
+export async function updatePostSaleFollowup(id: number, data: {
+  status?: "scheduled" | "due" | "sent" | "completed" | "postponed" | "cancelled" | "failed";
+  deliveryMode?: "manual" | "automatic";
+  scheduledAt?: string;
+  message?: string | null;
+  sentAt?: string | null;
+  completedAt?: string | null;
+  lastError?: string | null;
+}) {
+  const database = await getDb();
+  if (!database) throw new Error("Database not available");
+  await database.update(postSaleFollowups).set(data).where(eq(postSaleFollowups.id, id));
+  return { success: true };
+}
+
+export async function listDueAutomaticPostSaleFollowups() {
+  const database = await getDb();
+  if (!database) return [];
+  await refreshDuePostSaleFollowups();
+  return await database.select({
+    id: postSaleFollowups.id,
+    appointmentId: postSaleFollowups.appointmentId,
+    clientId: postSaleFollowups.clientId,
+    stage: postSaleFollowups.stage,
+    message: postSaleFollowups.message,
+    clientName: clients.name,
+    clientPhone: clients.phone,
+    artistName: appointments.artist,
+    service: appointments.service,
+  }).from(postSaleFollowups)
+    .leftJoin(clients, eq(postSaleFollowups.clientId, clients.id))
+    .leftJoin(appointments, eq(postSaleFollowups.appointmentId, appointments.id))
+    .where(and(eq(postSaleFollowups.status, "due"), eq(postSaleFollowups.deliveryMode, "automatic")));
+}
+
+export async function backfillPostSaleFollowups() {
+  const database = await getDb();
+  if (!database) return;
+  const completed = await database.select().from(appointments)
+    .where(eq(appointments.status, "concluido"));
+  for (const appointment of completed) {
+    await syncPostSaleFollowupsForAppointment(appointment);
+  }
 }
 
 export async function checkAppointmentConflicts(
