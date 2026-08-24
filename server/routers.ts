@@ -571,6 +571,7 @@ export const appRouter = router({
           paymentMethod: input.paymentMethod ?? null,
         };
         const result = await db.createAppointment(appointmentData);
+        if (result) await db.syncPostSaleFollowupsForAppointment(result);
 
         // Bug 3: Se sinal já está pago ao criar, gerar transação no caixa
         if (input.depositPaid && input.depositAmount && input.depositAmount > 0) {
@@ -711,6 +712,7 @@ export const appRouter = router({
 
         // Buscar dados depois da atualização
         const appointmentAfter = await db.getAppointmentById(input.id);
+        if (appointmentAfter) await db.syncPostSaleFollowupsForAppointment(appointmentAfter);
         
         // Buscar nome do cliente
         const client = appointmentAfter?.clientId 
@@ -758,6 +760,10 @@ export const appRouter = router({
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
+        const appointmentBefore = await db.getAppointmentById(input.id);
+        if (appointmentBefore) {
+          await db.syncPostSaleFollowupsForAppointment({ ...appointmentBefore, status: "cancelado" });
+        }
         await db.deleteAppointment(input.id);
         
         // Registrar auditoria
@@ -1084,6 +1090,61 @@ export const appRouter = router({
           hasAnamnesis: !!latestAnamnesis,
           clientPhone: client.phone,
         };
+      }),
+  }),
+
+  // ============ PÓS-VENDA AUTOMÁTICO ============
+  postSaleFollowups: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      return await db.listPostSaleFollowups(ctx.user.studioId ?? null);
+    }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["scheduled", "due", "sent", "completed", "postponed", "cancelled", "failed"]).optional(),
+        deliveryMode: z.enum(["manual", "automatic"]).optional(),
+        scheduledAt: z.string().optional(),
+        message: z.string().nullable().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        return await db.updatePostSaleFollowup(id, {
+          ...data,
+          completedAt: data.status === "completed" ? db.toDateStr(new Date()) : undefined,
+        });
+      }),
+
+    sendNow: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const followup = await db.getPostSaleFollowup(input.id);
+        if (!followup) throw new TRPCError({ code: "NOT_FOUND", message: "Acompanhamento não encontrado." });
+        if (!followup.clientPhone) throw new TRPCError({ code: "BAD_REQUEST", message: "Cliente sem WhatsApp cadastrado." });
+        const { buildPostSaleMessage } = await import("../shared/postSale");
+        const { sendAndLog } = await import("./messaging/service");
+        const message = followup.message || buildPostSaleMessage({
+          stage: followup.stage,
+          clientName: followup.clientName,
+          artistName: followup.artistName,
+          service: followup.service,
+        });
+        const result = await sendAndLog({
+          recipientPhone: followup.clientPhone,
+          recipientName: followup.clientName || undefined,
+          recipientType: "client",
+          message,
+          trigger: `post_sale_${followup.stage}`,
+          appointmentId: followup.appointmentId,
+          clientId: followup.clientId,
+        });
+        await db.updatePostSaleFollowup(input.id, result.success ? {
+          status: "sent", sentAt: db.toDateStr(new Date()), lastError: null,
+        } : {
+          status: "failed", lastError: result.error || "Falha no envio",
+        });
+        if (!result.success) throw new TRPCError({ code: "PRECONDITION_FAILED", message: result.error || "Não foi possível enviar." });
+        return { success: true };
       }),
   }),
 
