@@ -77,11 +77,8 @@ function buildWhatsAppMessage(
     `Lembramos que você tem um agendamento:\n` +
     `📅 ${dateStr} às ${timeStr}\n` +
     `✏️ ${apt.service} com ${apt.artist}\n\n` +
-    `Por favor, confirme sua presença:\n` +
-    `✅ Confirmado: ${confirmUrl}&status=confirmado\n` +
-    `❌ Não confirmado: ${confirmUrl}&status=nao_confirmado\n` +
-    `⏰ Atraso: ${confirmUrl}&status=atraso\n` +
-    `🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada`
+    `Responda sobre seu horário de forma rápida:\n${confirmUrl}\n\n` +
+    `Você poderá confirmar, avisar atraso, informar ausência ou solicitar reagendamento.`
   );
 }
 
@@ -313,10 +310,7 @@ async function runIndividualReminders() {
           .replace(/\{horário\}/g, timeStr)
           .replace(/\{serviço\}/g, reminder.service)
           .replace(/\{artista\}/g, reminder.artist)
-          + `\n\n✅ Confirmado: ${confirmUrl}&status=confirmado`
-          + `\n❌ Não confirmado: ${confirmUrl}&status=nao_confirmado`
-          + `\n⏰ Atraso: ${confirmUrl}&status=atraso`
-          + `\n🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada`;
+          + `\n\nResponda sobre seu horário de forma rápida: ${confirmUrl}`;
 
         // Montar link WhatsApp
         const withCountry = normalizeWhatsAppNumber(reminder.clientPhone);
