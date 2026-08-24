@@ -171,7 +171,9 @@ class SDKServer {
     return this.signSession(
       {
         openId,
-        appId: ENV.appId,
+        // Standalone/local deployments do not have a Manus OAuth app ID, but
+        // the signed session payload still requires a stable non-empty value.
+        appId: ENV.appId || (ENV.authMode === "local" ? "local-app" : ""),
         name: options.name || "",
       },
       options
