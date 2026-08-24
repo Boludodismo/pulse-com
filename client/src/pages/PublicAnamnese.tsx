@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRoute } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { useSyncToast } from "@/hooks/useSyncToast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -77,14 +76,11 @@ export default function PublicAnamnese() {
     { enabled: !!token, retry: false }
   );
 
-  const { notifySync } = useSyncToast();
-
   const submitMutation = trpc.anamnese.submitAnamnese.useMutation({
     onSuccess: () => {
       // setIsCompleted primeiro para desmontar o formulário, depois toast
       // no próximo tick para evitar o erro removeChild durante reconciliação do React
       setIsCompleted(true);
-      notifySync("anamnese");
       setTimeout(() => {
         toast.success("Anamnese enviada com sucesso!", {
           description: "Obrigado por preencher. O estúdio receberá suas informações.",
