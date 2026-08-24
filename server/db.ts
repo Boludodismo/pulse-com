@@ -1251,6 +1251,54 @@ export async function getNotificationLogs(limit: number = 50) {
   return result;
 }
 
+/** Registra a resposta pública do cliente e alimenta a Central de Notificações. */
+export async function logAppointmentResponse({
+  appointmentId,
+  clientId,
+  clientName,
+  artistName,
+  responseLabel,
+}: {
+  appointmentId: number;
+  clientId: number;
+  clientName: string;
+  artistName: string;
+  responseLabel: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Banco de dados indisponível");
+
+  await db.insert(notificationLogs).values({
+    type: "appointment_response",
+    appointmentId,
+    clientId,
+    title: `Resposta de ${clientName}`,
+    message: `${clientName} respondeu \"${responseLabel}\" ao agendamento com ${artistName}.`,
+    status: "sent",
+  });
+}
+
+/** Linha do tempo das respostas de confirmação exibida na ficha do cliente. */
+export async function getAppointmentResponseHistory(clientId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db
+    .select({
+      id: notificationLogs.id,
+      appointmentId: notificationLogs.appointmentId,
+      title: notificationLogs.title,
+      message: notificationLogs.message,
+      sentAt: notificationLogs.sentAt,
+    })
+    .from(notificationLogs)
+    .where(and(
+      eq(notificationLogs.clientId, clientId),
+      eq(notificationLogs.type, "appointment_response"),
+    ))
+    .orderBy(desc(notificationLogs.sentAt));
+}
+
 
 /**
  * Busca agendamentos que devem receber lembrete WhatsApp automático.
