@@ -659,6 +659,8 @@ export const appRouter = router({
           artistId: z.number().optional(), // FK opcional para artists.id
           status: z.enum(["agendado", "confirmado", "concluido", "cancelado", "reagendado"]).optional(),
           confirmationStatus: z.enum(["pendente", "confirmado", "nao_confirmado", "atraso", "chegada_antecipada", "reagendar"]).optional(),
+          confirmationDelayMinutes: z.number().min(5).max(180).nullable().optional(),
+          confirmationAttention: z.enum(["none", "pending", "accepted", "resolved", "reschedule"]).optional(),
           notes: z.string().optional(),
           referenceImageUrl: z.string().optional(),
           referenceImageKey: z.string().optional(),
@@ -847,6 +849,7 @@ export const appRouter = router({
           service: appointment.service,
           artist: appointment.artist,
           confirmationStatus: appointment.confirmationStatus || "pendente",
+          confirmationDelayMinutes: appointment.confirmationDelayMinutes,
         };
       }),
 
@@ -856,6 +859,7 @@ export const appRouter = router({
         id: z.number(),
         token: z.string(),
         status: z.enum(["confirmado", "nao_confirmado", "atraso", "reagendar"]),
+        delayMinutes: z.number().min(5).max(180).optional(),
       }))
       .mutation(async ({ input }) => {
         const { createHash, timingSafeEqual } = await import("crypto");
@@ -872,11 +876,14 @@ export const appRouter = router({
         if (receivedBuffer.length !== expectedBuffer.length || !timingSafeEqual(receivedBuffer, expectedBuffer)) {
           throw new TRPCError({ code: "UNAUTHORIZED", message: "Link inválido ou expirado" });
         }
+        if (input.status === "atraso" && !input.delayMinutes) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Informe o tempo aproximado do atraso" });
+        }
 
         const client = await db.getClientById(appointment.clientId);
         const responseLabels = {
           confirmado: "Confirmo o horário",
-          atraso: "Vou atrasar",
+          atraso: `Vou atrasar aproximadamente ${input.delayMinutes || 0} minutos`,
           nao_confirmado: "Não vou conseguir comparecer",
           reagendar: "Preciso reagendar",
         } as const;
@@ -890,6 +897,8 @@ export const appRouter = router({
 
         await db.updateAppointment(input.id, {
           confirmationStatus: input.status,
+          confirmationDelayMinutes: input.status === "atraso" ? input.delayMinutes : null,
+          confirmationAttention: input.status === "confirmado" ? "none" : "pending",
           status: appointmentStatus,
         });
         await db.logAppointmentResponse({
@@ -900,6 +909,34 @@ export const appRouter = router({
           responseLabel: responseLabels[input.status],
         });
         return { success: true, status: input.status };
+      }),
+
+    // Decisão do estúdio/artista sobre uma resposta que exige atenção.
+    resolveConfirmationAttention: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        decision: z.enum(["accept_delay", "reschedule", "resolved"]),
+      }))
+      .mutation(async ({ input }) => {
+        const appointment = await db.getAppointmentById(input.id);
+        if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
+
+        if (input.decision === "accept_delay") {
+          await db.updateAppointment(input.id, {
+            status: "confirmado",
+            confirmationAttention: "accepted",
+          });
+        } else if (input.decision === "reschedule") {
+          await db.updateAppointment(input.id, {
+            status: "reagendado",
+            confirmationStatus: "reagendar",
+            confirmationAttention: "reschedule",
+          });
+        } else {
+          await db.updateAppointment(input.id, { confirmationAttention: "resolved" });
+        }
+
+        return { success: true };
       }),
 
     getResponseHistory: protectedProcedure
