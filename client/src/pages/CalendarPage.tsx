@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
   ChevronLeft, ChevronRight, Plus, Edit2, Trash2,
-  Calendar as CalendarIcon, Check, Clock, User, FileText, Pencil, ExternalLink, Stethoscope, Users, TriangleAlert,
+  Calendar as CalendarIcon, Check, Clock, User, Phone, FileText, Pencil, ExternalLink, Stethoscope, Users, TriangleAlert,
 } from "lucide-react";
 import { EventModal } from "@/components/EventModal";
 
@@ -464,7 +464,8 @@ export default function CalendarPage() {
                         {hasPod && <Stethoscope className="h-2.5 w-2.5 shrink-0" />}
                         {apt.clientName || "Cliente"}
                       </div>
-                      {height > 30 && <div className="text-white/80 text-[10px] truncate">{apt.service || ""}</div>}
+                      {height > 30 && <div className="text-white/85 text-[10px] truncate">{apt.clientPhone || "Sem telefone"}</div>}
+                      {height > 46 && <div className="text-white/70 text-[10px] truncate">{apt.service || ""}</div>}
                     </div>
                   );
                 })}
@@ -512,7 +513,7 @@ export default function CalendarPage() {
                             style={{ backgroundColor: color + "cc" }}>
                             {apt.confirmationAttention === 'pending' && <TriangleAlert className="h-2.5 w-2.5 shrink-0 text-yellow-200 fill-amber-500/50" />}
                             {hasPod && <Stethoscope className="h-2 w-2 shrink-0" />}
-                            {apt.clientName || "Cliente"}
+                            {apt.clientName || "Cliente"} · {apt.clientPhone || "Sem telefone"}
                           </div>
                         );
                       })}
@@ -597,8 +598,8 @@ export default function CalendarPage() {
                       {hasPod && <Stethoscope className="h-3 w-3 shrink-0" />}
                       {apt.clientName || "Cliente"}
                     </div>
-                    {height > 36 && <div className="text-white/80 text-[11px] truncate">{apt.service || ""}</div>}
-                    {height > 52 && <div className="text-white/70 text-[10px]">{aptDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</div>}
+                    {height > 36 && <div className="text-white/85 text-[11px] truncate">{apt.clientPhone || "Sem telefone"}</div>}
+                    {height > 52 && <div className="text-white/70 text-[10px] truncate">{aptDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} · {apt.service || ""}</div>}
                   </div>
                 );
               })}
@@ -707,6 +708,20 @@ export default function CalendarPage() {
               <div>
                 <p className="text-xs text-gray-400">Cliente</p>
                 <p className="font-semibold text-gray-100">{selectedApt.clientName || "—"}</p>
+              </div>
+            </div>
+            {/* Telefone */}
+            <div className="flex items-start gap-3">
+              <Phone className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs text-gray-400">Telefone</p>
+                {selectedApt.clientPhone ? (
+                  <a className="font-semibold text-blue-300 hover:underline" href={`tel:${selectedApt.clientPhone}`}>
+                    {selectedApt.clientPhone}
+                  </a>
+                ) : (
+                  <p className="font-semibold text-gray-100">Sem telefone cadastrado</p>
+                )}
               </div>
             </div>
             {/* Data/hora */}
