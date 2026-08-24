@@ -124,11 +124,8 @@ export default function Notifications() {
         `Olá ${appointment.clientName || "cliente"}! ` +
         `Seu agendamento é dia ${formatDate(appointment.date)} às ${formatTime(appointment.date)} ` +
         `(${appointment.service} com ${appointment.artist}).\n\n` +
-        `Por favor, confirme sua presença:\n` +
-        `✅ Confirmado: ${confirmUrl}&status=confirmado\n` +
-        `❌ Não confirmado: ${confirmUrl}&status=nao_confirmado\n` +
-        `⏰ Atraso: ${confirmUrl}&status=atraso\n` +
-        `🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada`;
+        `Responda sobre seu horário de forma rápida:\n${confirmUrl}\n\n` +
+        `Opções disponíveis: confirmar, avisar atraso, informar que não poderá comparecer ou solicitar reagendamento.`;
       const link = buildWhatsAppLink(appointment.clientPhone, msg);
       setWhatsAppLinks((prev) => ({ ...prev, [appointment.id]: link }));
       window.open(link, "_blank");
@@ -477,6 +474,12 @@ export default function Notifications() {
                               {log.type === "whatsapp_primary" ? "WhatsApp Auto" : "WhatsApp Reenvio"}
                             </Badge>
                           )}
+                          {log.type === "appointment_response" && (
+                            <Badge variant="outline" className="text-orange-500 border-orange-500 text-xs">
+                              <Bell className="mr-1 h-3 w-3" />
+                              Resposta do cliente
+                            </Badge>
+                          )}
                         </div>
                         <div className="text-sm text-muted-foreground">
                           {log.clientName && (
@@ -487,6 +490,9 @@ export default function Notifications() {
                           <div className="mt-1 flex items-center gap-1">
                             <Clock className="h-3 w-3" />{formatDateTime(log.sentAt)}
                           </div>
+                          {log.type === "appointment_response" && log.message && (
+                            <p className="mt-2 text-foreground">{log.message}</p>
+                          )}
                         </div>
                       </div>
                     </div>
