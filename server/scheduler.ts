@@ -8,6 +8,8 @@ import { createHash } from "crypto";
 import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
 import { normalizeWhatsAppNumber } from "../shared/const";
+import { buildPostSaleMessage } from "../shared/postSale";
+import { sendAndLog } from "./messaging/service";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 interface WhatsAppSchedulerStatus {
@@ -336,6 +338,41 @@ async function runIndividualReminders() {
   }
 }
 
+// ── Pós-venda automático ────────────────────────────────────────────────────
+async function runPostSaleFollowups() {
+  try {
+    const followups = await db.listDueAutomaticPostSaleFollowups();
+    for (const followup of followups) {
+      if (!followup.clientPhone) {
+        await db.updatePostSaleFollowup(followup.id, { status: "failed", lastError: "Cliente sem WhatsApp cadastrado" });
+        continue;
+      }
+      const message = followup.message || buildPostSaleMessage({
+        stage: followup.stage,
+        clientName: followup.clientName,
+        artistName: followup.artistName,
+        service: followup.service,
+      });
+      const result = await sendAndLog({
+        recipientPhone: followup.clientPhone,
+        recipientName: followup.clientName || undefined,
+        recipientType: "client",
+        message,
+        trigger: `post_sale_${followup.stage}`,
+        appointmentId: followup.appointmentId,
+        clientId: followup.clientId,
+      });
+      await db.updatePostSaleFollowup(followup.id, result.success ? {
+        status: "sent", sentAt: db.toDateStr(new Date()), lastError: null,
+      } : {
+        status: "failed", lastError: result.error || "Falha no envio automático",
+      });
+    }
+  } catch (error) {
+    console.error("[Scheduler] Erro no pós-venda automático:", error);
+  }
+}
+
 // ── Inicialização ────────────────────────────────────────────────────────────────────────────────────────
 export function startScheduler() {
   console.log("[Scheduler] Iniciando cron jobs de notificações...");
@@ -346,6 +383,9 @@ export function startScheduler() {
     runBirthdayReminders();
     checkWhatsAppSchedule();
     runIndividualReminders();
+    db.backfillPostSaleFollowups()
+      .then(runPostSaleFollowups)
+      .catch((error) => console.error("[Scheduler] Erro ao preparar pós-venda:", error));
   }, 10_000);
 
   // Verificar WhatsApp a cada 5 minutos
@@ -357,6 +397,7 @@ export function startScheduler() {
   // Verificar aniversários e lembretes gerais a cada hora
   setInterval(runAppointmentReminders, 60 * 60 * 1000);
   setInterval(runBirthdayReminders, 60 * 60 * 1000);
+  setInterval(runPostSaleFollowups, 15 * 60 * 1000);
 
-  console.log("[Scheduler] Cron jobs registrados: WhatsApp (5min), lembretes individuais (1min), lembretes (1h), aniversários (1h)");
+  console.log("[Scheduler] Cron jobs registrados: WhatsApp (5min), pós-venda (15min), lembretes individuais (1min), lembretes (1h), aniversários (1h)");
 }
