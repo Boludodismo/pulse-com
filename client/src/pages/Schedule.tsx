@@ -273,9 +273,12 @@ export default function Schedule() {
       if (hiddenArtists.has(apt.artist)) return false;
       const statusMatch = selectedStatus === "all" || apt.status === selectedStatus;
       const artistMatch = selectedArtist === "all" || apt.artist === selectedArtist;
-      const clientName = (clients as any[]).find((c) => c.id === apt.clientId)?.name || "";
+      const client = (clients as any[]).find((c) => c.id === apt.clientId);
+      const clientName = client?.name || "";
+      const clientPhone = client?.phone || "";
       const searchMatch = !q ||
         clientName.toLowerCase().includes(q) ||
+        clientPhone.toLowerCase().includes(q) ||
         (apt.service || "").toLowerCase().includes(q) ||
         (apt.artist || "").toLowerCase().includes(q) ||
         (apt.notes || "").toLowerCase().includes(q) ||
@@ -409,6 +412,11 @@ export default function Schedule() {
   const getClientName = (clientId: number) => {
     const client = (clients as any[]).find((c) => c.id === clientId);
     return client?.name || "Cliente";
+  };
+
+  const getClientPhone = (clientId: number) => {
+    const client = (clients as any[]).find((c) => c.id === clientId);
+    return client?.phone || "Sem telefone";
   };
 
   // ── Título dinâmico do período ────────────────────────────────────────────
@@ -697,15 +705,15 @@ export default function Schedule() {
                       ${draggedAppointment?.id === apt.id ? "opacity-40" : ""}
                     `}
                     style={{ ...style, backgroundColor: color, borderLeft: `3px solid ${color}` }}
-                    title={`${formatTime(apt.date)} — ${getClientName(apt.clientId)} — ${apt.service} (${apt.duration}min)`}
+                    title={`${getClientName(apt.clientId)} — ${getClientPhone(apt.clientId)} — ${apt.service} (${apt.duration}min)`}
                   >
                     <div className="font-semibold truncate flex items-center gap-1">
                       {apt.confirmationAttention === 'pending' && <AlertCircle className="w-3.5 h-3.5 shrink-0 text-yellow-200 fill-amber-500/40" />}
                       {podLinkedMap?.[apt.id] && <Stethoscope className="w-3 h-3 shrink-0 opacity-90" />}
-                      {formatTime(apt.date)}
+                      {getClientName(apt.clientId)}
                     </div>
-                    <div className="truncate opacity-90">{getClientName(apt.clientId)}</div>
-                    <div className="truncate opacity-75 text-[10px]">{apt.service}</div>
+                    <div className="truncate opacity-90">{getClientPhone(apt.clientId)}</div>
+                    <div className="truncate opacity-75 text-[10px]">{formatTime(apt.date)} · {apt.service}</div>
                   </div>
                 );
               })}
@@ -756,12 +764,12 @@ export default function Schedule() {
                         onClick={(e) => handleAppointmentClick(apt, e)}
                         className={`text-xs px-1 py-0.5 rounded truncate cursor-grab active:cursor-grabbing text-white hover:opacity-80 transition-opacity ${draggedAppointment?.id === apt.id ? "opacity-40 scale-95" : ""}`}
                         style={{ backgroundColor: color }}
-                        title={`${formatTime(apt.date)} — ${getClientName(apt.clientId)} — ${apt.service}`}
+                        title={`${getClientName(apt.clientId)} — ${getClientPhone(apt.clientId)} — ${apt.service}`}
                       >
                         <span className="flex items-center gap-1">
                           {apt.confirmationAttention === 'pending' && <AlertCircle className="w-3 h-3 shrink-0 text-yellow-200 fill-amber-500/40" />}
                           {podLinkedMap?.[apt.id] && <Stethoscope className="w-2.5 h-2.5 shrink-0 opacity-90" />}
-                          {formatTime(apt.date)} {getClientName(apt.clientId)}
+                          {getClientName(apt.clientId)} · {getClientPhone(apt.clientId)}
                         </span>
                       </div>
                     );
