@@ -14,6 +14,11 @@ const queryClient = new QueryClient();
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
   if (typeof window === "undefined") return;
+  const authMode = (import.meta.env.VITE_AUTH_MODE as string) || "local";
+
+  // Local authentication is rendered by DashboardLayout. Redirecting to an
+  // OAuth URL here would fail because OAuth variables are not configured.
+  if (authMode === "local") return;
 
   const isUnauthorized = error.message === UNAUTHED_ERR_MSG;
 
