@@ -10,7 +10,7 @@ import { Textarea } from "./ui/textarea";
 import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
 import { useSyncToast } from "../hooks/useSyncToast";
-import { Bell, Plus, Trash2, Send, Clock, CheckCircle, XCircle, MessageSquare, ExternalLink, Loader2, Share2, Copy, CheckCheck, CalendarPlus, Download } from "lucide-react";
+import { Bell, Plus, Trash2, Send, Clock, CheckCircle, XCircle, MessageSquare, ExternalLink, Loader2, Share2, Copy, CheckCheck, CalendarPlus, Download, TriangleAlert } from "lucide-react";
 import { buildWhatsAppLink } from "../../../shared/const";
 
 interface EventModalProps {
@@ -275,6 +275,15 @@ export function EventModal({
     onError: (error) => {
       toast.error(`Erro ao atualizar evento: ${error.message}`);
     },
+  });
+
+  const resolveAttentionMutation = trpc.appointments.resolveConfirmationAttention.useMutation({
+    onSuccess: () => {
+      toast.success("Alerta do agendamento atualizado!");
+      utils.appointments.list.invalidate();
+      onSuccess?.();
+    },
+    onError: (error) => toast.error(`Erro ao atualizar alerta: ${error.message}`),
   });
 
   // Preencher formulário ao editar
@@ -1099,15 +1108,37 @@ export function EventModal({
 
           {/* Resposta de Confirmação do Cliente */}
           {eventId && existingEvent && (existingEvent as any).confirmationStatus && (existingEvent as any).confirmationStatus !== 'pendente' && (
-            <div className="rounded-lg border p-3 bg-muted/30">
+            <div className={`rounded-lg border p-3 space-y-3 ${(existingEvent as any).confirmationAttention === 'pending' ? 'border-amber-500 bg-amber-500/10' : 'bg-muted/30'}`}>
               <p className="text-xs text-muted-foreground mb-1">Resposta do cliente</p>
               <div className="flex items-center gap-2">
+                {(existingEvent as any).confirmationAttention === 'pending' && <TriangleAlert className="h-5 w-5 text-amber-500 shrink-0" />}
                 {(existingEvent as any).confirmationStatus === 'confirmado' && <span className="text-green-600 font-semibold">✅ Confirmado</span>}
                 {(existingEvent as any).confirmationStatus === 'nao_confirmado' && <span className="text-red-600 font-semibold">❌ Não confirmado</span>}
-                {(existingEvent as any).confirmationStatus === 'atraso' && <span className="text-yellow-600 font-semibold">⏰ Atraso</span>}
+                {(existingEvent as any).confirmationStatus === 'atraso' && <span className="text-yellow-600 font-semibold">⏰ Atraso de aproximadamente {(existingEvent as any).confirmationDelayMinutes || '?'} minutos</span>}
                 {(existingEvent as any).confirmationStatus === 'chegada_antecipada' && <span className="text-blue-600 font-semibold">🏃 Chegada antecipada</span>}
                 {(existingEvent as any).confirmationStatus === 'reagendar' && <span className="text-blue-600 font-semibold">🔄 Solicitou reagendamento</span>}
               </div>
+              {(existingEvent as any).confirmationAttention === 'pending' && (
+                <div className="space-y-2">
+                  <p className="text-xs text-amber-700 dark:text-amber-300">Este agendamento precisa da atenção do artista.</p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    {(existingEvent as any).confirmationStatus === 'atraso' && (
+                      <Button type="button" size="sm" variant="outline" disabled={resolveAttentionMutation.isPending}
+                        onClick={() => resolveAttentionMutation.mutate({ id: eventId!, decision: 'accept_delay' })}>
+                        <CheckCircle className="h-4 w-4 mr-1" /> Ainda consigo atender
+                      </Button>
+                    )}
+                    <Button type="button" size="sm" variant="outline" disabled={resolveAttentionMutation.isPending}
+                      onClick={() => resolveAttentionMutation.mutate({ id: eventId!, decision: 'reschedule' })}>
+                      <CalendarPlus className="h-4 w-4 mr-1" /> Marcar para reagendamento
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" disabled={resolveAttentionMutation.isPending}
+                      onClick={() => resolveAttentionMutation.mutate({ id: eventId!, decision: 'resolved' })}>
+                      Alerta revisado
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
