@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS `post_sale_followups` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `appointmentId` int NOT NULL,
+  `clientId` int NOT NULL,
+  `artistId` int,
+  `studioId` int NOT NULL DEFAULT 1,
+  `stage` enum('healing_7d','healed_60d','feedback_180d','anniversary_365d') NOT NULL,
+  `scheduledAt` datetime NOT NULL,
+  `status` enum('scheduled','due','sent','completed','postponed','cancelled','failed') NOT NULL DEFAULT 'scheduled',
+  `deliveryMode` enum('manual','automatic') NOT NULL DEFAULT 'manual',
+  `message` text,
+  `sentAt` timestamp NULL,
+  `completedAt` timestamp NULL,
+  `lastError` text,
+  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `post_sale_followups_id` PRIMARY KEY(`id`),
+  CONSTRAINT `post_sale_followups_appointment_stage_unique` UNIQUE(`appointmentId`,`stage`),
+  INDEX `post_sale_followups_studio_date_idx` (`studioId`,`scheduledAt`),
+  INDEX `post_sale_followups_status_idx` (`status`)
+);
