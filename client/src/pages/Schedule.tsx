@@ -700,6 +700,7 @@ export default function Schedule() {
                     title={`${formatTime(apt.date)} — ${getClientName(apt.clientId)} — ${apt.service} (${apt.duration}min)`}
                   >
                     <div className="font-semibold truncate flex items-center gap-1">
+                      {apt.confirmationAttention === 'pending' && <AlertCircle className="w-3.5 h-3.5 shrink-0 text-yellow-200 fill-amber-500/40" />}
                       {podLinkedMap?.[apt.id] && <Stethoscope className="w-3 h-3 shrink-0 opacity-90" />}
                       {formatTime(apt.date)}
                     </div>
@@ -758,6 +759,7 @@ export default function Schedule() {
                         title={`${formatTime(apt.date)} — ${getClientName(apt.clientId)} — ${apt.service}`}
                       >
                         <span className="flex items-center gap-1">
+                          {apt.confirmationAttention === 'pending' && <AlertCircle className="w-3 h-3 shrink-0 text-yellow-200 fill-amber-500/40" />}
                           {podLinkedMap?.[apt.id] && <Stethoscope className="w-2.5 h-2.5 shrink-0 opacity-90" />}
                           {formatTime(apt.date)} {getClientName(apt.clientId)}
                         </span>
