@@ -406,6 +406,8 @@ export async function listAppointments(studioId?: number | null) {
       updatedAt: appointments.updatedAt,
       studioId: appointments.studioId,
       clientName: clients.name,
+      clientPhone: clients.phone,
+      clientEmail: clients.email,
     })
     .from(appointments)
     .leftJoin(clients, eq(appointments.clientId, clients.id));
