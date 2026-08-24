@@ -27,6 +27,7 @@ export default function ClientProfile() {
 
   const { data: client, isLoading } = trpc.clients.getById.useQuery({ id: clientId });
   const { data: appointments } = trpc.appointments.getByClientId.useQuery({ clientId });
+  const { data: appointmentResponses } = trpc.appointments.getResponseHistory.useQuery({ clientId });
   const { data: anamnesis } = trpc.anamnesis.getByClientId.useQuery({ clientId });
   const { data: anamneseSubmissions } = trpc.anamnese.getRequestsByClientId.useQuery({ clientId });
   const { data: transactions } = trpc.transactions.getByClientId.useQuery({ clientId });
@@ -712,6 +713,17 @@ export default function ClientProfile() {
                             {appointment.notes && (
                               <p className="text-sm text-muted-foreground mt-2">{appointment.notes}</p>
                             )}
+                            {appointment.confirmationStatus && appointment.confirmationStatus !== "pendente" && (
+                              <p className="text-xs text-orange-400">
+                                Resposta do cliente: {
+                                  appointment.confirmationStatus === "confirmado" ? "Confirmou o horário" :
+                                  appointment.confirmationStatus === "atraso" ? "Avisou que vai atrasar" :
+                                  appointment.confirmationStatus === "reagendar" ? "Solicitou reagendamento" :
+                                  appointment.confirmationStatus === "nao_confirmado" ? "Não poderá comparecer" :
+                                  "Chegará antecipadamente"
+                                }
+                              </p>
+                            )}
                           </div>
                           <Badge variant="outline" className={getStatusBadgeClass(appointment.status)}>
                             {appointment.status}
@@ -724,6 +736,25 @@ export default function ClientProfile() {
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
                   Nenhum agendamento encontrado
+                </div>
+              )}
+
+              {appointmentResponses && appointmentResponses.length > 0 && (
+                <div className="mt-8 border-t pt-6">
+                  <h3 className="font-semibold flex items-center gap-2 mb-4">
+                    <Clock className="h-4 w-4 text-orange-400" />
+                    Histórico de respostas do cliente
+                  </h3>
+                  <div className="space-y-3">
+                    {appointmentResponses.map((response) => (
+                      <div key={response.id} className="rounded-lg border bg-muted/30 p-3">
+                        <p className="text-sm font-medium">{response.message}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {formatDateTime(response.sentAt)} · Agendamento #{response.appointmentId}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </CardContent>
