@@ -72,7 +72,7 @@ export function CalendarView({ visibleCalendars }: CalendarViewProps) {
 
       return {
         id: apt.id.toString(),
-        title: `${apt.service} — ${apt.artist}`,
+        title: `${apt.clientName || "Cliente"} — ${apt.clientPhone || "Sem telefone"}`,
         start: startDate,
         end: endDate,
         backgroundColor: calendar?.color || "#f97316",
@@ -80,10 +80,13 @@ export function CalendarView({ visibleCalendars }: CalendarViewProps) {
         textColor: "#ffffff",
         extendedProps: {
           clientId: apt.clientId,
+          clientName: apt.clientName,
+          clientPhone: apt.clientPhone,
           calendarId: apt.calendarId,
           status: apt.status,
           notes: apt.notes,
           artist: apt.artist,
+          service: apt.service,
           duration: apt.duration,
         },
       };
