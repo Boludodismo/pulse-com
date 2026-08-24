@@ -7,6 +7,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Loader2, Copy, Mail, MessageCircle } from "lucide-react";
+import { buildWhatsAppLink } from "@shared/const";
 
 interface SendAnamneseDialogProps {
   open: boolean;
@@ -58,7 +59,7 @@ export default function SendAnamneseDialog({
 
   const handleSendWhatsApp = () => {
     const message = `Olá ${clientName}! Por favor, preencha sua ficha de anamnese através deste link: ${generatedLink}`;
-    const whatsappUrl = `https://wa.me/${sentTo.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`;
+    const whatsappUrl = buildWhatsAppLink(sentTo, message);
     window.open(whatsappUrl, "_blank");
   };
 
