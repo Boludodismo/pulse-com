@@ -278,13 +278,58 @@ export function EventModal({
   });
 
   const resolveAttentionMutation = trpc.appointments.resolveConfirmationAttention.useMutation({
-    onSuccess: () => {
-      toast.success("Alerta do agendamento atualizado!");
+    onSuccess: (_result, variables) => {
+      if (variables.decision === 'resolved') toast.success("Alerta do agendamento atualizado!");
       utils.appointments.list.invalidate();
       onSuccess?.();
     },
     onError: (error) => toast.error(`Erro ao atualizar alerta: ${error.message}`),
   });
+
+  const handleAttentionDecision = async (decision: 'accept_delay' | 'reschedule') => {
+    if (!eventId || !existingEvent) return;
+
+    const client = clients.find((c: any) => c.id === existingEvent.clientId);
+    const whatsappWindow = client?.phone ? window.open('', '_blank') : null;
+
+    try {
+      await resolveAttentionMutation.mutateAsync({ id: eventId, decision });
+
+      if (!client?.phone) {
+        whatsappWindow?.close();
+        toast.warning('Decisão salva, mas o cliente não possui telefone cadastrado.');
+        return;
+      }
+
+      const firstName = String(client.name || 'Cliente').trim().split(/\s+/)[0];
+      const [datePart, timePart = '00:00:00'] = existingEvent.date.split(' ');
+      const appointmentDate = new Date(`${datePart}T12:00:00`);
+      const formattedDate = appointmentDate.toLocaleDateString('pt-BR', {
+        weekday: 'long', day: '2-digit', month: 'long',
+      });
+      const originalTime = timePart.slice(0, 5);
+      const delayMinutes = Number((existingEvent as any).confirmationDelayMinutes || 0);
+      const [hour, minute] = originalTime.split(':').map(Number);
+      const adjustedTotal = hour * 60 + minute + delayMinutes;
+      const adjustedTime = `${String(Math.floor(adjustedTotal / 60) % 24).padStart(2, '0')}:${String(adjustedTotal % 60).padStart(2, '0')}`;
+
+      const message = decision === 'accept_delay'
+        ? `Olá, ${firstName}! Tudo bem? 👋\n\nRecebemos seu aviso de que terá um atraso de aproximadamente ${delayMinutes} minutos.\n\nConseguimos manter seu atendimento de ${formattedDate}, com ${existingEvent.artist}. Considerando o tempo informado, esperamos você por volta das ${adjustedTime}.\n\nSe houver qualquer outra mudança, por favor, avise-nos por aqui. Até breve!`
+        : (existingEvent as any).confirmationStatus === 'atraso'
+          ? `Olá, ${firstName}! Tudo bem? 👋\n\nRecebemos seu aviso de atraso de aproximadamente ${delayMinutes} minutos. Para preservar a qualidade do seu atendimento e não comprometer os horários seguintes, precisaremos reagendar seu atendimento de ${formattedDate}, às ${originalTime}.\n\nPor favor, responda esta mensagem para combinarmos uma nova data e horário. Agradecemos a compreensão!`
+          : `Olá, ${firstName}! Tudo bem? 👋\n\nRecebemos sua solicitação de reagendamento do atendimento marcado para ${formattedDate}, às ${originalTime}, com ${existingEvent.artist}.\n\nPor favor, responda esta mensagem para combinarmos uma nova data e horário que seja adequada para você. Agradecemos por nos avisar!`;
+
+      const link = buildWhatsAppLink(client.phone, message);
+      if (whatsappWindow) {
+        whatsappWindow.location.href = link;
+      } else {
+        window.open(link, '_blank');
+      }
+      toast.success('Decisão salva e mensagem do WhatsApp preparada!');
+    } catch {
+      whatsappWindow?.close();
+    }
+  };
 
   // Preencher formulário ao editar
   useEffect(() => {
@@ -1124,12 +1169,12 @@ export function EventModal({
                   <div className="flex flex-col sm:flex-row gap-2">
                     {(existingEvent as any).confirmationStatus === 'atraso' && (
                       <Button type="button" size="sm" variant="outline" disabled={resolveAttentionMutation.isPending}
-                        onClick={() => resolveAttentionMutation.mutate({ id: eventId!, decision: 'accept_delay' })}>
+                        onClick={() => handleAttentionDecision('accept_delay')}>
                         <CheckCircle className="h-4 w-4 mr-1" /> Ainda consigo atender
                       </Button>
                     )}
                     <Button type="button" size="sm" variant="outline" disabled={resolveAttentionMutation.isPending}
-                      onClick={() => resolveAttentionMutation.mutate({ id: eventId!, decision: 'reschedule' })}>
+                      onClick={() => handleAttentionDecision('reschedule')}>
                       <CalendarPlus className="h-4 w-4 mr-1" /> Marcar para reagendamento
                     </Button>
                     <Button type="button" size="sm" variant="ghost" disabled={resolveAttentionMutation.isPending}
