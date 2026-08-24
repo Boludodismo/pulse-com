@@ -23,6 +23,8 @@ export default function ConfirmAppointment() {
   const id = Number(params.get("id") || 0);
   const token = params.get("token") || "";
   const [selected, setSelected] = useState<ResponseStatus | null>(null);
+  const [showDelaySelector, setShowDelaySelector] = useState(false);
+  const [delayMinutes, setDelayMinutes] = useState(15);
 
   const details = trpc.appointments.getConfirmationDetails.useQuery(
     { id, token },
@@ -67,7 +69,10 @@ export default function ConfirmAppointment() {
                   key={option.status}
                   type="button"
                   disabled={respond.isPending}
-                  onClick={() => respond.mutate({ id, token, status: option.status })}
+                  onClick={() => {
+                    if (option.status === "atraso") setShowDelaySelector(true);
+                    else respond.mutate({ id, token, status: option.status });
+                  }}
                   className={`w-full min-h-14 rounded-xl border px-4 py-3 flex items-center gap-3 text-left font-medium transition-colors disabled:opacity-50 ${option.classes}`}
                 >
                   <span className="text-2xl" aria-hidden>{option.emoji}</span>
@@ -75,6 +80,37 @@ export default function ConfirmAppointment() {
                 </button>
               ))}
             </div>
+
+            {showDelaySelector && (
+              <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/5 p-4 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">Tempo aproximado de atraso</p>
+                    <p className="text-xs text-muted-foreground">Arraste a barra para informar o artista.</p>
+                  </div>
+                  <span className="text-xl font-bold text-yellow-500 whitespace-nowrap">{delayMinutes} min</span>
+                </div>
+                <input
+                  aria-label="Tempo aproximado de atraso"
+                  type="range"
+                  min="5"
+                  max="120"
+                  step="5"
+                  value={delayMinutes}
+                  onChange={(event) => setDelayMinutes(Number(event.target.value))}
+                  className="w-full accent-yellow-500"
+                />
+                <div className="flex justify-between text-[11px] text-muted-foreground"><span>5 min</span><span>2 horas</span></div>
+                <button
+                  type="button"
+                  disabled={respond.isPending}
+                  onClick={() => respond.mutate({ id, token, status: "atraso", delayMinutes })}
+                  className="w-full rounded-lg bg-yellow-500 px-4 py-3 font-semibold text-black hover:bg-yellow-400 disabled:opacity-50"
+                >
+                  Confirmar atraso de {delayMinutes} minutos
+                </button>
+              </div>
+            )}
           </>
         )}
 
@@ -85,6 +121,7 @@ export default function ConfirmAppointment() {
             <div className="text-6xl">{selectedOption.emoji}</div>
             <h2 className="text-xl font-semibold">Resposta enviada</h2>
             <p className="font-medium">{selectedOption.label}</p>
+            {selected === "atraso" && <p className="text-sm font-medium">Atraso informado: aproximadamente {delayMinutes} minutos.</p>}
             <p className="text-sm text-muted-foreground">O estúdio e o artista já podem visualizar sua resposta.</p>
           </div>
         )}
