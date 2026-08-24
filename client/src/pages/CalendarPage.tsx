@@ -14,6 +14,7 @@ import {
   Calendar as CalendarIcon, Check, Clock, User, Phone, FileText, Pencil, ExternalLink, Stethoscope, Users, TriangleAlert,
 } from "lucide-react";
 import { EventModal } from "@/components/EventModal";
+import { PostSaleFollowupsBar } from "@/components/PostSaleFollowupsBar";
 
 // Paleta de cores estilo Apple Calendar
 const COLOR_PALETTE = [
@@ -976,6 +977,8 @@ export default function CalendarPage() {
             <span className="hidden sm:inline">Novo Calendário</span>
           </Button>
         </div>
+
+        <PostSaleFollowupsBar />
 
         {/* Conteúdo */}
         <div className="flex-1 overflow-hidden flex flex-col">
