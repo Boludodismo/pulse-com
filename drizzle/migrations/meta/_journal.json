@@ -15,6 +15,13 @@
       "when": 1787605200000,
       "tag": "0001_appointment_responses",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787608800000,
+      "tag": "0002_appointment_attention",
+      "breakpoints": true
     }
   ]
 }
