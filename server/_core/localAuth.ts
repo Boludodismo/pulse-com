@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
@@ -78,6 +79,17 @@ export async function ensureLocalAdmin(env: {
   ownerOpenId: string;
 }): Promise<void> {
   try {
+    // A fresh standalone database has no tenant yet. Create the first studio
+    // once and bind the bootstrap administrator to it so all tenant-scoped
+    // modules (clients, appointments, artists and finance) can persist data.
+    const studio =
+      (await db.getFirstStudio()) ??
+      (await db.createStudio({
+        name: "Meu Estúdio",
+        email: env.email.trim().toLowerCase(),
+        masterKey: randomBytes(32).toString("hex"),
+      }));
+
     const existing = await db.getUserByEmail(env.email.trim().toLowerCase());
     const passwordHash = await bcrypt.hash(env.password, SALT_ROUNDS);
 
@@ -88,6 +100,7 @@ export async function ensureLocalAdmin(env: {
         name: env.name,
         email: env.email.trim().toLowerCase(),
         role: "superadmin",
+        studioId: studio.id,
         passwordHash,
       });
       console.log(`[LocalAuth] Admin user created: ${env.email}`);
@@ -98,6 +111,11 @@ export async function ensureLocalAdmin(env: {
     } else {
       // Admin already exists with password — do NOT overwrite
       console.log(`[LocalAuth] Admin already configured: ${env.email}`);
+    }
+
+    if (existing && !existing.studioId) {
+      await db.updateUser(existing.id, { studioId: studio.id });
+      console.log(`[LocalAuth] Admin linked to studio: ${studio.id}`);
     }
   } catch (err) {
     console.error("[LocalAuth] Failed to ensure admin user:", err);
