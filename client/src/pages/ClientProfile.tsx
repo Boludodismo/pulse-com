@@ -717,7 +717,7 @@ export default function ClientProfile() {
                               <p className="text-xs text-orange-400">
                                 Resposta do cliente: {
                                   appointment.confirmationStatus === "confirmado" ? "Confirmou o horário" :
-                                  appointment.confirmationStatus === "atraso" ? "Avisou que vai atrasar" :
+                                  appointment.confirmationStatus === "atraso" ? `Avisou que vai atrasar aproximadamente ${appointment.confirmationDelayMinutes || "?"} minutos` :
                                   appointment.confirmationStatus === "reagendar" ? "Solicitou reagendamento" :
                                   appointment.confirmationStatus === "nao_confirmado" ? "Não poderá comparecer" :
                                   "Chegará antecipadamente"
