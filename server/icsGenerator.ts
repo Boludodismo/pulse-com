@@ -299,7 +299,7 @@ export function generateIcs(opts: IcsOptions): string {
   const dtstamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
 
   // Título do evento
-  const summary = icsEscape(`${appointment.service} — ${client.name} (${appointment.artist})`);
+  const summary = icsEscape(`${client.name} — ${client.phone?.trim() || "Sem telefone"}`);
 
   // Descrição completa
   const description = buildDescription(opts);
@@ -377,10 +377,8 @@ export function generateGoogleCalendarUrl(opts: IcsOptions): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const dtEnd = `${endDate.getUTCFullYear()}${pad(endDate.getUTCMonth() + 1)}${pad(endDate.getUTCDate())}T${pad(endDate.getUTCHours())}${pad(endDate.getUTCMinutes())}${pad(endDate.getUTCSeconds())}`;
 
-  const title = encodeURIComponent(`${appointment.service} — ${client.name}`);
-  const details = encodeURIComponent(
-    `Artista: ${appointment.artist}\nCliente: ${client.name}${client.phone ? `\nTelefone: ${client.phone}` : ""}${appointment.notes ? `\nObservações: ${appointment.notes}` : ""}${opts.confirmationLink ? `\nLink de confirmação: ${opts.confirmationLink}` : ""}`
-  );
+  const title = encodeURIComponent(`${client.name} — ${client.phone?.trim() || "Sem telefone"}`);
+  const details = encodeURIComponent(buildDescription(opts));
   const location = encodeURIComponent(opts.studio?.address || opts.studio?.name || "");
 
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${dtStart}/${dtEnd}&details=${details}&location=${location}`;
