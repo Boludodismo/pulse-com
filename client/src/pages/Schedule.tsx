@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+import { PostSaleFollowupsBar } from "@/components/PostSaleFollowupsBar";
 
 type AppointmentStatus = "agendado" | "confirmado" | "concluido" | "cancelado" | "reagendado";
 type ViewMode = "day" | "week" | "month" | "year";
@@ -1048,6 +1049,8 @@ export default function Schedule() {
             )}
           </div>
         )}
+
+        <PostSaleFollowupsBar />
 
         {/* Área do calendário */}
         <div className="flex-1 overflow-auto px-4 py-3">
