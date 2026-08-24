@@ -920,23 +920,35 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const appointment = await db.getAppointmentById(input.id);
         if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
+        const client = await db.getClientById(appointment.clientId);
+        let decisionLabel = "Alerta revisado pelo estúdio.";
 
         if (input.decision === "accept_delay") {
           await db.updateAppointment(input.id, {
             status: "confirmado",
             confirmationAttention: "accepted",
           });
+          decisionLabel = `Atraso de aproximadamente ${appointment.confirmationDelayMinutes || "?"} minutos aceito; atendimento mantido.`;
         } else if (input.decision === "reschedule") {
           await db.updateAppointment(input.id, {
             status: "reagendado",
             confirmationStatus: "reagendar",
             confirmationAttention: "reschedule",
           });
+          decisionLabel = "Reagendamento solicitado pelo estúdio; aguardando definição de nova data e horário.";
         } else {
           await db.updateAppointment(input.id, { confirmationAttention: "resolved" });
         }
 
-        return { success: true };
+        await db.logAppointmentDecision({
+          appointmentId: appointment.id,
+          clientId: appointment.clientId,
+          clientName: client?.name || "Cliente",
+          artistName: appointment.artist,
+          decisionLabel,
+        });
+
+        return { success: true, decision: input.decision };
       }),
 
     getResponseHistory: protectedProcedure
