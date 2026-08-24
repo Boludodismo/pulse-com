@@ -658,7 +658,7 @@ export const appRouter = router({
           artist: z.string().min(1).optional(),
           artistId: z.number().optional(), // FK opcional para artists.id
           status: z.enum(["agendado", "confirmado", "concluido", "cancelado", "reagendado"]).optional(),
-          confirmationStatus: z.enum(["pendente", "confirmado", "nao_confirmado", "atraso", "chegada_antecipada"]).optional(),
+          confirmationStatus: z.enum(["pendente", "confirmado", "nao_confirmado", "atraso", "chegada_antecipada", "reagendar"]).optional(),
           notes: z.string().optional(),
           referenceImageUrl: z.string().optional(),
           referenceImageKey: z.string().optional(),
@@ -812,7 +812,8 @@ export const appRouter = router({
         const { createHash } = await import("crypto");
         const appointment = await db.getAppointmentById(input.id);
         if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
-        const secret = process.env.JWT_SECRET || "secret";
+        const secret = process.env.JWT_SECRET;
+        if (!secret) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Configuração de segurança ausente" });
         const token = createHash("sha256")
           .update(`${input.id}:${appointment.date}:${secret}`)
           .digest("hex")
@@ -820,25 +821,91 @@ export const appRouter = router({
         return { token, date: appointment.date };
       }),
 
+    // Dados mínimos e seguros para a tela pública de resposta.
+    getConfirmationDetails: publicProcedure
+      .input(z.object({ id: z.number(), token: z.string() }))
+      .query(async ({ input }) => {
+        const { createHash, timingSafeEqual } = await import("crypto");
+        const appointment = await db.getAppointmentById(input.id);
+        if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
+        const secret = process.env.JWT_SECRET;
+        if (!secret) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Configuração de segurança ausente" });
+        const expected = createHash("sha256")
+          .update(`${input.id}:${appointment.date}:${secret}`)
+          .digest("hex")
+          .slice(0, 16);
+        const receivedBuffer = Buffer.from(input.token);
+        const expectedBuffer = Buffer.from(expected);
+        if (receivedBuffer.length !== expectedBuffer.length || !timingSafeEqual(receivedBuffer, expectedBuffer)) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Link inválido ou expirado" });
+        }
+        const client = await db.getClientById(appointment.clientId);
+        return {
+          clientName: client?.name?.split(" ")[0] || "Cliente",
+          date: appointment.date,
+          duration: appointment.duration,
+          service: appointment.service,
+          artist: appointment.artist,
+          confirmationStatus: appointment.confirmationStatus || "pendente",
+        };
+      }),
+
     // Rota pública para confirmação do cliente via link WhatsApp
     confirm: publicProcedure
       .input(z.object({
         id: z.number(),
         token: z.string(),
-        status: z.enum(["confirmado", "nao_confirmado", "atraso", "chegada_antecipada"]),
+        status: z.enum(["confirmado", "nao_confirmado", "atraso", "reagendar"]),
       }))
       .mutation(async ({ input }) => {
-        const { createHash } = await import("crypto");
+        const { createHash, timingSafeEqual } = await import("crypto");
         const appointment = await db.getAppointmentById(input.id);
         if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
-        const secret = process.env.JWT_SECRET || "secret";
+        const secret = process.env.JWT_SECRET;
+        if (!secret) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Configuração de segurança ausente" });
         const expected = createHash("sha256")
           .update(`${input.id}:${appointment.date}:${secret}`)
           .digest("hex")
           .slice(0, 16);
-        if (input.token !== expected) throw new TRPCError({ code: "UNAUTHORIZED", message: "Link inválido" });
-        await db.updateAppointment(input.id, { confirmationStatus: input.status });
+        const receivedBuffer = Buffer.from(input.token);
+        const expectedBuffer = Buffer.from(expected);
+        if (receivedBuffer.length !== expectedBuffer.length || !timingSafeEqual(receivedBuffer, expectedBuffer)) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Link inválido ou expirado" });
+        }
+
+        const client = await db.getClientById(appointment.clientId);
+        const responseLabels = {
+          confirmado: "Confirmo o horário",
+          atraso: "Vou atrasar",
+          nao_confirmado: "Não vou conseguir comparecer",
+          reagendar: "Preciso reagendar",
+        } as const;
+        const appointmentStatus = input.status === "confirmado"
+          ? "confirmado"
+          : input.status === "nao_confirmado"
+            ? "cancelado"
+            : input.status === "reagendar"
+              ? "reagendado"
+              : appointment.status;
+
+        await db.updateAppointment(input.id, {
+          confirmationStatus: input.status,
+          status: appointmentStatus,
+        });
+        await db.logAppointmentResponse({
+          appointmentId: input.id,
+          clientId: appointment.clientId,
+          clientName: client?.name || "Cliente",
+          artistName: appointment.artist,
+          responseLabel: responseLabels[input.status],
+        });
         return { success: true, status: input.status };
+      }),
+
+    getResponseHistory: protectedProcedure
+      .input(z.object({ clientId: z.number() }))
+      .query(async ({ input }) => {
+        return await db.getAppointmentResponseHistory(input.clientId);
       }),
 
     // ── Lembretes individuais por agendamento ──────────────────────────────────
@@ -909,7 +976,7 @@ export const appRouter = router({
           .update(`${appointment.id}:${appointment.date}:${secret}`)
           .digest("hex")
           .slice(0, 16);
-        const confirmationLink = `${baseUrl}/confirmar?id=${appointment.id}&token=${token}&status=confirmado`;
+        const confirmationLink = `${baseUrl}/confirmar?id=${appointment.id}&token=${token}`;
 
         // Link de anamnese
         const anamnesisLink = latestAnamnesis
@@ -951,7 +1018,7 @@ export const appRouter = router({
           `• Data: ${dateFormatted}\n` +
           `• Duração: ${appointment.duration} minutos\n` +
           (studioSettings?.address ? `• Local: ${studioSettings.address}\n` : "") +
-          `\nConfirme sua presença clicando no link:\n${confirmationLink}\n\n` +
+          `\nResponda sobre seu horário de forma rápida pelo link:\n${confirmationLink}\n\n` +
           `Qualquer dúvida, estamos à disposição! 🙏\n${studioName}`
         );
         const whatsappPhone = client.phone?.replace(/\D/g, "") || "";
