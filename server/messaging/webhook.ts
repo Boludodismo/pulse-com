@@ -50,7 +50,7 @@ export async function handleWebhookReply(phone: string, message: string) {
   if (reply === "1") {
     // Cliente confirmou
     await db.update(appointments)
-      .set({ confirmationStatus: "confirmado" })
+      .set({ confirmationStatus: "confirmado", confirmationDelayMinutes: null, confirmationAttention: "none" })
       .where(eq(appointments.id, appointmentId));
 
     // Marca mensagem como respondida
@@ -73,7 +73,7 @@ export async function handleWebhookReply(phone: string, message: string) {
   } else if (reply === "2") {
     // Cliente solicitou remarcação
     await db.update(appointments)
-      .set({ status: "reagendado", confirmationStatus: "nao_confirmado" })
+      .set({ status: "reagendado", confirmationStatus: "nao_confirmado", confirmationDelayMinutes: null, confirmationAttention: "pending" })
       .where(eq(appointments.id, appointmentId));
 
     await db.update(messageQueue)
