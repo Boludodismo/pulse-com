@@ -1282,6 +1282,33 @@ export async function logAppointmentResponse({
   });
 }
 
+/** Registra a decisão do estúdio sobre atraso/reagendamento na ficha do cliente. */
+export async function logAppointmentDecision({
+  appointmentId,
+  clientId,
+  clientName,
+  artistName,
+  decisionLabel,
+}: {
+  appointmentId: number;
+  clientId: number;
+  clientName: string;
+  artistName: string;
+  decisionLabel: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Banco de dados indisponível");
+
+  await db.insert(notificationLogs).values({
+    type: "appointment_response",
+    appointmentId,
+    clientId,
+    title: `Decisão sobre ${clientName}`,
+    message: `${artistName || "O estúdio"}: ${decisionLabel}`,
+    status: "sent",
+  });
+}
+
 /** Linha do tempo das respostas de confirmação exibida na ficha do cliente. */
 export async function getAppointmentResponseHistory(clientId: number) {
   const db = await getDb();
