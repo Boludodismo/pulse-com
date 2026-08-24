@@ -373,11 +373,8 @@ export function EventModal({
         `Lembramos que você tem um agendamento:\n` +
         `📅 ${dateStr} às ${startTime}\n` +
         `✏️ ${service} com ${artist}\n\n` +
-        `Por favor, confirme sua presença:\n` +
-        `✅ Confirmado: ${confirmUrl}&status=confirmado\n` +
-        `❌ Não confirmado: ${confirmUrl}&status=nao_confirmado\n` +
-        `⏰ Atraso: ${confirmUrl}&status=atraso\n` +
-        `🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada`;
+        `Responda sobre seu horário de forma rápida:\n${confirmUrl}\n\n` +
+        `Opções disponíveis: confirmar, avisar atraso, informar que não poderá comparecer ou solicitar reagendamento.`;
       const link = buildWhatsAppLink(client.phone, msg);
       setWhatsAppLink(link);
       window.open(link, "_blank");
@@ -1109,6 +1106,7 @@ export function EventModal({
                 {(existingEvent as any).confirmationStatus === 'nao_confirmado' && <span className="text-red-600 font-semibold">❌ Não confirmado</span>}
                 {(existingEvent as any).confirmationStatus === 'atraso' && <span className="text-yellow-600 font-semibold">⏰ Atraso</span>}
                 {(existingEvent as any).confirmationStatus === 'chegada_antecipada' && <span className="text-blue-600 font-semibold">🏃 Chegada antecipada</span>}
+                {(existingEvent as any).confirmationStatus === 'reagendar' && <span className="text-blue-600 font-semibold">🔄 Solicitou reagendamento</span>}
               </div>
             </div>
           )}
