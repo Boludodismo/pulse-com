@@ -37,7 +37,6 @@ COPY vite.config.ts ./
 COPY vitest.config.ts ./
 COPY components.json ./
 COPY drizzle.config.ts ./
-COPY patches ./patches
 
 # Frontend authentication mode is embedded by Vite at build time.
 ARG VITE_AUTH_MODE=local
