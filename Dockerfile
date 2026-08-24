@@ -7,7 +7,7 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 
 # Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.4.1 --activate
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
@@ -21,7 +21,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.4.1 --activate
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
@@ -39,6 +39,10 @@ COPY components.json ./
 COPY drizzle.config.ts ./
 COPY patches ./patches
 
+# Frontend authentication mode is embedded by Vite at build time.
+ARG VITE_AUTH_MODE=local
+ENV VITE_AUTH_MODE=${VITE_AUTH_MODE}
+
 # Build application
 RUN pnpm run build
 
@@ -48,7 +52,7 @@ FROM node:22-alpine
 WORKDIR /app
 
 # Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.4.1 --activate
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
@@ -59,9 +63,7 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
 
-# Copy server source (needed for runtime)
-COPY server ./server
-COPY shared ./shared
+# Copy migrations used by the production startup command
 COPY drizzle ./drizzle
 
 # Set environment
@@ -73,7 +75,7 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8080/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  CMD node -e "require('http').get('http://localhost:8080/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start server
-CMD ["node", "dist/index.js"]
+# Apply pending migrations and start the server
+CMD ["pnpm", "start"]
