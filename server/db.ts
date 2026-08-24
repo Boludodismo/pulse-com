@@ -391,6 +391,8 @@ export async function listAppointments(studioId?: number | null) {
       artist: appointments.artist,
       status: appointments.status,
       confirmationStatus: appointments.confirmationStatus,
+      confirmationDelayMinutes: appointments.confirmationDelayMinutes,
+      confirmationAttention: appointments.confirmationAttention,
       notes: appointments.notes,
       referenceImageUrl: appointments.referenceImageUrl,
       referenceImageKey: appointments.referenceImageKey,
