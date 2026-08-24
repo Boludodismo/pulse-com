@@ -2065,6 +2065,26 @@ export async function getFirstStudio() {
   return result.length > 0 ? result[0] : undefined;
 }
 
+export async function createStudio(data: {
+  name: string;
+  email?: string | null;
+  masterKey: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(studios).values({
+    name: data.name,
+    email: data.email ?? null,
+    masterKey: data.masterKey,
+    isActive: 1,
+  });
+  const studioId = Number(result[0].insertId);
+  const studio = await getStudioById(studioId);
+  if (!studio) throw new Error("Failed to retrieve created studio");
+  return studio;
+}
+
 // ============ ARTIST REVENUE HELPERS ============
 export async function getArtistRevenue(
   startDate: string,
