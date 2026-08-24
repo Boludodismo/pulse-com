@@ -95,7 +95,7 @@ async function startServer() {
         .update(`${appointment.id}:${appointment.date}:${secret}`)
         .digest("hex")
         .slice(0, 16);
-      const confirmationLink = `${baseUrl}/confirmar?id=${appointment.id}&token=${token}&status=confirmado`;
+      const confirmationLink = `${baseUrl}/confirmar?id=${appointment.id}&token=${token}`;
 
       // Gerar link de anamnese (se houver)
       let anamnesisLink: string | null = null;
