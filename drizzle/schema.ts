@@ -431,6 +431,29 @@ export const appointmentReminders = mysqlTable("appointmentReminders", {
 	updatedAt: timestamp({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
 });
 
+// ============ PÓS-VENDA AUTOMÁTICO ============
+export const postSaleFollowups = mysqlTable("post_sale_followups", {
+	id: int().autoincrement().primaryKey().notNull(),
+	appointmentId: int().notNull(),
+	clientId: int().notNull(),
+	artistId: int(),
+	studioId: int().default(1).notNull(),
+	stage: mysqlEnum(['healing_7d','healed_60d','feedback_180d','anniversary_365d']).notNull(),
+	scheduledAt: datetime({ mode: 'string' }).notNull(),
+	status: mysqlEnum(['scheduled','due','sent','completed','postponed','cancelled','failed']).default('scheduled').notNull(),
+	deliveryMode: mysqlEnum(['manual','automatic']).default('manual').notNull(),
+	message: text(),
+	sentAt: timestamp({ mode: 'string' }),
+	completedAt: timestamp({ mode: 'string' }),
+	lastError: text(),
+	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+}, (table) => [
+	uniqueIndex("post_sale_followups_appointment_stage_unique").on(table.appointmentId, table.stage),
+	index("post_sale_followups_studio_date_idx").on(table.studioId, table.scheduledAt),
+	index("post_sale_followups_status_idx").on(table.status),
+]);
+
 // ============ PERCENTUAL DE COLABORADORES ============
 
 export const collaboratorRates = mysqlTable("collaboratorRates", {
@@ -567,6 +590,8 @@ export type InsertPurchaseOrder = typeof purchaseOrders.$inferInsert;
 export type InsertPurchaseOrderItem = typeof purchaseOrderItems.$inferInsert;
 export type InsertAppointmentReminder = typeof appointmentReminders.$inferInsert;
 export type AppointmentReminder = typeof appointmentReminders.$inferSelect;
+export type PostSaleFollowup = typeof postSaleFollowups.$inferSelect;
+export type InsertPostSaleFollowup = typeof postSaleFollowups.$inferInsert;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 export type CollaboratorRate = typeof collaboratorRates.$inferSelect;
 export type InsertCollaboratorRate = typeof collaboratorRates.$inferInsert;
