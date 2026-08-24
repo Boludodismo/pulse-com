@@ -1,0 +1,560 @@
+{
+  "version": "2.0.0",
+  "title": "Ficha de Anamnese",
+  "subtitle": "Histórico de saúde",
+  "steps": [
+    {
+      "id": "dados_pessoais",
+      "title": "Dados Pessoais",
+      "fields": [
+        {
+          "key": "client_name",
+          "type": "text",
+          "label": "Nome completo",
+          "required": true
+        },
+        {
+          "key": "client_dob",
+          "type": "text",
+          "label": "Data de nascimento",
+          "required": true
+        },
+        {
+          "key": "client_cpf_rg",
+          "type": "text",
+          "label": "CPF / RG",
+          "required": true,
+          "placeholder": "000.000.000-00 ou RG"
+        },
+        {
+          "key": "client_email",
+          "type": "text",
+          "label": "E-mail",
+          "required": true
+        },
+        {
+          "key": "client_cep",
+          "type": "cep",
+          "label": "CEP",
+          "required": true,
+          "placeholder": "00000-000"
+        },
+        {
+          "key": "client_street",
+          "type": "text",
+          "label": "Rua / Avenida",
+          "required": true,
+          "placeholder": "Nome da rua"
+        },
+        {
+          "key": "client_number",
+          "type": "text",
+          "label": "Número",
+          "required": true,
+          "placeholder": "Ex: 123"
+        },
+        {
+          "key": "client_neighborhood",
+          "type": "text",
+          "label": "Bairro",
+          "required": true,
+          "placeholder": "Nome do bairro"
+        },
+        {
+          "key": "client_complement",
+          "type": "text",
+          "label": "Complemento",
+          "required": false,
+          "placeholder": "Apto, bloco, etc."
+        },
+        {
+          "key": "client_city",
+          "type": "text",
+          "label": "Cidade",
+          "required": true,
+          "placeholder": "Ex: São Paulo"
+        },
+        {
+          "key": "client_state",
+          "type": "text",
+          "label": "Estado",
+          "required": true,
+          "placeholder": "Ex: SP"
+        },
+        {
+          "key": "client_country",
+          "type": "text",
+          "label": "País",
+          "required": false,
+          "placeholder": "Brasil"
+        },
+        {
+          "key": "client_phone",
+          "type": "text",
+          "label": "Número de telefone / WhatsApp",
+          "required": true
+        },
+        {
+          "key": "client_instagram",
+          "type": "textarea",
+          "label": "Instagram / Redes sociais",
+          "required": true,
+          "placeholder": "@seuperfil"
+        }
+      ]
+    },
+    {
+      "id": "dados_tatuagem",
+      "title": "Dados da Tatuagem",
+      "fields": [
+        {
+          "key": "tattoo_artist",
+          "type": "text",
+          "label": "Qual o nome do profissional que irá fazer sua tatuagem?",
+          "required": true,
+          "placeholder": "Nome do tatuador"
+        },
+        {
+          "key": "tattoo_value",
+          "type": "text",
+          "label": "Qual o valor da sua tatuagem?",
+          "required": true,
+          "placeholder": "Ex: R$ 500,00"
+        },
+        {
+          "key": "tattoo_description",
+          "type": "textarea",
+          "label": "Descreva a arte e o local do corpo que vai realizar a sua tatuagem.",
+          "required": true,
+          "placeholder": "Ex: Flor de lótus no antebraço direito"
+        }
+      ]
+    },
+    {
+      "id": "saude_geral",
+      "title": "Saúde Geral",
+      "fields": [
+        {
+          "key": "health_medical_treatment",
+          "type": "radio",
+          "label": "Está em tratamento médico?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_medical_treatment_detail",
+          "type": "text",
+          "label": "Se sim, especifique",
+          "required": false,
+          "placeholder": "Descreva o tratamento",
+          "conditionalOn": {
+            "key": "health_medical_treatment",
+            "value": "sim"
+          }
+        },
+        {
+          "key": "health_recent_surgery",
+          "type": "radio",
+          "label": "Cirurgia recente?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_recent_surgery_detail",
+          "type": "textarea",
+          "label": "Se sim, descreva",
+          "required": false,
+          "placeholder": "Descreva a cirurgia e quando foi realizada",
+          "conditionalOn": {
+            "key": "health_recent_surgery",
+            "value": "sim"
+          }
+        },
+        {
+          "key": "health_diabetes",
+          "type": "radio",
+          "label": "Diabetes?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_pregnant",
+          "type": "radio",
+          "label": "É gestante?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_pregnant_weeks",
+          "type": "text",
+          "label": "Se sim, quantas semanas?",
+          "required": false,
+          "placeholder": "Ex: 12 semanas",
+          "conditionalOn": {
+            "key": "health_pregnant",
+            "value": "sim"
+          }
+        },
+        {
+          "key": "health_hypertension",
+          "type": "radio",
+          "label": "Possui hipo/hipertensão arterial?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "saude_pele",
+      "title": "Condições de Pele e Corpo",
+      "fields": [
+        {
+          "key": "health_keloid",
+          "type": "radio",
+          "label": "Possui alguma cicatriz com queloide?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_acid_use",
+          "type": "radio",
+          "label": "Faz uso de algum ácido no local a ser tatuado?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_vitiligo",
+          "type": "radio",
+          "label": "Possui Vitiligo?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_pacemaker",
+          "type": "radio",
+          "label": "É portador de Marcapasso?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_cardiopathy",
+          "type": "radio",
+          "label": "Possui cardiopatia?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_anemia",
+          "type": "radio",
+          "label": "Possui Anemia?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            },
+            {
+              "value": "nao_sei",
+              "label": "Não sei"
+            }
+          ]
+        },
+        {
+          "key": "health_transmissible_disease",
+          "type": "radio",
+          "label": "Alguma doença transmissível?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            },
+            {
+              "value": "nao_sei",
+              "label": "Não sei"
+            }
+          ]
+        },
+        {
+          "key": "health_transmissible_disease_detail",
+          "type": "text",
+          "label": "Se sim, especifique qual é",
+          "required": false,
+          "placeholder": "Especifique a doença",
+          "conditionalOn": {
+            "key": "health_transmissible_disease",
+            "value": "sim"
+          }
+        },
+        {
+          "key": "health_circulatory_disorder",
+          "type": "radio",
+          "label": "Possui distúrbio circulatório?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "saude_neurologica",
+      "title": "Histórico Neurológico e Mental",
+      "fields": [
+        {
+          "key": "health_epilepsy",
+          "type": "radio",
+          "label": "Tem histórico de convulsão / epilepsia?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_epilepsy_detail",
+          "type": "text",
+          "label": "Especifique se sim",
+          "required": false,
+          "placeholder": "Descreva o histórico",
+          "conditionalOn": {
+            "key": "health_epilepsy",
+            "value": "sim"
+          }
+        },
+        {
+          "key": "health_hemophilia",
+          "type": "radio",
+          "label": "Tem hemofilia?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_healing_problem",
+          "type": "radio",
+          "label": "Algum problema de cicatrização?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_healing_problem_detail",
+          "type": "textarea",
+          "label": "Caso tenha, descreva por favor.",
+          "required": false,
+          "placeholder": "Descreva o problema de cicatrização",
+          "conditionalOn": {
+            "key": "health_healing_problem",
+            "value": "sim"
+          }
+        },
+        {
+          "key": "health_tanned_skin",
+          "type": "radio",
+          "label": "Está com a pele bronzeada?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_depression_anxiety",
+          "type": "radio",
+          "label": "Tem Depressão / Pânico / Ansiedade?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            },
+            {
+              "value": "talvez",
+              "label": "Talvez"
+            }
+          ]
+        },
+        {
+          "key": "health_ate_last_24h",
+          "type": "radio",
+          "label": "Alimentou-se nas últimas 24h?",
+          "required": true,
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "key": "health_additional_info",
+          "type": "textarea",
+          "label": "Existe algum problema que julga ser necessário informar ao profissional?",
+          "required": false,
+          "placeholder": "Descreva qualquer informação adicional relevante"
+        }
+      ]
+    },
+    {
+      "id": "consentimento",
+      "title": "Termo de Consentimento",
+      "fields": [
+        {
+          "key": "consent_date",
+          "type": "text",
+          "label": "Data do preenchimento da ficha de anamnese",
+          "required": true,
+          "placeholder": "Ex: 30 de março de 2026"
+        },
+        {
+          "key": "consent_terms",
+          "type": "checkbox",
+          "label": "Autorizo a realização do procedimento e o registro fotográfico, para documentação e divulgação do profissional. Declaro ser de minha espontânea vontade a realização da tatuagem no local aqui descrito. Estou ciente de que o procedimento é de caráter permanente e das dificuldades de uma remoção. Tenho conhecimento sobre o processo de realização de uma tatuagem. As declarações acima são verdadeiras, não cabendo ao profissional a responsabilidade por informações omitidas nesta avaliação. Estou ciente de que o procedimento será realizado em condições segurança e higiene, com a utilização de instrumentos descartáveis. Me comprometo a seguir todos os cuidados necessários após o procedimento.",
+          "required": true
+        }
+      ]
+    }
+  ]
+}
