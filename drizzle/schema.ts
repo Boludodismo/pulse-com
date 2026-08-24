@@ -56,7 +56,7 @@ export const appointments = mysqlTable("appointments", {
 	artist: varchar({ length: 255 }).notNull(),
 	artistId: int(), // FK opcional para artists.id — permite joins confiáveis por artista
 	status: mysqlEnum(['agendado','confirmado','concluido','cancelado','reagendado']).default('agendado').notNull(),
-	confirmationStatus: mysqlEnum(['pendente','confirmado','nao_confirmado','atraso','chegada_antecipada']).default('pendente'),
+	confirmationStatus: mysqlEnum(['pendente','confirmado','nao_confirmado','atraso','chegada_antecipada','reagendar']).default('pendente'),
 	notes: text(),
 	referenceImageUrl: varchar({ length: 500 }),
 	referenceImageKey: varchar({ length: 500 }),
@@ -169,7 +169,7 @@ export const galleryImages = mysqlTable("galleryImages", {
 
 export const notificationLogs = mysqlTable("notificationLogs", {
 	id: int().autoincrement().primaryKey().notNull(),
-	type: mysqlEnum(['appointment_reminder','birthday_reminder','whatsapp_primary','whatsapp_resend']).notNull(),
+	type: mysqlEnum(['appointment_reminder','birthday_reminder','whatsapp_primary','whatsapp_resend','appointment_response']).notNull(),
 	appointmentId: int(),
 	clientId: int(),
 	title: varchar({ length: 255 }).notNull(),
