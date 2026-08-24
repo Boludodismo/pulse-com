@@ -2175,10 +2175,13 @@ export const appRouter = router({
         sentTo: z.string(),
       }))
       .mutation(async ({ input }) => {
-        // Gerar token único
-        const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+        // Gerar token criptograficamente seguro (64 caracteres hexadecimais)
+        const { randomBytes } = await import("node:crypto");
+        const token = randomBytes(32).toString("hex");
         // Expirar em 7 dias
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        const expiresAt = db.toDateStr(
+          new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        );
         
         const requestId = await db.createAnamneseRequest({
           clientId: input.clientId,
