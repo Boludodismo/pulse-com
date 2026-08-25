@@ -1619,6 +1619,123 @@ export const appRouter = router({
       }),
   }),
 
+  // ============ OPERAÇÃO COMERCIAL ============
+  commercial: router({
+    today: protectedProcedure.query(async ({ ctx }) => {
+      return db.getTodayOperations(ctx.user.studioId ?? 1);
+    }),
+
+    leads: router({
+      list: protectedProcedure.query(async ({ ctx }) => {
+        return db.listSalesLeads(ctx.user.studioId ?? 1);
+      }),
+
+      create: protectedProcedure.input(z.object({
+        clientId: z.number().int().positive().nullable().optional(),
+        appointmentId: z.number().int().positive().nullable().optional(),
+        artistId: z.number().int().positive().nullable().optional(),
+        name: z.string().trim().min(2).max(255),
+        phone: z.string().trim().max(30).nullable().optional(),
+        email: z.string().trim().email().max(320).nullable().optional(),
+        service: z.string().trim().max(255).nullable().optional(),
+        description: z.string().max(5000).nullable().optional(),
+        estimatedValue: z.number().int().min(0).nullable().optional(),
+        stage: z.enum(["new", "awaiting_info", "preparing_quote", "quote_sent", "awaiting_reply", "awaiting_deposit", "scheduled", "lost", "archived"]).default("new"),
+        nextFollowupAt: z.string().nullable().optional(),
+        notes: z.string().max(5000).nullable().optional(),
+      })).mutation(async ({ ctx, input }) => {
+        return db.createSalesLead({
+          ...input,
+          studioId: ctx.user.studioId ?? 1,
+          nextFollowupAt: input.nextFollowupAt ? db.toDateStr(input.nextFollowupAt) : null,
+        });
+      }),
+
+      update: protectedProcedure.input(z.object({
+        id: z.number().int().positive(),
+        clientId: z.number().int().positive().nullable().optional(),
+        appointmentId: z.number().int().positive().nullable().optional(),
+        artistId: z.number().int().positive().nullable().optional(),
+        name: z.string().trim().min(2).max(255).optional(),
+        phone: z.string().trim().max(30).nullable().optional(),
+        email: z.string().trim().email().max(320).nullable().optional(),
+        service: z.string().trim().max(255).nullable().optional(),
+        description: z.string().max(5000).nullable().optional(),
+        estimatedValue: z.number().int().min(0).nullable().optional(),
+        stage: z.enum(["new", "awaiting_info", "preparing_quote", "quote_sent", "awaiting_reply", "awaiting_deposit", "scheduled", "lost", "archived"]).optional(),
+        nextFollowupAt: z.string().nullable().optional(),
+        lostReason: z.string().max(1000).nullable().optional(),
+        notes: z.string().max(5000).nullable().optional(),
+      })).mutation(async ({ ctx, input }) => {
+        const { id, ...data } = input;
+        return db.updateSalesLead(id, ctx.user.studioId ?? 1, {
+          ...data,
+          nextFollowupAt: data.nextFollowupAt ? db.toDateStr(data.nextFollowupAt) : data.nextFollowupAt,
+        });
+      }),
+
+      delete: protectedProcedure.input(z.object({ id: z.number().int().positive() }))
+        .mutation(async ({ ctx, input }) => db.deleteSalesLead(input.id, ctx.user.studioId ?? 1)),
+    }),
+
+    waitlist: router({
+      list: protectedProcedure.query(async ({ ctx }) => {
+        return db.listWaitlistEntries(ctx.user.studioId ?? 1);
+      }),
+
+      suggestions: protectedProcedure.query(async ({ ctx }) => {
+        return db.getWaitlistSuggestions(ctx.user.studioId ?? 1);
+      }),
+
+      create: protectedProcedure.input(z.object({
+        clientId: z.number().int().positive(),
+        artistId: z.number().int().positive().nullable().optional(),
+        service: z.string().trim().max(255).nullable().optional(),
+        preferredDays: z.array(z.enum(["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"])).default([]),
+        preferredPeriods: z.array(z.enum(["manha", "tarde", "noite"])).default([]),
+        minDuration: z.number().int().min(15).max(720).default(60),
+        maxDuration: z.number().int().min(15).max(720).default(480),
+        priority: z.number().int().min(0).max(100).default(0),
+        notes: z.string().max(5000).nullable().optional(),
+      })).mutation(async ({ ctx, input }) => {
+        if (input.maxDuration < input.minDuration) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "A duração máxima deve ser maior que a mínima" });
+        }
+        const { preferredDays, preferredPeriods, ...data } = input;
+        return db.createWaitlistEntry({
+          ...data,
+          studioId: ctx.user.studioId ?? 1,
+          preferredDays: JSON.stringify(preferredDays),
+          preferredPeriods: JSON.stringify(preferredPeriods),
+          status: "active",
+        });
+      }),
+
+      update: protectedProcedure.input(z.object({
+        id: z.number().int().positive(),
+        artistId: z.number().int().positive().nullable().optional(),
+        service: z.string().trim().max(255).nullable().optional(),
+        preferredDays: z.array(z.enum(["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"])).optional(),
+        preferredPeriods: z.array(z.enum(["manha", "tarde", "noite"])).optional(),
+        minDuration: z.number().int().min(15).max(720).optional(),
+        maxDuration: z.number().int().min(15).max(720).optional(),
+        priority: z.number().int().min(0).max(100).optional(),
+        status: z.enum(["active", "contacted", "booked", "paused", "cancelled"]).optional(),
+        notes: z.string().max(5000).nullable().optional(),
+      })).mutation(async ({ ctx, input }) => {
+        const { id, preferredDays, preferredPeriods, ...data } = input;
+        return db.updateWaitlistEntry(id, ctx.user.studioId ?? 1, {
+          ...data,
+          ...(preferredDays ? { preferredDays: JSON.stringify(preferredDays) } : {}),
+          ...(preferredPeriods ? { preferredPeriods: JSON.stringify(preferredPeriods) } : {}),
+        });
+      }),
+
+      delete: protectedProcedure.input(z.object({ id: z.number().int().positive() }))
+        .mutation(async ({ ctx, input }) => db.deleteWaitlistEntry(input.id, ctx.user.studioId ?? 1)),
+    }),
+  }),
+
   // ============ DASHBOARD ROUTER ============
   dashboard: router({
     topClients: protectedProcedure
