@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { COOKIE_NAME, normalizeWhatsAppNumber } from "@shared/const";
+import { COOKIE_NAME, normalizePublicBaseUrl, normalizeWhatsAppNumber } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import {
@@ -159,7 +159,8 @@ export const appRouter = router({
           expiresAt: expiresAtStr,
         });
         // Enviar notificação ao owner com o link
-        const resetLink = `${process.env.APP_BASE_URL || "https://tatuei.com"}/reset-password?token=${token}`;
+        const resetBaseUrl = normalizePublicBaseUrl(process.env.APP_BASE_URL || "https://tatuei.com");
+        const resetLink = `${resetBaseUrl}/reset-password?token=${token}`;
         const { notifyOwner } = await import("./_core/notification");
         await notifyOwner({
           title: `Recuperação de senha solicitada`,
@@ -1062,10 +1063,10 @@ export const appRouter = router({
         const anamnesisRecords = await db.getAnamnesisByClientId(appointment.clientId);
         const latestAnamnesis = anamnesisRecords.length > 0 ? anamnesisRecords[0] : null;
 
-        const baseUrl = process.env.APP_BASE_URL ||
+        const baseUrl = normalizePublicBaseUrl(process.env.APP_BASE_URL ||
           (process.env.NODE_ENV === "production"
             ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}`
-            : "http://localhost:3000");
+            : "http://localhost:3000"));
 
         // Token de confirmação
         const { createHash } = await import("crypto");
@@ -2560,10 +2561,10 @@ export const appRouter = router({
         });
         
         // Retornar link — usa domínio dinâmico do ambiente
-        const baseUrl = process.env.APP_BASE_URL ||
+        const baseUrl = normalizePublicBaseUrl(process.env.APP_BASE_URL ||
           (process.env.NODE_ENV === "production"
             ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}`
-            : "http://localhost:3000");
+            : "http://localhost:3000"));
         const link = `${baseUrl}/anamnese/${token}`;
         
         return { requestId, token, link, expiresAt };
