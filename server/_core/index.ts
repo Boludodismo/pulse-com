@@ -15,6 +15,12 @@ import * as db from "../db";
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  try {
+    const updated = await db.backfillAnamneseSubmissionRisks();
+    if (updated > 0) console.log(`[Anamnese] ${updated} ficha(s) antiga(s) classificada(s).`);
+  } catch (error) {
+    console.error("[Anamnese] Não foi possível classificar fichas antigas:", error);
+  }
   app.get("/health", (_req, res) => {
     res.status(200).json({ status: "ok" });
   });

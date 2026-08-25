@@ -1197,6 +1197,19 @@ export const appRouter = router({
         return await db.getAllAnamnesis();
       }),
 
+    getRiskAlerts: protectedProcedure
+      .query(async ({ ctx }) => {
+        if (!ctx.user.studioId) return [];
+        return db.getRiskAlerts(ctx.user.studioId);
+      }),
+
+    getRiskHistoryByClientId: protectedProcedure
+      .input(z.object({ clientId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        if (!ctx.user.studioId) return [];
+        return db.getAnamnesisRiskHistoryByClientId(input.clientId, ctx.user.studioId);
+      }),
+
     getByClientId: protectedProcedure
       .input(z.object({ clientId: z.number() }))
       .query(async ({ input }) => {
@@ -1268,7 +1281,22 @@ export const appRouter = router({
           riskLevel: riskAssessment.riskLevel,
           riskFactors: JSON.stringify(riskAssessment.riskFactors),
         };
-        return await db.createAnamnesis(anamnesisData);
+        const created = await db.createAnamnesis(anamnesisData);
+        const client = await db.getClientById(input.clientId);
+        if (client) {
+          await db.createAnamnesisRiskHistory({
+            studioId: client.studioId,
+            clientId: input.clientId,
+            appointmentId: input.appointmentId || null,
+            anamnesisRecordId: created.id,
+            source: "manual",
+            eventType: "created",
+            riskLevel: riskAssessment.riskLevel,
+            riskFactors: JSON.stringify(riskAssessment.riskFactors),
+            riskVersion: "2026.1",
+          });
+        }
+        return created;
       }),
   }),
 
@@ -2579,6 +2607,14 @@ export const appRouter = router({
         }
         
         const payloadJson = JSON.stringify(input.payload);
+        const { calculatePublicAnamneseRisk, RISK_ASSESSMENT_VERSION } = await import("./riskAssessment");
+        const riskAssessment = calculatePublicAnamneseRisk(input.payload);
+        const riskData = {
+          riskLevel: riskAssessment.riskLevel,
+          riskFactors: JSON.stringify(riskAssessment.riskFactors),
+          riskVersion: RISK_ASSESSMENT_VERSION,
+        };
+        const client = await db.getClientById(request.clientId);
         
         if (request.completedAt) {
           // Modo edição: atualizar submissão existente
@@ -2591,7 +2627,18 @@ export const appRouter = router({
           if (!targetId) {
             throw new TRPCError({ code: "NOT_FOUND", message: "Submissão original não encontrada" });
           }
-          await db.updateAnamneseSubmission(targetId, payloadJson);
+          await db.updateAnamneseSubmission(targetId, payloadJson, riskData);
+          if (client) {
+            await db.createAnamnesisRiskHistory({
+              studioId: client.studioId,
+              clientId: request.clientId,
+              appointmentId: request.appointmentId,
+              submissionId: targetId,
+              source: "public_link",
+              eventType: "updated",
+              ...riskData,
+            });
+          }
           return { success: true, submissionId: targetId };
         }
         
@@ -2604,8 +2651,21 @@ export const appRouter = router({
           clientId: request.clientId,
           appointmentId: request.appointmentId,
           payloadJson,
+          ...riskData,
         });
         await db.markAnamneseRequestCompleted(request.id);
+
+        if (client) {
+          await db.createAnamnesisRiskHistory({
+            studioId: client.studioId,
+            clientId: request.clientId,
+            appointmentId: request.appointmentId,
+            submissionId: Number(submissionId),
+            source: "public_link",
+            eventType: "created",
+            ...riskData,
+          });
+        }
 
         // Sincronizar com Google Sheets
         syncAnamnesisSubmissionToSheets({
@@ -2642,7 +2702,18 @@ export const appRouter = router({
         payload: z.record(z.string(), z.any()),
       }))
       .mutation(async ({ input }) => {
-        await db.updateAnamneseSubmission(input.id, JSON.stringify(input.payload));
+        const { calculatePublicAnamneseRisk, RISK_ASSESSMENT_VERSION } = await import("./riskAssessment");
+        const risk = calculatePublicAnamneseRisk(input.payload);
+        const riskData = { riskLevel: risk.riskLevel, riskFactors: JSON.stringify(risk.riskFactors), riskVersion: RISK_ASSESSMENT_VERSION };
+        await db.updateAnamneseSubmission(input.id, JSON.stringify(input.payload), riskData);
+        const submission = await db.getAnamneseSubmissionById(input.id);
+        if (submission) {
+          const client = await db.getClientById(submission.clientId);
+          if (client) await db.createAnamnesisRiskHistory({
+            studioId: client.studioId, clientId: submission.clientId, appointmentId: submission.appointmentId,
+            submissionId: submission.id, source: "public_link", eventType: "updated", ...riskData,
+          });
+        }
 
         // Sincronizar com Google Sheets
         syncAnamnesisSubmissionToSheets({
@@ -2676,6 +2747,20 @@ export const appRouter = router({
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
+        const current = await db.getAnamnesisById(id);
+        if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Ficha não encontrada" });
+        const merged = {
+          hasAllergies: data.hasAllergies ?? !!current.hasAllergies,
+          allergiesDetails: data.allergiesDetails ?? current.allergiesDetails,
+          hasDiseases: data.hasDiseases ?? !!current.hasDiseases,
+          diseasesDetails: data.diseasesDetails ?? current.diseasesDetails,
+          usesMedication: data.usesMedication ?? !!current.usesMedication,
+          medicationDetails: data.medicationDetails ?? current.medicationDetails,
+          isPregnant: data.isPregnant ?? !!current.isPregnant,
+          hasKeloid: data.hasKeloid ?? !!current.hasKeloid,
+        };
+        const { calculateRiskLevel } = await import("./riskAssessment");
+        const risk = calculateRiskLevel(merged);
         await db.updateAnamnesisRecord(id, {
           ...data,
           hasAllergies: data.hasAllergies !== undefined ? (data.hasAllergies ? 1 : 0) : undefined,
@@ -2684,6 +2769,14 @@ export const appRouter = router({
           isPregnant: data.isPregnant !== undefined ? (data.isPregnant ? 1 : 0) : undefined,
           hasKeloid: data.hasKeloid !== undefined ? (data.hasKeloid ? 1 : 0) : undefined,
           acceptedTerms: data.acceptedTerms !== undefined ? (data.acceptedTerms ? 1 : 0) : undefined,
+          riskLevel: risk.riskLevel,
+          riskFactors: JSON.stringify(risk.riskFactors),
+        });
+        const client = await db.getClientById(current.clientId);
+        if (client) await db.createAnamnesisRiskHistory({
+          studioId: client.studioId, clientId: current.clientId, appointmentId: current.appointmentId,
+          anamnesisRecordId: current.id, source: "manual", eventType: "updated",
+          riskLevel: risk.riskLevel, riskFactors: JSON.stringify(risk.riskFactors), riskVersion: "2026.1",
         });
         return { success: true };
       }),
@@ -2713,7 +2806,15 @@ export const appRouter = router({
         if (!request) throw new TRPCError({ code: 'NOT_FOUND', message: 'Link inválido' });
         const submission = await db.getAnamneseSubmissionByRequestId(request.id);
         if (!submission) throw new TRPCError({ code: 'NOT_FOUND', message: 'Ficha não encontrada' });
-        await db.updateAnamneseSubmission(submission.id, JSON.stringify(input.payload));
+        const { calculatePublicAnamneseRisk, RISK_ASSESSMENT_VERSION } = await import("./riskAssessment");
+        const risk = calculatePublicAnamneseRisk(input.payload);
+        const riskData = { riskLevel: risk.riskLevel, riskFactors: JSON.stringify(risk.riskFactors), riskVersion: RISK_ASSESSMENT_VERSION };
+        await db.updateAnamneseSubmission(submission.id, JSON.stringify(input.payload), riskData);
+        const client = await db.getClientById(submission.clientId);
+        if (client) await db.createAnamnesisRiskHistory({
+          studioId: client.studioId, clientId: submission.clientId, appointmentId: submission.appointmentId,
+          submissionId: submission.id, source: "public_link", eventType: "updated", ...riskData,
+        });
         return { success: true };
       }),
   }),

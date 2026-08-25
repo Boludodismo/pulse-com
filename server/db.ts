@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte, or, like, sql, ne, inArray } from "drizzle-orm";
+import { eq, desc, and, gte, lte, or, like, sql, ne, inArray, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { 
   InsertUser, 
@@ -17,6 +17,7 @@ import {
   calendars,
   anamneseRequests,
   anamneseSubmissions,
+  anamnesisRiskHistory,
   studios,
   InsertClient,
   InsertAppointment,
@@ -31,6 +32,7 @@ import {
   InsertCalendar,
   InsertAnamneseRequest,
   InsertAnamneseSubmission,
+  InsertAnamnesisRiskHistory,
   suppliers,
   materials,
   stockMovements,
@@ -709,6 +711,110 @@ export async function getAllAnamnesis() {
     .orderBy(desc(anamnesisRecords.createdAt));
   
   return result;
+}
+
+export async function getRiskAlerts(studioId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const manual = await db.select({
+    id: anamnesisRecords.id,
+    clientId: anamnesisRecords.clientId,
+    clientName: clients.name,
+    createdAt: anamnesisRecords.createdAt,
+    riskLevel: anamnesisRecords.riskLevel,
+    riskFactors: anamnesisRecords.riskFactors,
+  }).from(anamnesisRecords)
+    .innerJoin(clients, eq(clients.id, anamnesisRecords.clientId))
+    .where(eq(clients.studioId, studioId));
+
+  const publicLink = await db.select({
+    id: anamneseSubmissions.id,
+    clientId: anamneseSubmissions.clientId,
+    clientName: clients.name,
+    createdAt: anamneseSubmissions.createdAt,
+    riskLevel: anamneseSubmissions.riskLevel,
+    riskFactors: anamneseSubmissions.riskFactors,
+  }).from(anamneseSubmissions)
+    .innerJoin(clients, eq(clients.id, anamneseSubmissions.clientId))
+    .where(eq(clients.studioId, studioId));
+
+  return [
+    ...manual.map(item => ({ ...item, source: "manual" as const })),
+    ...publicLink.map(item => ({ ...item, source: "public_link" as const })),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+export async function createAnamnesisRiskHistory(data: InsertAnamnesisRiskHistory) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(anamnesisRiskHistory).values(data);
+  return Number(result[0].insertId);
+}
+
+export async function getAnamnesisRiskHistoryByClientId(clientId: number, studioId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(anamnesisRiskHistory)
+    .where(and(
+      eq(anamnesisRiskHistory.clientId, clientId),
+      eq(anamnesisRiskHistory.studioId, studioId),
+    ))
+    .orderBy(desc(anamnesisRiskHistory.createdAt));
+}
+
+/** Classifica fichas antigas criadas antes da versão de riscos do formulário público. */
+export async function backfillAnamneseSubmissionRisks() {
+  const db = await getDb();
+  if (!db) return 0;
+  const pending = await db.select({
+    submission: anamneseSubmissions,
+    studioId: clients.studioId,
+  }).from(anamneseSubmissions)
+    .innerJoin(clients, eq(clients.id, anamneseSubmissions.clientId))
+    .where(isNull(anamneseSubmissions.riskFactors));
+  const { calculatePublicAnamneseRisk, RISK_ASSESSMENT_VERSION } = await import("./riskAssessment");
+  for (const item of pending) {
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(item.submission.payloadJson); } catch {}
+    const risk = calculatePublicAnamneseRisk(payload);
+    const riskData = {
+      riskLevel: risk.riskLevel,
+      riskFactors: JSON.stringify(risk.riskFactors),
+      riskVersion: RISK_ASSESSMENT_VERSION,
+    };
+    await db.update(anamneseSubmissions).set(riskData).where(eq(anamneseSubmissions.id, item.submission.id));
+    await db.insert(anamnesisRiskHistory).values({
+      studioId: item.studioId,
+      clientId: item.submission.clientId,
+      appointmentId: item.submission.appointmentId,
+      submissionId: item.submission.id,
+      source: "public_link",
+      eventType: "created",
+      ...riskData,
+    });
+  }
+  const manualPending = await db.select({
+    record: anamnesisRecords,
+    studioId: clients.studioId,
+  }).from(anamnesisRecords)
+    .innerJoin(clients, eq(clients.id, anamnesisRecords.clientId))
+    .leftJoin(anamnesisRiskHistory, eq(anamnesisRiskHistory.anamnesisRecordId, anamnesisRecords.id))
+    .where(isNull(anamnesisRiskHistory.id));
+  for (const item of manualPending) {
+    await db.insert(anamnesisRiskHistory).values({
+      studioId: item.studioId,
+      clientId: item.record.clientId,
+      appointmentId: item.record.appointmentId,
+      anamnesisRecordId: item.record.id,
+      source: "manual",
+      eventType: "created",
+      riskLevel: item.record.riskLevel,
+      riskFactors: item.record.riskFactors || "[]",
+      riskVersion: RISK_ASSESSMENT_VERSION,
+    });
+  }
+  return pending.length + manualPending.length;
 }
 
 export async function getAnamnesisByClientId(clientId: number) {
@@ -2503,6 +2609,15 @@ export async function getAnamneseSubmissionsByClientId(clientId: number) {
   return result;
 }
 
+export async function getAnamneseSubmissionById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.select().from(anamneseSubmissions)
+    .where(eq(anamneseSubmissions.id, id))
+    .limit(1);
+  return result ?? null;
+}
+
 export async function getAnamneseRequestsByClientId(clientId: number) {
   const db = await getDb();
   if (!db) {
@@ -2522,6 +2637,9 @@ export async function getAnamneseRequestsByClientId(clientId: number) {
       createdAt: anamneseRequests.createdAt,
       payloadJson: anamneseSubmissions.payloadJson,
       submissionId: anamneseSubmissions.id,
+      riskLevel: anamneseSubmissions.riskLevel,
+      riskFactors: anamneseSubmissions.riskFactors,
+      riskVersion: anamneseSubmissions.riskVersion,
     })
     .from(anamneseRequests)
     .leftJoin(anamneseSubmissions, eq(anamneseSubmissions.requestId, anamneseRequests.id))
@@ -3514,11 +3632,15 @@ export function buildWhatsAppOrderMessage(order: {
 // ============ ANAMNESE - EDIÇÃO E EXCLUSÃO ============
 
 /** Atualiza o payloadJson de uma submissão de anamnese (via link público) */
-export async function updateAnamneseSubmission(id: number, payloadJson: string) {
+export async function updateAnamneseSubmission(id: number, payloadJson: string, risk?: {
+  riskLevel: "low" | "medium" | "high" | "critical";
+  riskFactors: string;
+  riskVersion: string;
+}) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(anamneseSubmissions)
-    .set({ payloadJson })
+    .set({ payloadJson, ...(risk || {}) })
     .where(eq(anamneseSubmissions.id, id));
 }
 
@@ -3552,6 +3674,8 @@ export async function updateAnamnesisRecord(id: number, data: Partial<{
   hasKeloid: number;
   acceptedTerms: number;
   notes: string;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  riskFactors: string;
 }>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EventModal } from "@/components/EventModal";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Mail, Phone, Instagram, Cake, Calendar, DollarSign, Users, Plus, Loader2, AlertCircle, Upload, X, Image as ImageIcon, Clock, FileText, FileDown, Pencil, Trash2, CreditCard, Package, ChevronDown, Stethoscope, Play, CheckCircle2, MapPin, Palette } from "lucide-react";
+import { ArrowLeft, Mail, Phone, Instagram, Cake, Calendar, DollarSign, Users, Plus, Loader2, AlertCircle, AlertTriangle, Upload, X, Image as ImageIcon, Clock, FileText, FileDown, Pencil, Trash2, CreditCard, Package, ChevronDown, Stethoscope, Play, CheckCircle2, MapPin, Palette } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import SendAnamneseDialog from "@/components/SendAnamneseDialog";
@@ -34,6 +34,7 @@ export default function ClientProfile() {
   const { data: appointmentResponses } = trpc.appointments.getResponseHistory.useQuery({ clientId });
   const { data: anamnesis } = trpc.anamnesis.getByClientId.useQuery({ clientId });
   const { data: anamneseSubmissions } = trpc.anamnese.getRequestsByClientId.useQuery({ clientId });
+  const { data: anamnesisRiskHistory } = trpc.anamnesis.getRiskHistoryByClientId.useQuery({ clientId });
   const { data: transactions } = trpc.transactions.getByClientId.useQuery({ clientId });
   const { data: availableMaterials } = trpc.stock.listMaterials.useQuery({ activeOnly: true });
   const { data: gallery } = trpc.gallery.getByClientId.useQuery({ clientId });
@@ -1038,6 +1039,16 @@ export default function ClientProfile() {
                                 {isCompleted && (
                                   <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/30 text-xs">Preenchida</Badge>
                                 )}
+                                {req.riskLevel && isCompleted && (
+                                  <Badge variant="outline" className={
+                                    req.riskLevel === "critical" ? "bg-red-500/10 text-red-400 border-red-500/40 text-xs" :
+                                    req.riskLevel === "high" ? "bg-orange-500/10 text-orange-400 border-orange-500/40 text-xs" :
+                                    req.riskLevel === "medium" ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/40 text-xs" :
+                                    "bg-green-500/10 text-green-400 border-green-500/40 text-xs"
+                                  }>
+                                    {req.riskLevel === "critical" ? "🚨 Bloqueio preventivo" : req.riskLevel === "high" ? "⚠️ Atenção alta" : req.riskLevel === "medium" ? "⚠️ Atenção" : "✅ Sem alerta relevante"}
+                                  </Badge>
+                                )}
                                 {isPending && (
                                   <Badge variant="outline" className="bg-yellow-500/10 text-yellow-400 border-yellow-500/30 text-xs">Aguardando</Badge>
                                 )}
@@ -1081,6 +1092,50 @@ export default function ClientProfile() {
                         </Card>
                         );
                       })}
+                  </div>
+                )}
+
+                {anamnesisRiskHistory && anamnesisRiskHistory.length > 0 && (
+                  <div className="space-y-3 border-t pt-5">
+                    <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-orange-400" />
+                      Histórico de avaliações de risco
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Registro imutável das avaliações geradas a cada preenchimento ou edição da anamnese.
+                    </p>
+                    {anamnesisRiskHistory.map((entry) => {
+                      let factors: any[] = [];
+                      try { factors = JSON.parse(entry.riskFactors); } catch {}
+                      return (
+                        <div key={entry.id} className="rounded-lg border p-3 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className={
+                              entry.riskLevel === "critical" ? "text-red-400 border-red-500/40" :
+                              entry.riskLevel === "high" ? "text-orange-400 border-orange-500/40" :
+                              entry.riskLevel === "medium" ? "text-yellow-400 border-yellow-500/40" :
+                              "text-green-400 border-green-500/40"
+                            }>
+                              {entry.riskLevel === "critical" ? "Bloqueio preventivo" : entry.riskLevel === "high" ? "Atenção alta" : entry.riskLevel === "medium" ? "Atenção" : "Baixo"}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {entry.eventType === "updated" ? "Reavaliada" : "Avaliada"} em {formatDate(entry.createdAt)} · {entry.source === "public_link" ? "via link" : "manual"}
+                            </span>
+                          </div>
+                          <div className="space-y-1">
+                            {factors.filter((factor) => factor.severity !== "low").map((factor, index) => (
+                              <p key={`${factor.code || factor.category}-${index}`} className="text-sm">
+                                <span className="font-medium">{factor.category}:</span> {factor.description}
+                                {factor.guidance && <span className="block text-xs text-muted-foreground mt-0.5">Conduta sugerida: {factor.guidance}</span>}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <p className="text-xs text-muted-foreground">
+                      Apoio operacional baseado em dados autodeclarados; não substitui avaliação ou diagnóstico de profissional de saúde.
+                    </p>
                   </div>
                 )}
 

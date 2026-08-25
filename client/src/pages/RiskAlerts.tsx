@@ -12,7 +12,7 @@ export default function RiskAlerts() {
   const [filterLevel, setFilterLevel] = useState<string>("all");
 
   // Buscar todas as fichas de anamnese com risco
-  const { data: allAnamnesis, isLoading } = trpc.anamnesis.getAll.useQuery();
+  const { data: allAnamnesis, isLoading } = trpc.anamnesis.getRiskAlerts.useQuery();
 
   // Filtrar por nível de risco
   const filteredAnamnesis = allAnamnesis?.filter((record) => {
@@ -46,7 +46,7 @@ export default function RiskAlerts() {
   const getRiskLabel = (level: string) => {
     switch (level) {
       case "critical":
-        return "🚨 Risco Crítico";
+        return "🚨 Bloqueio preventivo";
       case "high":
         return "⚠️ Risco Alto";
       case "medium":
@@ -73,7 +73,7 @@ export default function RiskAlerts() {
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Alertas de Risco</h1>
         <p className="text-muted-foreground text-xs sm:text-sm">
-          Monitoramento de fichas de anamnese com fatores de risco identificados
+          Triagem operacional de condições autodeclaradas e histórico de atenção
         </p>
       </div>
 
@@ -83,12 +83,12 @@ export default function RiskAlerts() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-red-500" />
-              Risco Crítico
+              Bloqueio preventivo
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold text-red-500">{criticalCount}</p>
-            <p className="text-xs text-muted-foreground mt-1">Requer atenção imediata</p>
+            <p className="text-xs text-muted-foreground mt-1">Não prosseguir automaticamente</p>
           </CardContent>
         </Card>
 
@@ -127,7 +127,7 @@ export default function RiskAlerts() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold text-green-500">{lowCount}</p>
-            <p className="text-xs text-muted-foreground mt-1">Sem preocupações</p>
+            <p className="text-xs text-muted-foreground mt-1">Sem fator autodeclarado</p>
           </CardContent>
         </Card>
       </div>
@@ -167,9 +167,8 @@ export default function RiskAlerts() {
           ) : (
             <div className="space-y-4">
               {filteredAnamnesis.map((record) => {
-                const riskFactors = record.riskFactors
-                  ? JSON.parse(record.riskFactors)
-                  : [];
+                let riskFactors: any[] = [];
+                try { riskFactors = record.riskFactors ? JSON.parse(record.riskFactors) : []; } catch {}
 
                 return (
                   <Card key={record.id} className="border-l-4" style={{
@@ -195,7 +194,10 @@ export default function RiskAlerts() {
                           </div>
                           <div className="flex items-center gap-2 text-sm">
                             <User className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-medium">Cliente ID: {record.clientId}</span>
+                            <span className="font-medium">{record.clientName}</span>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {record.source === "public_link" ? "Ficha via link" : "Ficha manual"}
+                            </Badge>
                           </div>
                         </div>
                         <div className="flex gap-2">
@@ -207,14 +209,11 @@ export default function RiskAlerts() {
                             <User className="h-4 w-4 mr-2" />
                             Ver Cliente
                           </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => window.open(`/anamnese/view/${record.id}`, '_blank')}
-                          >
-                            <FileText className="h-4 w-4 mr-2" />
-                            Ver Ficha
-                          </Button>
+                          {record.source === "manual" && (
+                            <Button variant="outline" size="sm" onClick={() => window.open(`/anamnese/view/${record.id}`, '_blank')}>
+                              <FileText className="h-4 w-4 mr-2" /> Ver Ficha
+                            </Button>
+                          )}
                         </div>
                       </div>
 
@@ -231,7 +230,10 @@ export default function RiskAlerts() {
                                 <span className="font-medium text-muted-foreground min-w-[100px]">
                                   {factor.category}:
                                 </span>
-                                <span>{factor.description}</span>
+                                <span>
+                                  {factor.description}
+                                  {factor.guidance && <span className="block text-muted-foreground mt-1">Conduta sugerida: {factor.guidance}</span>}
+                                </span>
                               </div>
                             ))}
                           </div>
@@ -245,6 +247,9 @@ export default function RiskAlerts() {
           )}
         </CardContent>
       </Card>
+      <p className="text-xs text-muted-foreground">
+        Esta triagem usa informações declaradas pelo cliente e serve como apoio operacional. Não substitui avaliação, diagnóstico ou liberação de profissional de saúde.
+      </p>
     </div>
   );
 }

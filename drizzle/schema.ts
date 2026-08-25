@@ -23,8 +23,29 @@ export const anamneseSubmissions = mysqlTable("anamnese_submissions", {
 	clientId: int().notNull(),
 	appointmentId: int(),
 	payloadJson: text().notNull(),
+	riskLevel: mysqlEnum(['low','medium','high','critical']).default('low').notNull(),
+	riskFactors: text(),
+	riskVersion: varchar({ length: 20 }).default('2026.1').notNull(),
 	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
+
+export const anamnesisRiskHistory = mysqlTable("anamnesis_risk_history", {
+	id: int().autoincrement().primaryKey().notNull(),
+	studioId: int().notNull(),
+	clientId: int().notNull(),
+	appointmentId: int(),
+	submissionId: int(),
+	anamnesisRecordId: int(),
+	source: mysqlEnum(['public_link','manual']).notNull(),
+	eventType: mysqlEnum(['created','updated']).default('created').notNull(),
+	riskLevel: mysqlEnum(['low','medium','high','critical']).notNull(),
+	riskFactors: text().notNull(),
+	riskVersion: varchar({ length: 20 }).default('2026.1').notNull(),
+	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("risk_history_studio_created_idx").on(table.studioId, table.createdAt),
+	index("risk_history_client_created_idx").on(table.clientId, table.createdAt),
+]);
 
 export const anamnesisRecords = mysqlTable("anamnesisRecords", {
 	id: int().autoincrement().primaryKey().notNull(),
@@ -605,6 +626,7 @@ export type InsertAuditLog = typeof auditLogs.$inferInsert;
 export type InsertCalendar = typeof calendars.$inferInsert;
 export type InsertAnamneseRequest = typeof anamneseRequests.$inferInsert;
 export type InsertAnamneseSubmission = typeof anamneseSubmissions.$inferInsert;
+export type InsertAnamnesisRiskHistory = typeof anamnesisRiskHistory.$inferInsert;
 
 // Export types for select operations
 export type User = typeof users.$inferSelect;
@@ -621,6 +643,7 @@ export type AuditLog = typeof auditLogs.$inferSelect;
 export type Calendar = typeof calendars.$inferSelect;
 export type AnamneseRequest = typeof anamneseRequests.$inferSelect;
 export type AnamneseSubmission = typeof anamneseSubmissions.$inferSelect;
+export type AnamnesisRiskHistory = typeof anamnesisRiskHistory.$inferSelect;
 export type Studio = typeof studios.$inferSelect;
 export type Supplier = typeof suppliers.$inferSelect;
 export type Material = typeof materials.$inferSelect;
