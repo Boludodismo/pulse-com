@@ -16,6 +16,7 @@ export function buildPostSaleMessage(input: {
   clientName?: string | null;
   artistName?: string | null;
   service?: string | null;
+  anniversaryYears?: number | null;
 }) {
   const name = postSaleFirstName(input.clientName);
   const artist = input.artistName ? ` — ${input.artistName}` : "";
@@ -32,7 +33,7 @@ export function buildPostSaleMessage(input: {
       `Olá, ${name}! Esperamos que esteja tudo bem. Já faz cerca de seis meses da sua tattoo${artist}. ` +
       `Como ela está? Se tiver uma nova ideia, será um prazer conversar e planejar seu próximo projeto.`,
     anniversary_365d:
-      `Olá, ${name}! Hoje celebramos um ano da sua tattoo${artist}. Muito obrigado pela confiança no nosso trabalho! ` +
+      `Olá, ${name}! Hoje celebramos ${input.anniversaryYears && input.anniversaryYears > 1 ? `${input.anniversaryYears} anos` : "um ano"} da sua tattoo${artist}. Muito obrigado pela confiança no nosso trabalho! ` +
       `Como ela está? Quando quiser criar uma nova arte, estaremos por aqui para cuidar de cada detalhe.`,
   };
   return messages[input.stage];

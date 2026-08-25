@@ -75,6 +75,7 @@ export function PostSaleFollowupsBar({ visibleStart, visibleEnd }: PostSaleFollo
             clientName: item.clientName,
             artistName: item.artistName,
             service: item.service,
+            anniversaryYears: item.anniversaryYears,
           });
           const whatsappLink = buildPostSaleWhatsAppLink(item.clientPhone, message);
           const urgent = item.status === "due" || item.status === "failed";
@@ -84,7 +85,7 @@ export function PostSaleFollowupsBar({ visibleStart, visibleEnd }: PostSaleFollo
                 <div className="min-w-0">
                   <p className="text-xs font-semibold truncate flex items-center gap-1.5">
                     <CalendarDays className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                    {item.clientName || "Cliente"} · {config?.label || item.stage}
+                    {item.clientName || "Cliente"} · {item.stage === "anniversary_365d" && item.anniversaryYears > 1 ? `Aniversário da tattoo — ${item.anniversaryYears} anos` : (config?.label || item.stage)}
                   </p>
                   <p className="text-[11px] text-muted-foreground truncate">{item.service} • {item.artistName}</p>
                 </div>

@@ -570,6 +570,9 @@ export async function listPostSaleFollowups(studioId?: number | null) {
     status: postSaleFollowups.status,
     deliveryMode: postSaleFollowups.deliveryMode,
     message: postSaleFollowups.message,
+    source: postSaleFollowups.source,
+    referenceDate: postSaleFollowups.referenceDate,
+    anniversaryYears: postSaleFollowups.anniversaryYears,
     sentAt: postSaleFollowups.sentAt,
     completedAt: postSaleFollowups.completedAt,
     lastError: postSaleFollowups.lastError,
@@ -577,8 +580,8 @@ export async function listPostSaleFollowups(studioId?: number | null) {
     clientPhone: clients.phone,
     clientEmail: clients.email,
     appointmentDate: appointments.date,
-    artistName: appointments.artist,
-    service: appointments.service,
+    artistName: sql<string | null>`COALESCE(${appointments.artist}, ${postSaleFollowups.artistNameSnapshot})`,
+    service: sql<string | null>`COALESCE(${appointments.service}, ${postSaleFollowups.serviceSnapshot})`,
   }).from(postSaleFollowups)
     .leftJoin(clients, eq(postSaleFollowups.clientId, clients.id))
     .leftJoin(appointments, eq(postSaleFollowups.appointmentId, appointments.id));
@@ -618,10 +621,11 @@ export async function listDueAutomaticPostSaleFollowups() {
     clientId: postSaleFollowups.clientId,
     stage: postSaleFollowups.stage,
     message: postSaleFollowups.message,
+    anniversaryYears: postSaleFollowups.anniversaryYears,
     clientName: clients.name,
     clientPhone: clients.phone,
-    artistName: appointments.artist,
-    service: appointments.service,
+    artistName: sql<string | null>`COALESCE(${appointments.artist}, ${postSaleFollowups.artistNameSnapshot})`,
+    service: sql<string | null>`COALESCE(${appointments.service}, ${postSaleFollowups.serviceSnapshot})`,
   }).from(postSaleFollowups)
     .leftJoin(clients, eq(postSaleFollowups.clientId, clients.id))
     .leftJoin(appointments, eq(postSaleFollowups.appointmentId, appointments.id))
@@ -2635,6 +2639,10 @@ export async function getAnamneseRequestsByClientId(clientId: number) {
       expiresAt: anamneseRequests.expiresAt,
       completedAt: anamneseRequests.completedAt,
       createdAt: anamneseRequests.createdAt,
+      source: anamneseRequests.source,
+      originalArtistName: anamneseRequests.originalArtistName,
+      procedureDate: anamneseRequests.procedureDate,
+      procedureDateStatus: anamneseRequests.procedureDateStatus,
       payloadJson: anamneseSubmissions.payloadJson,
       submissionId: anamneseSubmissions.id,
       riskLevel: anamneseSubmissions.riskLevel,

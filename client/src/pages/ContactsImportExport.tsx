@@ -10,9 +10,10 @@ import { toast } from "sonner";
 import {
   Download, Upload, FileSpreadsheet, FileText, CheckCircle,
   XCircle, AlertTriangle, Trash2, Users, ArrowLeft, Info,
-  RefreshCw,
+  RefreshCw, HeartPulse,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { LegacyAnamnesisImport } from "@/components/LegacyAnamnesisImport";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -203,7 +204,7 @@ export default function ContactsImportExport() {
         </div>
 
         <Tabs defaultValue="export" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="export">
               <Download className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Exportar</span>
@@ -216,7 +217,15 @@ export default function ContactsImportExport() {
               <Trash2 className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Gerenciar</span>
             </TabsTrigger>
+            <TabsTrigger value="history">
+              <HeartPulse className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Histórico</span>
+            </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="history" className="mt-4">
+            <LegacyAnamnesisImport />
+          </TabsContent>
 
           {/* ── ABA: EXPORTAR ── */}
           <TabsContent value="export" className="space-y-4 mt-4">

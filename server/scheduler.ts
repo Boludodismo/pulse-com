@@ -352,6 +352,7 @@ async function runPostSaleFollowups() {
         clientName: followup.clientName,
         artistName: followup.artistName,
         service: followup.service,
+        anniversaryYears: followup.anniversaryYears,
       });
       const result = await sendAndLog({
         recipientPhone: followup.clientPhone,
@@ -359,7 +360,7 @@ async function runPostSaleFollowups() {
         recipientType: "client",
         message,
         trigger: `post_sale_${followup.stage}`,
-        appointmentId: followup.appointmentId,
+        appointmentId: followup.appointmentId ?? undefined,
         clientId: followup.clientId,
       });
       await db.updatePostSaleFollowup(followup.id, result.success ? {

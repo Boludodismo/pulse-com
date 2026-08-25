@@ -17,6 +17,7 @@ import { whatsAppSchedulerStatus } from "./scheduler";
 import { contactsRouter } from "./routers/contacts";
 import { proceduresRouter } from "./routers/procedures";
 import { messagingRouter } from "./routers/messaging";
+import { legacyAnamnesisRouter } from "./routers/legacyAnamnesis";
 import { procedureKitFormSchema, procedureKitItemsSchema, normalizeProcedureKitItems } from "./procedureKitValidation";
 
 export const appRouter = router({
@@ -1170,6 +1171,7 @@ export const appRouter = router({
           clientName: followup.clientName,
           artistName: followup.artistName,
           service: followup.service,
+          anniversaryYears: followup.anniversaryYears,
         });
         const result = await sendAndLog({
           recipientPhone: followup.clientPhone,
@@ -1177,7 +1179,7 @@ export const appRouter = router({
           recipientType: "client",
           message,
           trigger: `post_sale_${followup.stage}`,
-          appointmentId: followup.appointmentId,
+          appointmentId: followup.appointmentId ?? undefined,
           clientId: followup.clientId,
         });
         await db.updatePostSaleFollowup(input.id, result.success ? {
@@ -3229,6 +3231,7 @@ export const appRouter = router({
 
    // ============ CONTACTS IMPORT/EXPORT ROUTER ============
   contacts: contactsRouter,
+  legacyAnamnesis: legacyAnamnesisRouter,
   // ============ POD SESSION — EXECUÇÃO TÉCNICA ============
   procedures: proceduresRouter,
   // ============ CENTRAL DE MENSAGENS / WHATSAPP ============

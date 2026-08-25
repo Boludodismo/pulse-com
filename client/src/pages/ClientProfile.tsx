@@ -49,6 +49,7 @@ export default function ClientProfile() {
   const [sendLinkDialogOpen, setSendLinkDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [appointmentToComplete, setAppointmentToComplete] = useState<number | null>(null);
+  const [legacyDateEdits, setLegacyDateEdits] = useState<Record<number, string>>({});
 
   // Estados para upload de imagem
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -107,6 +108,16 @@ export default function ClientProfile() {
       toast.success("Trabalho confirmado. Pós-vendas de 7, 60, 180 e 365 dias programados!");
     },
     onError: (error) => toast.error(`Erro ao concluir trabalho: ${error.message}`),
+  });
+  const confirmLegacyDate = trpc.legacyAnamnesis.confirmProcedureDate.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.anamnese.getRequestsByClientId.invalidate({ clientId }),
+        utils.postSaleFollowups.list.invalidate(),
+      ]);
+      toast.success("Data histórica confirmada e pós-venda anual recalculado.");
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const createTransaction = trpc.transactions.createWithMaterials.useMutation({
@@ -1019,12 +1030,12 @@ export default function ClientProfile() {
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
-                {/* Fichas enviadas via link (novo fluxo — 39 campos) */}
+                {/* Fichas públicas e histórico importado */}
                 {anamneseSubmissions && anamneseSubmissions.length > 0 && (
                   <div className="space-y-4">
                     <h3 className="text-sm font-semibold text-orange-400 uppercase tracking-wider flex items-center gap-2">
                       <Mail className="h-4 w-4" />
-                      Fichas via link ({anamneseSubmissions.length})
+                      Fichas de anamnese ({anamneseSubmissions.length})
                     </h3>
                     {anamneseSubmissions
                       .map((req: any) => {
@@ -1038,6 +1049,9 @@ export default function ClientProfile() {
                               <div className="flex items-center gap-2 flex-wrap">
                                 {isCompleted && (
                                   <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/30 text-xs">Preenchida</Badge>
+                                )}
+                                {req.source === "legacy_csv" && (
+                                  <Badge variant="outline" className="bg-blue-500/10 text-blue-300 border-blue-500/30 text-xs">Histórico importado</Badge>
                                 )}
                                 {req.riskLevel && isCompleted && (
                                   <Badge variant="outline" className={
@@ -1056,13 +1070,19 @@ export default function ClientProfile() {
                                   <Badge variant="outline" className="bg-zinc-500/10 text-zinc-400 border-zinc-500/30 text-xs">Expirada</Badge>
                                 )}
                                 <span className="text-xs text-muted-foreground">
-                                  Enviado em {formatDate(req.createdAt)}
-                                  {req.completedAt && ` · Preenchido em ${formatDate(req.completedAt)}`}
+                                  {req.source === "legacy_csv" ? `Registro original em ${formatDate(req.createdAt)}` : `Enviado em ${formatDate(req.createdAt)}`}
+                                  {req.completedAt && req.source !== "legacy_csv" && ` · Preenchido em ${formatDate(req.completedAt)}`}
                                   {isPending && req.expiresAt && ` · Expira em ${formatDate(req.expiresAt)}`}
                                 </span>
-                                <Badge variant="outline" className="text-xs text-zinc-400 border-zinc-600">
-                                  {req.sentVia === 'whatsapp' ? '📱 WhatsApp' : '✉️ E-mail'}
-                                </Badge>
+                                {req.source === "legacy_csv" ? (
+                                  <Badge variant="outline" className="text-xs text-blue-300 border-blue-500/30">
+                                    Data histórica: {req.procedureDate ? formatDate(req.procedureDate) : "não informada"} · {req.procedureDateStatus === "confirmed" ? "confirmada" : "informada/inferida"}
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-xs text-zinc-400 border-zinc-600">
+                                    {req.sentVia === 'whatsapp' ? '📱 WhatsApp' : '✉️ E-mail'}
+                                  </Badge>
+                                )}
                               </div>
                               <div className="flex gap-1">
                                 {(req.submissionId || req.id) && (
@@ -1077,6 +1097,24 @@ export default function ClientProfile() {
                                 )}
                               </div>
                             </div>
+                            {req.source === "legacy_csv" && (
+                              <div className="mb-3 flex flex-wrap items-end gap-2 rounded-md border border-blue-500/20 bg-blue-500/5 p-3">
+                                <div>
+                                  <Label className="text-xs">Corrigir/confirmar data histórica da tattoo</Label>
+                                  <Input
+                                    type="date"
+                                    className="mt-1 h-8 w-[170px]"
+                                    value={legacyDateEdits[req.id] ?? String(req.procedureDate ?? "").slice(0, 10)}
+                                    onChange={(event) => setLegacyDateEdits((current) => ({ ...current, [req.id]: event.target.value }))}
+                                  />
+                                </div>
+                                <Button size="sm" variant="outline" disabled={confirmLegacyDate.isPending || !(legacyDateEdits[req.id] ?? String(req.procedureDate ?? "").slice(0, 10))}
+                                  onClick={() => confirmLegacyDate.mutate({ requestId: req.id, procedureDate: legacyDateEdits[req.id] ?? String(req.procedureDate).slice(0, 10) })}>
+                                  Confirmar data
+                                </Button>
+                                <p className="text-[11px] text-muted-foreground max-w-md">Ao confirmar, o lembrete anual é movido para o próximo aniversário correto. Isso não cria um agendamento.</p>
+                              </div>
+                            )}
                             {/* Exibe o payload JSON com os 39 campos */}
                             {req.payloadJson ? (
                               <AnamneseSubmissionView

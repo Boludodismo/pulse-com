@@ -11,6 +11,11 @@ export const anamneseRequests = mysqlTable("anamnese_requests", {
 	expiresAt: timestamp({ mode: 'string' }).notNull(),
 	completedAt: timestamp({ mode: 'string' }),
 	statusRequest: mysqlEnum(['pendente','preenchida','expirada','cancelada']).default('pendente').notNull(),
+	source: mysqlEnum(['public_link','legacy_csv']).default('public_link').notNull(),
+	importBatchId: int(),
+	originalArtistName: varchar({ length: 255 }),
+	procedureDate: datetime({ mode: 'string' }),
+	procedureDateStatus: mysqlEnum(['inferred','confirmed']).default('inferred').notNull(),
 	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 },
 (table) => [
@@ -36,7 +41,7 @@ export const anamnesisRiskHistory = mysqlTable("anamnesis_risk_history", {
 	appointmentId: int(),
 	submissionId: int(),
 	anamnesisRecordId: int(),
-	source: mysqlEnum(['public_link','manual']).notNull(),
+	source: mysqlEnum(['public_link','manual','legacy_csv']).notNull(),
 	eventType: mysqlEnum(['created','updated']).default('created').notNull(),
 	riskLevel: mysqlEnum(['low','medium','high','critical']).notNull(),
 	riskFactors: text().notNull(),
@@ -169,7 +174,7 @@ export const clients = mysqlTable("clients", {
 	state: varchar({ length: 50 }),
 	country: varchar({ length: 50 }).default('Brasil'),
 	gender: mysqlEnum(['Homem','Mulher','Outros']),
-	docType: mysqlEnum(['cpf','passport']).default('cpf'),
+	docType: mysqlEnum(['cpf','rg','passport','other']).default('cpf'),
 	docNumber: varchar({ length: 50 }),
 	totalSpent: int().default(0).notNull(),
 	appointmentCount: int().default(0).notNull(),
@@ -455,7 +460,8 @@ export const appointmentReminders = mysqlTable("appointmentReminders", {
 // ============ PÓS-VENDA AUTOMÁTICO ============
 export const postSaleFollowups = mysqlTable("post_sale_followups", {
 	id: int().autoincrement().primaryKey().notNull(),
-	appointmentId: int().notNull(),
+	appointmentId: int(),
+	anamnesisSubmissionId: int(),
 	clientId: int().notNull(),
 	artistId: int(),
 	studioId: int().default(1).notNull(),
@@ -464,6 +470,11 @@ export const postSaleFollowups = mysqlTable("post_sale_followups", {
 	status: mysqlEnum(['scheduled','due','sent','completed','postponed','cancelled','failed']).default('scheduled').notNull(),
 	deliveryMode: mysqlEnum(['manual','automatic']).default('manual').notNull(),
 	message: text(),
+	source: mysqlEnum(['appointment','legacy_anamnesis']).default('appointment').notNull(),
+	referenceDate: datetime({ mode: 'string' }),
+	serviceSnapshot: text(),
+	artistNameSnapshot: varchar({ length: 255 }),
+	anniversaryYears: int().default(1).notNull(),
 	sentAt: timestamp({ mode: 'string' }),
 	completedAt: timestamp({ mode: 'string' }),
 	lastError: text(),
@@ -471,8 +482,51 @@ export const postSaleFollowups = mysqlTable("post_sale_followups", {
 	updatedAt: timestamp({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
 }, (table) => [
 	uniqueIndex("post_sale_followups_appointment_stage_unique").on(table.appointmentId, table.stage),
+	uniqueIndex("post_sale_followups_submission_stage_unique").on(table.anamnesisSubmissionId, table.stage),
 	index("post_sale_followups_studio_date_idx").on(table.studioId, table.scheduledAt),
 	index("post_sale_followups_status_idx").on(table.status),
+]);
+
+// ============ IMPORTAÇÃO HISTÓRICA DE ANAMNESE ============
+export const legacyImportBatches = mysqlTable("legacy_import_batches", {
+	id: int().autoincrement().primaryKey().notNull(),
+	studioId: int().notNull(),
+	targetArtistId: int().notNull(),
+	createdByUserId: int().notNull(),
+	fileName: varchar({ length: 255 }).notNull(),
+	fileHash: varchar({ length: 64 }).notNull(),
+	selectedArtistsJson: text().notNull(),
+	status: mysqlEnum(['processing','completed','failed']).default('processing').notNull(),
+	totalRows: int().default(0).notNull(),
+	importedRows: int().default(0).notNull(),
+	skippedRows: int().default(0).notNull(),
+	errorRows: int().default(0).notNull(),
+	createdClients: int().default(0).notNull(),
+	updatedClients: int().default(0).notNull(),
+	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	completedAt: timestamp({ mode: 'string' }),
+}, (table) => [
+	uniqueIndex("legacy_import_batch_file_unique").on(table.studioId, table.targetArtistId, table.fileHash),
+	index("legacy_import_batch_studio_idx").on(table.studioId, table.createdAt),
+]);
+
+export const legacyImportRows = mysqlTable("legacy_import_rows", {
+	id: int().autoincrement().primaryKey().notNull(),
+	batchId: int().notNull(),
+	studioId: int().notNull(),
+	sourceRowNumber: int().notNull(),
+	fingerprint: varchar({ length: 64 }).notNull(),
+	clientId: int(),
+	requestId: int(),
+	submissionId: int(),
+	followupId: int(),
+	status: mysqlEnum(['imported','skipped','error']).notNull(),
+	issuesJson: text(),
+	rawPayloadJson: text(),
+	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	uniqueIndex("legacy_import_row_fingerprint_unique").on(table.studioId, table.fingerprint),
+	index("legacy_import_row_batch_idx").on(table.batchId, table.sourceRowNumber),
 ]);
 
 // ============ OPERAÇÃO COMERCIAL ============
@@ -659,6 +713,10 @@ export type InsertAppointmentReminder = typeof appointmentReminders.$inferInsert
 export type AppointmentReminder = typeof appointmentReminders.$inferSelect;
 export type PostSaleFollowup = typeof postSaleFollowups.$inferSelect;
 export type InsertPostSaleFollowup = typeof postSaleFollowups.$inferInsert;
+export type LegacyImportBatch = typeof legacyImportBatches.$inferSelect;
+export type InsertLegacyImportBatch = typeof legacyImportBatches.$inferInsert;
+export type LegacyImportRow = typeof legacyImportRows.$inferSelect;
+export type InsertLegacyImportRow = typeof legacyImportRows.$inferInsert;
 export type SalesLead = typeof salesLeads.$inferSelect;
 export type InsertSalesLead = typeof salesLeads.$inferInsert;
 export type WaitlistEntry = typeof waitlistEntries.$inferSelect;
