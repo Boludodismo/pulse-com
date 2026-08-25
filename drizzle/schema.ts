@@ -454,6 +454,50 @@ export const postSaleFollowups = mysqlTable("post_sale_followups", {
 	index("post_sale_followups_status_idx").on(table.status),
 ]);
 
+// ============ OPERAÇÃO COMERCIAL ============
+export const salesLeads = mysqlTable("sales_leads", {
+	id: int().autoincrement().primaryKey().notNull(),
+	studioId: int().default(1).notNull(),
+	clientId: int(),
+	appointmentId: int(),
+	artistId: int(),
+	name: varchar({ length: 255 }).notNull(),
+	phone: varchar({ length: 30 }),
+	email: varchar({ length: 320 }),
+	service: varchar({ length: 255 }),
+	description: text(),
+	estimatedValue: int(),
+	stage: mysqlEnum(['new','awaiting_info','preparing_quote','quote_sent','awaiting_reply','awaiting_deposit','scheduled','lost','archived']).default('new').notNull(),
+	nextFollowupAt: datetime({ mode: 'string' }),
+	lostReason: varchar({ length: 255 }),
+	notes: text(),
+	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+}, (table) => [
+	index("sales_leads_studio_stage_idx").on(table.studioId, table.stage),
+	index("sales_leads_followup_idx").on(table.nextFollowupAt),
+]);
+
+export const waitlistEntries = mysqlTable("waitlist_entries", {
+	id: int().autoincrement().primaryKey().notNull(),
+	studioId: int().default(1).notNull(),
+	clientId: int().notNull(),
+	artistId: int(),
+	service: varchar({ length: 255 }),
+	preferredDays: text(),
+	preferredPeriods: text(),
+	minDuration: int().default(60).notNull(),
+	maxDuration: int().default(480).notNull(),
+	priority: int().default(0).notNull(),
+	status: mysqlEnum(['active','contacted','booked','paused','cancelled']).default('active').notNull(),
+	notes: text(),
+	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+}, (table) => [
+	index("waitlist_entries_studio_status_idx").on(table.studioId, table.status),
+	index("waitlist_entries_artist_idx").on(table.artistId),
+]);
+
 // ============ PERCENTUAL DE COLABORADORES ============
 
 export const collaboratorRates = mysqlTable("collaboratorRates", {
@@ -592,6 +636,10 @@ export type InsertAppointmentReminder = typeof appointmentReminders.$inferInsert
 export type AppointmentReminder = typeof appointmentReminders.$inferSelect;
 export type PostSaleFollowup = typeof postSaleFollowups.$inferSelect;
 export type InsertPostSaleFollowup = typeof postSaleFollowups.$inferInsert;
+export type SalesLead = typeof salesLeads.$inferSelect;
+export type InsertSalesLead = typeof salesLeads.$inferInsert;
+export type WaitlistEntry = typeof waitlistEntries.$inferSelect;
+export type InsertWaitlistEntry = typeof waitlistEntries.$inferInsert;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 export type CollaboratorRate = typeof collaboratorRates.$inferSelect;
 export type InsertCollaboratorRate = typeof collaboratorRates.$inferInsert;
