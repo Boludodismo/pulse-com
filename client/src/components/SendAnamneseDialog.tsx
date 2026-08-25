@@ -7,7 +7,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Loader2, Copy, Mail, MessageCircle } from "lucide-react";
-import { buildWhatsAppLink } from "@shared/const";
+import { buildWhatsAppLink, normalizePublicBaseUrl } from "@shared/const";
 
 interface SendAnamneseDialogProps {
   open: boolean;
@@ -29,6 +29,7 @@ export default function SendAnamneseDialog({
   const [sentVia, setSentVia] = useState<"email" | "whatsapp">("whatsapp");
   const [sentTo, setSentTo] = useState(clientPhone || clientEmail || "");
   const [generatedLink, setGeneratedLink] = useState("");
+  const cleanGeneratedLink = normalizePublicBaseUrl(generatedLink);
 
   const createRequestMutation = trpc.anamnese.createRequest.useMutation({
     onSuccess: (data) => {
@@ -53,19 +54,19 @@ export default function SendAnamneseDialog({
   };
 
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(generatedLink);
+    navigator.clipboard.writeText(cleanGeneratedLink);
     toast.success("Link copiado!");
   };
 
   const handleSendWhatsApp = () => {
-    const message = `Olá ${clientName}! Por favor, preencha sua ficha de anamnese através deste link: ${generatedLink}`;
+    const message = `Olá ${clientName}!\n\nPor favor, preencha sua ficha de anamnese acessando o link abaixo:\n\n${cleanGeneratedLink}`;
     const whatsappUrl = buildWhatsAppLink(sentTo, message);
     window.open(whatsappUrl, "_blank");
   };
 
   const handleSendEmail = () => {
     const subject = "Ficha de Anamnese - Estúdio de Tatuagem";
-    const body = `Olá ${clientName}!\n\nPor favor, preencha sua ficha de anamnese através deste link:\n${generatedLink}\n\nObrigado!`;
+    const body = `Olá ${clientName}!\n\nPor favor, preencha sua ficha de anamnese através deste link:\n${cleanGeneratedLink}\n\nObrigado!`;
     const mailtoUrl = `mailto:${sentTo}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.open(mailtoUrl, "_blank");
   };
@@ -129,7 +130,7 @@ export default function SendAnamneseDialog({
             <div className="space-y-2">
               <Label>Link Gerado</Label>
               <div className="flex gap-2">
-                <Input value={generatedLink} readOnly className="bg-muted" />
+                <Input value={cleanGeneratedLink} readOnly className="bg-muted" />
                 <Button variant="outline" size="icon" onClick={handleCopyLink}>
                   <Copy className="h-4 w-4" />
                 </Button>
