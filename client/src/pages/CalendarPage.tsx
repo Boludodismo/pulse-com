@@ -327,6 +327,15 @@ export default function CalendarPage() {
     }
   }, [currentDate, viewMode, weekDays]);
 
+  const postSalePeriod = useMemo(() => {
+    if (viewMode === "day") return { start: currentDate, end: currentDate };
+    if (viewMode === "week") return { start: weekDays[0], end: weekDays[6] };
+    return {
+      start: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
+      end: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0),
+    };
+  }, [viewMode, currentDate, weekDays]);
+
   const handleToggleCalendar = (id: number) => {
     setVisibleCalendars((prev) =>
       prev.includes(id) ? prev.filter((cid) => cid !== id) : [...prev, id]
@@ -978,7 +987,7 @@ export default function CalendarPage() {
           </Button>
         </div>
 
-        <PostSaleFollowupsBar />
+        <PostSaleFollowupsBar visibleStart={postSalePeriod.start} visibleEnd={postSalePeriod.end} />
 
         {/* Conteúdo */}
         <div className="flex-1 overflow-hidden flex flex-col">
