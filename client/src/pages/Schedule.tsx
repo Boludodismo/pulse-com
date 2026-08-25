@@ -434,6 +434,21 @@ export default function Schedule() {
     return String(currentDate.getFullYear());
   }, [viewMode, currentDate, weekDays]);
 
+  const postSalePeriod = useMemo(() => {
+    if (viewMode === "day") return { start: currentDate, end: currentDate };
+    if (viewMode === "week") return { start: weekDays[0], end: weekDays[6] };
+    if (viewMode === "month") {
+      return {
+        start: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
+        end: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0),
+      };
+    }
+    return {
+      start: new Date(currentDate.getFullYear(), 0, 1),
+      end: new Date(currentDate.getFullYear(), 11, 31),
+    };
+  }, [viewMode, currentDate, weekDays]);
+
   // ── Drag & Drop — Mensal ──────────────────────────────────────────────────
   const handleMonthDragStart = (e: React.DragEvent, apt: any) => {
     setDraggedAppointment(apt);
@@ -1050,7 +1065,7 @@ export default function Schedule() {
           </div>
         )}
 
-        <PostSaleFollowupsBar />
+        <PostSaleFollowupsBar visibleStart={postSalePeriod.start} visibleEnd={postSalePeriod.end} />
 
         {/* Área do calendário */}
         <div className="flex-1 overflow-auto px-4 py-3">
