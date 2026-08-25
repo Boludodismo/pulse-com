@@ -35,6 +35,7 @@ import NewProcedure from "./pages/NewProcedure";
 import PodSession from "./pages/PodSession";
 import ProcedureSummary from "./pages/ProcedureSummary";
 import MessagingCenter from "./pages/MessagingCenter";
+import CommercialOperations from "./pages/CommercialOperations";
 
 function Router() {
   return (
@@ -49,6 +50,12 @@ function Router() {
       <Route path="/clients" component={() => (
         <DashboardLayout>
           <Clients />
+        </DashboardLayout>
+      )} />
+
+      <Route path="/commercial" component={() => (
+        <DashboardLayout>
+          <CommercialOperations />
         </DashboardLayout>
       )} />
       
