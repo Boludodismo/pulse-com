@@ -757,6 +757,48 @@ export const appRouter = router({
         return result;
       }),
 
+    complete: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        const appointment = await db.getAppointmentById(input.id);
+        if (!appointment) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado." });
+        }
+        if (ctx.user.studioId != null && appointment.studioId !== ctx.user.studioId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Você não pode alterar este agendamento." });
+        }
+        if (appointment.status === "cancelado") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Um agendamento cancelado não pode ser concluído." });
+        }
+
+        await db.updateAppointment(input.id, { status: "concluido" });
+        const completed = await db.getAppointmentById(input.id);
+        if (!completed) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível confirmar a execução do trabalho." });
+        }
+
+        await db.syncPostSaleFollowupsForAppointment(completed);
+        const client = await db.getClientById(completed.clientId);
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          userName: ctx.user.name || "Usuário sem nome",
+          action: "update",
+          entity: "appointment",
+          entityId: completed.id,
+          entityName: `${client?.name || "Cliente"} - ${completed.service}`,
+          details: {
+            action: "work_completed",
+            previousStatus: appointment.status,
+            newStatus: "concluido",
+            postSaleStages: ["7d", "60d", "180d", "365d"],
+          },
+          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
+          userAgent: ctx.req.headers?.["user-agent"],
+        });
+
+        return { success: true, appointment: completed, followupsCreated: 4 };
+      }),
+
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
