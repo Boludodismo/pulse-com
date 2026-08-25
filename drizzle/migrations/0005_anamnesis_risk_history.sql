@@ -1,7 +1,7 @@
 ALTER TABLE `anamnese_submissions`
-  ADD COLUMN IF NOT EXISTS `riskLevel` enum('low','medium','high','critical') NOT NULL DEFAULT 'low',
-  ADD COLUMN IF NOT EXISTS `riskFactors` text NULL,
-  ADD COLUMN IF NOT EXISTS `riskVersion` varchar(20) NOT NULL DEFAULT '2026.1';
+  ADD COLUMN `riskLevel` enum('low','medium','high','critical') NOT NULL DEFAULT 'low',
+  ADD COLUMN `riskFactors` text NULL,
+  ADD COLUMN `riskVersion` varchar(20) NOT NULL DEFAULT '2026.1';
 --> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `anamnesis_risk_history` (
