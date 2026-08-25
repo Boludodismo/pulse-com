@@ -11,6 +11,7 @@ import { serveStatic, setupVite } from "./vite";
 import { startScheduler } from "../scheduler";
 import { sdk } from "./sdk";
 import * as db from "../db";
+import { normalizePublicBaseUrl } from "@shared/const";
 
 async function startServer() {
   const app = express();
@@ -86,10 +87,10 @@ async function startServer() {
       const latestAnamnesis = anamnesisRecords.length > 0 ? anamnesisRecords[0] : null;
 
       // Construir URL base
-      const baseUrl = process.env.APP_BASE_URL ||
+      const baseUrl = normalizePublicBaseUrl(process.env.APP_BASE_URL ||
         (process.env.NODE_ENV === "production"
           ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}`
-          : "http://localhost:3000");
+          : "http://localhost:3000"));
 
       // Gerar token de confirmação
       const { createHash } = await import("crypto");
