@@ -25,7 +25,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import {
   LayoutDashboard, LogOut, PanelLeft, Users, Palette, Calendar, BarChart3,
   Search, Bell, Settings as SettingsIcon, UserCog, FileText, ChevronRight,
-  Home, AlertTriangle, Package, Truck, KeyRound, TrendingUp, Menu, X, ArrowUpDown, Stethoscope, MessageSquare
+  Home, AlertTriangle, Package, Truck, KeyRound, TrendingUp, Menu, X, ArrowUpDown, Stethoscope, MessageSquare, BriefcaseBusiness
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import ChangePasswordModal from "./ChangePasswordModal";
@@ -36,6 +36,7 @@ import GlobalSearch from "./GlobalSearch";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/", roles: ["superadmin", "admin", "collaborator"] },
+  { icon: BriefcaseBusiness, label: "Operação Comercial", path: "/commercial", roles: ["superadmin", "admin", "collaborator"] },
   { icon: Users, label: "Clientes", path: "/clients", roles: ["superadmin", "admin", "collaborator"] },
   { icon: ArrowUpDown, label: "Importar / Exportar", path: "/contacts/import-export", roles: ["superadmin", "admin"] },
   { icon: Calendar, label: "Agenda", path: "/schedule", roles: ["superadmin", "admin", "collaborator"] },
