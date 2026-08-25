@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Check, Clock3, HeartHandshake, MessageCircle, Zap } from "lucide-react";
+import { CalendarDays, Check, Clock3, HeartHandshake, MessageCircle, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { buildPostSaleMessage, buildPostSaleWhatsAppLink, POST_SALE_STAGES } from "@shared/postSale";
 
@@ -10,7 +10,12 @@ function displayDate(value: string) {
   return new Date(value.replace(" ", "T")).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-export function PostSaleFollowupsBar() {
+type PostSaleFollowupsBarProps = {
+  visibleStart?: Date;
+  visibleEnd?: Date;
+};
+
+export function PostSaleFollowupsBar({ visibleStart, visibleEnd }: PostSaleFollowupsBarProps) {
   const utils = trpc.useUtils();
   const { data = [], isLoading } = trpc.postSaleFollowups.list.useQuery(undefined, { refetchInterval: 60_000 });
   const refresh = () => utils.postSaleFollowups.list.invalidate();
@@ -24,13 +29,24 @@ export function PostSaleFollowupsBar() {
   });
 
   const visible = useMemo(() => {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() + 45);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const start = visibleStart ? new Date(visibleStart) : new Date(today);
+    const end = visibleEnd ? new Date(visibleEnd) : new Date(today);
+    start.setHours(0, 0, 0, 0);
+    if (!visibleEnd) end.setDate(end.getDate() + 45);
+    end.setHours(23, 59, 59, 999);
+    const periodContainsToday = today >= start && today <= end;
+
     return (data as any[])
       .filter((item) => ["scheduled", "due", "postponed", "failed"].includes(item.status))
-      .filter((item) => item.status === "due" || item.status === "failed" || new Date(item.scheduledAt.replace(" ", "T")) <= cutoff)
-      .slice(0, 12);
-  }, [data]);
+      .filter((item) => {
+        const scheduledAt = new Date(item.scheduledAt.replace(" ", "T"));
+        const overdueInCurrentPeriod = periodContainsToday && (item.status === "due" || item.status === "failed") && scheduledAt < start;
+        return overdueInCurrentPeriod || (scheduledAt >= start && scheduledAt <= end);
+      })
+      .slice(0, 30);
+  }, [data, visibleStart, visibleEnd]);
 
   if (isLoading || visible.length === 0) return null;
 
@@ -44,13 +60,14 @@ export function PostSaleFollowupsBar() {
   };
 
   return (
-    <section className="border-b border-border bg-emerald-950/20 px-4 py-2 flex-shrink-0">
-      <div className="flex items-center gap-2 mb-2">
+    <section className="relative z-10 border-b border-emerald-500/25 bg-[#111c18]/95 px-3 py-2 flex-shrink-0 shadow-sm backdrop-blur">
+      <div className="flex items-center gap-2 mb-1.5">
         <HeartHandshake className="h-4 w-4 text-emerald-400" />
-        <span className="text-xs font-semibold text-emerald-200">Pós-venda automático</span>
-        <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-300">{visible.length} acompanhamento(s)</Badge>
+        <span className="text-xs font-semibold text-emerald-200">Lembretes de pós-venda · dia inteiro</span>
+        <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-300">{visible.length}</Badge>
+        <span className="ml-auto hidden sm:inline text-[10px] text-emerald-100/60">Fixado acima dos horários</span>
       </div>
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
         {visible.map((item: any) => {
           const config = POST_SALE_STAGES.find((stage) => stage.stage === item.stage);
           const message = item.message || buildPostSaleMessage({
@@ -62,11 +79,14 @@ export function PostSaleFollowupsBar() {
           const whatsappLink = buildPostSaleWhatsAppLink(item.clientPhone, message);
           const urgent = item.status === "due" || item.status === "failed";
           return (
-            <article key={item.id} className={`min-w-[285px] max-w-[330px] rounded-lg border p-2.5 ${urgent ? "border-amber-500/50 bg-amber-950/20" : "border-emerald-500/25 bg-background/70"}`}>
+            <article key={item.id} className={`min-w-[300px] max-w-[360px] rounded-md border px-2.5 py-2 ${urgent ? "border-amber-500/50 bg-amber-950/30" : "border-emerald-500/30 bg-emerald-950/25"}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold truncate">{item.clientName || "Cliente"}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">{config?.label || item.stage} • {item.artistName}</p>
+                  <p className="text-xs font-semibold truncate flex items-center gap-1.5">
+                    <CalendarDays className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    {item.clientName || "Cliente"} · {config?.label || item.stage}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground truncate">{item.service} • {item.artistName}</p>
                 </div>
                 <Badge className={urgent ? "bg-amber-500/20 text-amber-300" : "bg-emerald-500/20 text-emerald-300"}>
                   {item.status === "failed" ? "Falhou" : item.status === "due" ? "Hoje/atrasado" : displayDate(item.scheduledAt)}
