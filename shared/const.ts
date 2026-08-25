@@ -5,6 +5,15 @@ export const UNAUTHED_ERR_MSG = 'Please login (10001)';
 export const NOT_ADMIN_ERR_MSG = 'You do not have required permission (10002)';
 
 /**
+ * Normaliza o domínio público usado para montar links enviados aos clientes.
+ * Remove espaços/quebras invisíveis (comuns ao copiar variáveis de ambiente)
+ * e barras finais, evitando que WhatsApp e e-mail cortem a URL no domínio.
+ */
+export function normalizePublicBaseUrl(url: string): string {
+  return url.replace(/\s+/g, "").replace(/\/+$/, "");
+}
+
+/**
  * Normaliza um número de telefone brasileiro para o formato esperado pelo wa.me.
  * Regras:
  *  - Remove tudo que não é dígito
