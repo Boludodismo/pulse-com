@@ -6,6 +6,16 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { parseCsvRfc4180 } from "../legacyAnamnesisImport";
+import {
+  consolidateClientDuplicates,
+  normalizeDate,
+  normalizeDocument,
+  normalizeEmail,
+  normalizePersonName,
+  normalizePhone,
+  previewClientDeduplication,
+} from "../clientDeduplication";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -98,6 +108,13 @@ function normalizeBirthDate(v: string): string | null {
   // DD-MM-YYYY
   const ddmmyyyy2 = clean.match(/^(\d{2})-(\d{2})-(\d{4})/);
   if (ddmmyyyy2) return `${ddmmyyyy2[3]}-${ddmmyyyy2[2]}-${ddmmyyyy2[1]}`;
+  // Datas legadas do Google Sheets podem chegar com ano em 2 dígitos.
+  const shortYear = clean.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2})$/);
+  if (shortYear) {
+    const year = Number(shortYear[3]);
+    const fullYear = year <= new Date().getFullYear() % 100 ? 2000 + year : 1900 + year;
+    return `${fullYear}-${shortYear[2].padStart(2, "0")}-${shortYear[1].padStart(2, "0")}`;
+  }
   return null;
 }
 
@@ -121,24 +138,16 @@ async function toXLSX(rows: Record<string, string>[], headers: string[]): Promis
 
 /** Parseia CSV string para array de objetos com cabeçalhos normalizados */
 function parseCSV(content: string): Record<string, string>[] {
-  const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  if (lines.length < 2) return [];
-
-  // Parse cabeçalhos
-  const rawHeaders = lines[0].split(",").map((h) =>
-    h.trim().replace(/^"|"$/g, "").replace(/""/g, '"')
-  );
+  const parsed = parseCsvRfc4180(content);
+  if (parsed.length < 2) return [];
+  const rawHeaders = parsed[0];
   const normalizedHeaders = rawHeaders.map(normalizeHeader);
 
   const rows: Record<string, string>[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    // Parse simples de CSV (sem suporte a quebras de linha dentro de campos)
-    const values = line.split(",").map((v) => v.trim().replace(/^"|"$/g, "").replace(/""/g, '"'));
+  for (const values of parsed.slice(1)) {
     const row: Record<string, string> = {};
     normalizedHeaders.forEach((h, idx) => {
-      if (h) row[h] = values[idx] ?? "";
+      if (h) row[h] = (values[idx] ?? "").trim();
     });
     rows.push(row);
   }
@@ -313,14 +322,9 @@ export const contactsRouter = router({
         }
       }
 
-      // Buscar contatos existentes para verificar duplicatas
-      const existingClients = input.skipDuplicates
-        ? await db.listClients(studioId)
-        : [];
-      const existingPhones = new Set(existingClients.map((c) => c.phone?.replace(/\D/g, "") ?? "").filter(Boolean));
-      const existingEmails = new Set(existingClients.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean));
-
-      const results = { imported: 0, skipped: 0, errors: 0, errorDetails: [] as string[] };
+      // O modo seguro não descarta a linha repetida: ele completa o cadastro já existente.
+      const existingClients = await db.listClients(studioId);
+      const results = { imported: 0, updated: 0, skipped: 0, errors: 0, errorDetails: [] as string[] };
 
       for (const row of rows) {
         if (!row.nome?.trim()) {
@@ -328,19 +332,9 @@ export const contactsRouter = router({
           continue;
         }
 
-        // Verificar duplicatas
-        if (input.skipDuplicates) {
-          const phone = row.telefone?.replace(/\D/g, "") ?? "";
-          const email = row.email?.toLowerCase().trim() ?? "";
-          if ((phone && existingPhones.has(phone)) || (email && existingEmails.has(email))) {
-            results.skipped++;
-            continue;
-          }
-        }
-
         try {
           const birthDate = normalizeBirthDate(row.data_nascimento ?? "");
-          await db.createClient({
+          const prepared = {
             studioId,
             artistId: ctx.user.artistId ?? null,
             name: row.nome.trim(),
@@ -360,13 +354,39 @@ export const contactsRouter = router({
             city: row.cidade?.trim() || null,
             state: row.estado?.trim() || null,
             country: row.pais?.trim() || "Brasil",
-          } as any);
-          results.imported++;
-          if (input.skipDuplicates) {
-            const phone = row.telefone?.replace(/\D/g, "") ?? "";
-            const email = row.email?.toLowerCase().trim() ?? "";
-            if (phone) existingPhones.add(phone);
-            if (email) existingEmails.add(email);
+          } as any;
+
+          const rowName = normalizePersonName(prepared.name);
+          const rowPhone = normalizePhone(prepared.phone);
+          const rowEmail = normalizeEmail(prepared.email);
+          const rowDocument = normalizeDocument(prepared.docNumber);
+          const rowBirthDate = normalizeDate(prepared.birthDate);
+          const duplicate = input.skipDuplicates ? existingClients.find((client) => {
+            if (normalizePersonName(client.name) !== rowName) return false;
+            return Boolean(
+              (rowPhone && rowPhone === normalizePhone(client.phone))
+              || (rowEmail && rowEmail === normalizeEmail(client.email))
+              || (rowDocument && rowDocument === normalizeDocument(client.docNumber))
+              || (rowBirthDate && rowBirthDate === normalizeDate(client.birthDate))
+            );
+          }) : undefined;
+
+          if (duplicate) {
+            const fillMissing = Object.fromEntries(Object.entries(prepared).filter(([key, value]) => {
+              if (["studioId", "name"].includes(key)) return false;
+              return value !== null && value !== "" && !String((duplicate as any)[key] ?? "").trim();
+            }));
+            if (Object.keys(fillMissing).length) {
+              await db.updateClient(duplicate.id, fillMissing as any);
+              Object.assign(duplicate, fillMissing);
+              results.updated++;
+            } else {
+              results.skipped++;
+            }
+          } else {
+            const created = await db.createClient(prepared);
+            existingClients.push(created);
+            results.imported++;
           }
         } catch (e: any) {
           results.errors++;
@@ -375,6 +395,30 @@ export const contactsRouter = router({
       }
 
       return results;
+    }),
+
+  /** Analisa duplicidades sem alterar dados. */
+  previewDuplicates: protectedProcedure.query(async ({ ctx }) => {
+    if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Apenas administradores podem consolidar cadastros." });
+    }
+    let studioId = ctx.user.studioId;
+    if (!studioId && ctx.user.role === "superadmin") studioId = (await db.getFirstStudio())?.id ?? null;
+    if (!studioId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Estúdio não identificado." });
+    return previewClientDeduplication(studioId);
+  }),
+
+  /** Consolida cadastros seguros e transfere todo o histórico ao registro principal. */
+  consolidateDuplicates: protectedProcedure
+    .input(z.object({ confirm: z.literal(true) }))
+    .mutation(async ({ ctx }) => {
+      if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Apenas administradores podem consolidar cadastros." });
+      }
+      let studioId = ctx.user.studioId;
+      if (!studioId && ctx.user.role === "superadmin") studioId = (await db.getFirstStudio())?.id ?? null;
+      if (!studioId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Estúdio não identificado." });
+      return consolidateClientDuplicates(studioId);
     }),
 
   /** Limpar contatos de teste (sem telefone E sem email E sem agendamentos) */
