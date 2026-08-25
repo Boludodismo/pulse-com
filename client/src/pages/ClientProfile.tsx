@@ -12,6 +12,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { EventModal } from "@/components/EventModal";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Mail, Phone, Instagram, Cake, Calendar, DollarSign, Users, Plus, Loader2, AlertCircle, Upload, X, Image as ImageIcon, Clock, FileText, FileDown, Pencil, Trash2, CreditCard, Package, ChevronDown, Stethoscope, Play, CheckCircle2, MapPin, Palette } from "lucide-react";
@@ -43,6 +47,7 @@ export default function ClientProfile() {
   const [anamnesisDialogOpen, setAnamnesisDialogOpen] = useState(false);
   const [sendLinkDialogOpen, setSendLinkDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [appointmentToComplete, setAppointmentToComplete] = useState<number | null>(null);
 
   // Estados para upload de imagem
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -90,6 +95,19 @@ export default function ClientProfile() {
   const utils = trpc.useUtils();
 
   // Mutations
+  const completeAppointment = trpc.appointments.complete.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.appointments.getByClientId.invalidate({ clientId }),
+        utils.postSaleFollowups.list.invalidate(),
+        utils.dashboard.metrics.invalidate(),
+      ]);
+      setAppointmentToComplete(null);
+      toast.success("Trabalho confirmado. Pós-vendas de 7, 60, 180 e 365 dias programados!");
+    },
+    onError: (error) => toast.error(`Erro ao concluir trabalho: ${error.message}`),
+  });
+
   const createTransaction = trpc.transactions.createWithMaterials.useMutation({
     onSuccess: (data) => {
       const stockMsg = data.stockMovements.length > 0
@@ -701,7 +719,7 @@ export default function ClientProfile() {
                   {appointments.map((appointment) => (
                     <Card key={appointment.id}>
                       <CardContent className="pt-6">
-                        <div className="flex items-start justify-between">
+                        <div className="flex items-start justify-between gap-4">
                           <div className="space-y-2">
                             <p className="font-semibold text-lg">{appointment.service}</p>
                             <p className="text-sm text-muted-foreground">
@@ -725,9 +743,26 @@ export default function ClientProfile() {
                               </p>
                             )}
                           </div>
-                          <Badge variant="outline" className={getStatusBadgeClass(appointment.status)}>
-                            {appointment.status}
-                          </Badge>
+                          <div className="flex flex-col items-end gap-2 shrink-0">
+                            <Badge variant="outline" className={getStatusBadgeClass(appointment.status)}>
+                              {appointment.status}
+                            </Badge>
+                            {appointment.status === "concluido" ? (
+                              <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Pós-venda programado
+                              </span>
+                            ) : appointment.status !== "cancelado" && appointment.status !== "reagendado" ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10"
+                                onClick={() => setAppointmentToComplete(appointment.id)}
+                              >
+                                <CheckCircle2 className="h-4 w-4 mr-1.5" />
+                                Confirmar trabalho realizado
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
@@ -759,6 +794,31 @@ export default function ClientProfile() {
               )}
             </CardContent>
           </Card>
+
+          <AlertDialog open={appointmentToComplete !== null} onOpenChange={(open) => !open && setAppointmentToComplete(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Confirmar execução do trabalho?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  O agendamento será marcado como concluído e o sistema criará automaticamente lembretes de pós-venda para 7, 60, 180 e 365 dias após a sessão.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={completeAppointment.isPending}>Voltar</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  disabled={completeAppointment.isPending || appointmentToComplete === null}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (appointmentToComplete !== null) completeAppointment.mutate({ id: appointmentToComplete });
+                  }}
+                >
+                  {completeAppointment.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Confirmar e criar pós-vendas
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </TabsContent>
 
         {/* Anamnese Tab */}
