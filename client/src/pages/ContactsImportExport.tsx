@@ -78,6 +78,7 @@ export default function ContactsImportExport() {
   } | null>(null);
   const [importResult, setImportResult] = useState<{
     imported: number;
+    updated: number;
     skipped: number;
     errors: number;
     errorDetails: string[];
@@ -85,6 +86,7 @@ export default function ContactsImportExport() {
 
   // Estado de limpeza
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showDedupeConfirm, setShowDedupeConfirm] = useState(false);
 
   // Queries de exportação (lazy)
   const exportCSVQuery = trpc.contacts.exportCSV.useQuery(undefined, { enabled: false });
@@ -93,6 +95,7 @@ export default function ContactsImportExport() {
   // Template
   const templateCSVQuery = trpc.contacts.downloadTemplate.useQuery({ format: "csv" }, { enabled: false });
   const templateXLSXQuery = trpc.contacts.downloadTemplate.useQuery({ format: "xlsx" }, { enabled: false });
+  const duplicatePreview = trpc.contacts.previewDuplicates.useQuery();
 
   // Mutations
   const previewMutation = trpc.contacts.previewImport.useMutation({
@@ -103,7 +106,7 @@ export default function ContactsImportExport() {
   const importMutation = trpc.contacts.importContacts.useMutation({
     onSuccess: (data) => {
       setImportResult(data);
-      toast.success(`${data.imported} contatos importados com sucesso!`);
+      toast.success(`${data.imported} novos e ${data.updated} cadastros atualizados.`);
     },
     onError: (e) => toast.error(`Erro na importação: ${e.message}`),
   });
@@ -114,6 +117,16 @@ export default function ContactsImportExport() {
       setShowClearConfirm(false);
     },
     onError: (e) => toast.error(`Erro: ${e.message}`),
+  });
+
+  const dedupeMutation = trpc.contacts.consolidateDuplicates.useMutation({
+    onSuccess: (data) => {
+      toast.success(`${data.mergedClients} cadastro(s) duplicado(s) consolidado(s).`);
+      setShowDedupeConfirm(false);
+      duplicatePreview.refetch();
+      utils.clients.list.invalidate();
+    },
+    onError: (e) => toast.error(`Erro ao consolidar: ${e.message}`),
   });
 
   const utils = trpc.useUtils();
@@ -392,7 +405,7 @@ export default function ContactsImportExport() {
                         className="rounded"
                       />
                       <label htmlFor="skipDuplicates" className="cursor-pointer">
-                        Ignorar duplicatas (mesmo telefone ou e-mail)
+                        Atualizar cadastros existentes sem criar duplicatas
                       </label>
                     </div>
                   )}
@@ -509,10 +522,14 @@ export default function ContactsImportExport() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="text-center p-3 rounded-lg bg-green-500/10">
                       <p className="text-2xl font-bold text-green-600">{importResult.imported}</p>
                       <p className="text-xs text-muted-foreground">Importados</p>
+                    </div>
+                    <div className="text-center p-3 rounded-lg bg-blue-500/10">
+                      <p className="text-2xl font-bold text-blue-600">{importResult.updated}</p>
+                      <p className="text-xs text-muted-foreground">Atualizados</p>
                     </div>
                     <div className="text-center p-3 rounded-lg bg-yellow-500/10">
                       <p className="text-2xl font-bold text-yellow-600">{importResult.skipped}</p>
@@ -561,6 +578,55 @@ export default function ContactsImportExport() {
                 Esta seção permite remover contatos de teste gerados automaticamente pelo sistema. <strong>Esta ação é irreversível.</strong>
               </AlertDescription>
             </Alert>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Users className="h-5 w-5 text-blue-500" />
+                  Consolidar Cadastros Duplicados
+                </CardTitle>
+                <CardDescription>
+                  Une somente registros com o mesmo nome e um identificador compatível. Telefone, nascimento, endereço, anamneses, agendamentos e histórico são preservados.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-muted/30 p-3 text-center">
+                    <p className="text-2xl font-bold">{duplicatePreview.data?.duplicateGroups ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">Grupos encontrados</p>
+                  </div>
+                  <div className="rounded-lg bg-orange-500/10 p-3 text-center">
+                    <p className="text-2xl font-bold text-orange-600">{duplicatePreview.data?.duplicateClients ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">Cópias a consolidar</p>
+                  </div>
+                </div>
+                {!showDedupeConfirm ? (
+                  <Button
+                    onClick={() => setShowDedupeConfirm(true)}
+                    disabled={duplicatePreview.isLoading || !duplicatePreview.data?.duplicateClients}
+                  >
+                    <Users className="h-4 w-4 mr-2" />
+                    Consolidar com segurança
+                  </Button>
+                ) : (
+                  <div className="space-y-3">
+                    <Alert className="border-orange-500/50 bg-orange-500/10">
+                      <AlertTriangle className="h-4 w-4 text-orange-500" />
+                      <AlertDescription>
+                        Confirme para transferir todo o histórico às fichas principais e remover somente as cópias identificadas.
+                      </AlertDescription>
+                    </Alert>
+                    <div className="flex gap-2">
+                      <Button onClick={() => dedupeMutation.mutate({ confirm: true })} disabled={dedupeMutation.isPending}>
+                        {dedupeMutation.isPending && <RefreshCw className="h-4 w-4 mr-2 animate-spin" />}
+                        Confirmar consolidação
+                      </Button>
+                      <Button variant="outline" onClick={() => setShowDedupeConfirm(false)}>Cancelar</Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             <Card>
               <CardHeader className="pb-3">
