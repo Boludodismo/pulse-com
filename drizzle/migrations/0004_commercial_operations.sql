@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS `sales_leads` (
   INDEX `sales_leads_studio_stage_idx` (`studioId`,`stage`),
   INDEX `sales_leads_followup_idx` (`nextFollowupAt`)
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `waitlist_entries` (
   `id` int AUTO_INCREMENT NOT NULL,
