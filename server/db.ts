@@ -45,6 +45,10 @@ import {
   InsertAppointmentReminder,
   AppointmentReminder,
   postSaleFollowups,
+  salesLeads,
+  waitlistEntries,
+  InsertSalesLead,
+  InsertWaitlistEntry,
   collaboratorRates,
   procedureKits,
   procedureKitItems,
@@ -1595,6 +1599,260 @@ export async function updateStudioSettings(settings: Partial<InsertStudioSetting
     const newSettings = await getStudioSettings();
     return newSettings;
   }
+}
+
+// ============ OPERAÇÃO COMERCIAL ============
+
+export async function listSalesLeads(studioId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    id: salesLeads.id,
+    studioId: salesLeads.studioId,
+    clientId: salesLeads.clientId,
+    appointmentId: salesLeads.appointmentId,
+    artistId: salesLeads.artistId,
+    name: salesLeads.name,
+    phone: salesLeads.phone,
+    email: salesLeads.email,
+    service: salesLeads.service,
+    description: salesLeads.description,
+    estimatedValue: salesLeads.estimatedValue,
+    stage: salesLeads.stage,
+    nextFollowupAt: salesLeads.nextFollowupAt,
+    lostReason: salesLeads.lostReason,
+    notes: salesLeads.notes,
+    createdAt: salesLeads.createdAt,
+    updatedAt: salesLeads.updatedAt,
+    artistName: artists.name,
+  }).from(salesLeads)
+    .leftJoin(artists, eq(salesLeads.artistId, artists.id))
+    .where(eq(salesLeads.studioId, studioId))
+    .orderBy(desc(salesLeads.updatedAt));
+}
+
+export async function createSalesLead(data: InsertSalesLead) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(salesLeads).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateSalesLead(id: number, studioId: number, data: Partial<InsertSalesLead>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(salesLeads)
+    .set({ ...data, updatedAt: toLocalDateStr(new Date()) })
+    .where(and(eq(salesLeads.id, id), eq(salesLeads.studioId, studioId)));
+  return { success: true };
+}
+
+export async function deleteSalesLead(id: number, studioId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(salesLeads).where(and(eq(salesLeads.id, id), eq(salesLeads.studioId, studioId)));
+  return { success: true };
+}
+
+export async function listWaitlistEntries(studioId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    id: waitlistEntries.id,
+    studioId: waitlistEntries.studioId,
+    clientId: waitlistEntries.clientId,
+    artistId: waitlistEntries.artistId,
+    service: waitlistEntries.service,
+    preferredDays: waitlistEntries.preferredDays,
+    preferredPeriods: waitlistEntries.preferredPeriods,
+    minDuration: waitlistEntries.minDuration,
+    maxDuration: waitlistEntries.maxDuration,
+    priority: waitlistEntries.priority,
+    status: waitlistEntries.status,
+    notes: waitlistEntries.notes,
+    createdAt: waitlistEntries.createdAt,
+    updatedAt: waitlistEntries.updatedAt,
+    clientName: clients.name,
+    clientPhone: clients.phone,
+    clientEmail: clients.email,
+    artistName: artists.name,
+  }).from(waitlistEntries)
+    .leftJoin(clients, eq(waitlistEntries.clientId, clients.id))
+    .leftJoin(artists, eq(waitlistEntries.artistId, artists.id))
+    .where(eq(waitlistEntries.studioId, studioId))
+    .orderBy(desc(waitlistEntries.priority), desc(waitlistEntries.updatedAt));
+}
+
+export async function createWaitlistEntry(data: InsertWaitlistEntry) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(waitlistEntries).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateWaitlistEntry(id: number, studioId: number, data: Partial<InsertWaitlistEntry>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(waitlistEntries)
+    .set({ ...data, updatedAt: toLocalDateStr(new Date()) })
+    .where(and(eq(waitlistEntries.id, id), eq(waitlistEntries.studioId, studioId)));
+  return { success: true };
+}
+
+export async function deleteWaitlistEntry(id: number, studioId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(waitlistEntries).where(and(eq(waitlistEntries.id, id), eq(waitlistEntries.studioId, studioId)));
+  return { success: true };
+}
+
+export async function getTodayOperations(studioId: number) {
+  const db = await getDb();
+  if (!db) return {
+    appointments: [], followups: [], postSale: [],
+    summary: { appointmentsToday: 0, pendingConfirmation: 0, pendingPayments: 0, delayedAttention: 0, leadsDue: 0, postSaleDue: 0 },
+  };
+
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  const startStr = toLocalDateStr(start);
+  const endStr = toLocalDateStr(end);
+
+  const todayAppointments = await db.select({
+    id: appointments.id,
+    clientId: appointments.clientId,
+    clientName: clients.name,
+    clientPhone: clients.phone,
+    date: appointments.date,
+    duration: appointments.duration,
+    service: appointments.service,
+    artist: appointments.artist,
+    artistId: appointments.artistId,
+    status: appointments.status,
+    confirmationStatus: appointments.confirmationStatus,
+    confirmationDelayMinutes: appointments.confirmationDelayMinutes,
+    confirmationAttention: appointments.confirmationAttention,
+    depositPaid: appointments.depositPaid,
+    signalStatus: appointments.signalStatus,
+    paymentStatus: appointments.paymentStatus,
+    totalAmount: appointments.totalAmount,
+  }).from(appointments)
+    .leftJoin(clients, eq(appointments.clientId, clients.id))
+    .where(and(
+      eq(appointments.studioId, studioId),
+      gte(appointments.date, startStr),
+      lte(appointments.date, endStr),
+      ne(appointments.status, "cancelado"),
+    ))
+    .orderBy(appointments.date);
+
+  const followups = await db.select({
+    id: salesLeads.id,
+    name: salesLeads.name,
+    phone: salesLeads.phone,
+    service: salesLeads.service,
+    stage: salesLeads.stage,
+    nextFollowupAt: salesLeads.nextFollowupAt,
+    estimatedValue: salesLeads.estimatedValue,
+  }).from(salesLeads).where(and(
+    eq(salesLeads.studioId, studioId),
+    lte(salesLeads.nextFollowupAt, endStr),
+    ne(salesLeads.stage, "scheduled"),
+    ne(salesLeads.stage, "lost"),
+    ne(salesLeads.stage, "archived"),
+  )).orderBy(salesLeads.nextFollowupAt);
+
+  const postSale = await db.select({
+    id: postSaleFollowups.id,
+    clientName: clients.name,
+    clientPhone: clients.phone,
+    stage: postSaleFollowups.stage,
+    scheduledAt: postSaleFollowups.scheduledAt,
+    status: postSaleFollowups.status,
+    message: postSaleFollowups.message,
+  }).from(postSaleFollowups)
+    .leftJoin(clients, eq(postSaleFollowups.clientId, clients.id))
+    .where(and(
+      eq(postSaleFollowups.studioId, studioId),
+      lte(postSaleFollowups.scheduledAt, endStr),
+      inArray(postSaleFollowups.status, ["scheduled", "due", "postponed", "failed"]),
+    ))
+    .orderBy(postSaleFollowups.scheduledAt);
+
+  return {
+    appointments: todayAppointments,
+    followups,
+    postSale,
+    summary: {
+      appointmentsToday: todayAppointments.length,
+      pendingConfirmation: todayAppointments.filter(item => item.confirmationStatus === "pendente").length,
+      pendingPayments: todayAppointments.filter(item => item.paymentStatus !== "pago").length,
+      delayedAttention: todayAppointments.filter(item => item.confirmationStatus === "atraso" || item.confirmationAttention === "pending").length,
+      leadsDue: followups.length,
+      postSaleDue: postSale.length,
+    },
+  };
+}
+
+function parsePreferenceList(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return value.split(",").map(item => item.trim()).filter(Boolean);
+  }
+}
+
+export async function getWaitlistSuggestions(studioId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const now = new Date();
+  const until = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+  const releasedSlots = await db.select({
+    id: appointments.id,
+    date: appointments.date,
+    duration: appointments.duration,
+    service: appointments.service,
+    artist: appointments.artist,
+    artistId: appointments.artistId,
+  }).from(appointments).where(and(
+    eq(appointments.studioId, studioId),
+    eq(appointments.status, "cancelado"),
+    gte(appointments.date, toLocalDateStr(now)),
+    lte(appointments.date, toLocalDateStr(until)),
+  )).orderBy(appointments.date);
+
+  const entries = await listWaitlistEntries(studioId);
+  const activeEntries = entries.filter(entry => entry.status === "active" || entry.status === "contacted");
+  const dayTokens = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+
+  return releasedSlots.map(slot => {
+    const date = new Date(slot.date.replace(" ", "T"));
+    const day = dayTokens[date.getDay()];
+    const hour = date.getHours();
+    const period = hour < 12 ? "manha" : hour < 18 ? "tarde" : "noite";
+
+    const matches = activeEntries.map(entry => {
+      const preferredDays = parsePreferenceList(entry.preferredDays);
+      const preferredPeriods = parsePreferenceList(entry.preferredPeriods);
+      const artistCompatible = !entry.artistId || entry.artistId === slot.artistId;
+      const durationCompatible = slot.duration >= entry.minDuration && slot.duration <= entry.maxDuration;
+      const dayCompatible = preferredDays.length === 0 || preferredDays.includes(day);
+      const periodCompatible = preferredPeriods.length === 0 || preferredPeriods.includes(period);
+      const score = (artistCompatible ? 40 : 0) + (durationCompatible ? 30 : 0) +
+        (dayCompatible ? 20 : 0) + (periodCompatible ? 10 : 0) + entry.priority;
+      return { ...entry, score, artistCompatible, durationCompatible, dayCompatible, periodCompatible };
+    }).filter(match => match.artistCompatible && match.durationCompatible)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    return { ...slot, matches };
+  });
 }
 
 // ============ ARTISTS FUNCTIONS ============
