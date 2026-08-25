@@ -29,6 +29,13 @@
       "when": 1787616000000,
       "tag": "0003_post_sale_followups",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1787621400000,
+      "tag": "0004_commercial_operations",
+      "breakpoints": true
     }
   ]
 }
