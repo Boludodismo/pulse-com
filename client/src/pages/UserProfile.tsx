@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { UserProfilePhotoField } from "@/components/UserProfilePhotoField";
 import {
   ArrowLeft,
   UserCircle,
@@ -39,6 +41,8 @@ export default function UserProfile() {
     email: "",
     role: "collaborator" as "superadmin" | "admin" | "collaborator",
     artistId: null as number | null,
+    profilePhotoUrl: null as string | null,
+    profilePhotoKey: null as string | null,
   });
 
   const authMode = (import.meta.env.VITE_AUTH_MODE as string) || "local";
@@ -52,10 +56,13 @@ export default function UserProfile() {
   const { data: artists } = trpc.artists.list.useQuery();
 
   const updateUserMutation = trpc.users.update.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Usuário atualizado com sucesso!");
-      utils.users.getById.invalidate({ id: userId });
-      utils.users.list.invalidate();
+      await Promise.all([
+        utils.users.getById.invalidate({ id: userId }),
+        utils.users.list.invalidate(),
+        utils.auth.me.invalidate(),
+      ]);
       setIsEditModalOpen(false);
     },
     onError: (error) => {
@@ -91,6 +98,8 @@ export default function UserProfile() {
         email: user.email || "",
         role: user.role as "superadmin" | "admin" | "collaborator",
         artistId: user.artistId ?? null,
+        profilePhotoUrl: user.profilePhotoUrl ?? null,
+        profilePhotoKey: user.profilePhotoKey ?? null,
       });
       setIsEditModalOpen(true);
     }
@@ -107,6 +116,8 @@ export default function UserProfile() {
       email: formData.email || undefined,
       role: formData.role,
       artistId: formData.artistId,
+      profilePhotoUrl: formData.profilePhotoUrl,
+      profilePhotoKey: formData.profilePhotoKey,
     });
   };
 
@@ -174,18 +185,24 @@ export default function UserProfile() {
   return (
     <div className="container py-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8">
+        <div className="flex flex-wrap items-center gap-4">
           <Button variant="ghost" onClick={() => navigate("/users")}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Voltar
           </Button>
+          <Avatar className="h-16 w-16 border-2 shrink-0">
+            {user.profilePhotoUrl && <AvatarImage src={user.profilePhotoUrl} alt={`Foto de ${user.name || "usuário"}`} className="object-cover" />}
+            <AvatarFallback className="text-lg font-semibold">
+              {(user.name || "U").trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("")}
+            </AvatarFallback>
+          </Avatar>
           <div>
             <h1 className="text-3xl font-bold">{user.name || "Sem nome"}</h1>
             <p className="text-muted-foreground">{user.email || "Sem e-mail"}</p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={handleOpenEdit}>
             <Edit className="mr-2 h-4 w-4" />
             Editar
@@ -312,12 +329,19 @@ export default function UserProfile() {
 
       {/* Modal de Edição */}
       <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Usuário</DialogTitle>
             <DialogDescription>Atualize os dados de {user.name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <UserProfilePhotoField
+              name={formData.name}
+              profilePhotoUrl={formData.profilePhotoUrl}
+              profilePhotoKey={formData.profilePhotoKey}
+              onChange={(photo) => setFormData({ ...formData, ...photo })}
+              disabled={updateUserMutation.isPending}
+            />
             <div>
               <Label htmlFor="edit-name">Nome <span className="text-red-500">*</span></Label>
               <Input

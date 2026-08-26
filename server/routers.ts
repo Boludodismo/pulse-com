@@ -2042,6 +2042,8 @@ export const appRouter = router({
         role: z.enum(["superadmin", "admin", "collaborator"]).optional(),
         studioId: z.number().optional().nullable(),
         artistId: z.number().optional().nullable(),
+        profilePhotoUrl: z.string().max(500).optional().nullable(),
+        profilePhotoKey: z.string().max(500).optional().nullable(),
       }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
@@ -2079,6 +2081,8 @@ export const appRouter = router({
         studioId: z.number().optional().nullable(),
         artistId: z.number().optional().nullable(),
         isActive: z.number().optional(),
+        profilePhotoUrl: z.string().max(500).optional().nullable(),
+        profilePhotoKey: z.string().max(500).optional().nullable(),
       }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
@@ -2163,6 +2167,8 @@ export const appRouter = router({
         role: z.enum(["superadmin", "admin", "collaborator"]).default("collaborator"),
         studioId: z.number().optional().nullable(),
         artistId: z.number().optional().nullable(),
+        profilePhotoUrl: z.string().max(500).optional().nullable(),
+        profilePhotoKey: z.string().max(500).optional().nullable(),
       }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
@@ -2184,6 +2190,8 @@ export const appRouter = router({
           studioId: input.studioId ?? null,
           artistId: input.artistId ?? null,
           passwordHash,
+          profilePhotoUrl: input.profilePhotoUrl ?? null,
+          profilePhotoKey: input.profilePhotoKey ?? null,
         });
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -2196,6 +2204,39 @@ export const appRouter = router({
           userAgent: ctx.req.headers?.["user-agent"],
         });
         return result;
+      }),
+
+    uploadProfilePhoto: protectedProcedure
+      .input(z.object({
+        fileData: z.string().min(1).max(7_100_000),
+        mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Apenas administradores podem enviar fotos de usuários." });
+        }
+
+        const { decodeProfileImage } = await import("./profileImage");
+        const { storagePut } = await import("./storage");
+        const { randomUUID } = await import("crypto");
+
+        let decoded: ReturnType<typeof decodeProfileImage>;
+        try {
+          decoded = decodeProfileImage(input.fileData, input.mimeType);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Foto de perfil inválida.",
+          });
+        }
+
+        const studioScope = ctx.user.studioId ?? "global";
+        const key = `users/profile/${studioScope}/${randomUUID()}.${decoded.extension}`;
+        const uploaded = await storagePut(key, decoded.buffer, input.mimeType);
+        if (!uploaded.url) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "O armazenamento de imagens não está disponível." });
+        }
+        return { profilePhotoUrl: uploaded.url, profilePhotoKey: uploaded.key };
       }),
 
     // Trocar a própria senha (usuário logado)

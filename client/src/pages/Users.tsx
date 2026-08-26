@@ -12,6 +12,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import { Plus, Search, Edit, Trash2, Power, PowerOff, UserCircle, KeyRound, Eye } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { UserProfilePhotoField } from "@/components/UserProfilePhotoField";
 
 export default function Users() {
   const [, navigate] = useLocation();
@@ -34,6 +36,8 @@ export default function Users() {
     role: "collaborator" as "superadmin" | "admin" | "collaborator",
     studioId: null as number | null,
     artistId: null as number | null,
+    profilePhotoUrl: null as string | null,
+    profilePhotoKey: null as string | null,
   });
   const [newPassword, setNewPassword] = useState("");
   const [createError, setCreateError] = useState("");
@@ -85,9 +89,9 @@ export default function Users() {
   });
 
   const updateUserMutation = trpc.users.update.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Usuário atualizado com sucesso!");
-      utils.users.list.invalidate();
+      await Promise.all([utils.users.list.invalidate(), utils.auth.me.invalidate()]);
       setIsEditModalOpen(false);
       setSelectedUser(null);
     },
@@ -117,6 +121,8 @@ export default function Users() {
       role: "collaborator",
       studioId: null,
       artistId: null,
+      profilePhotoUrl: null,
+      profilePhotoKey: null,
     });
     setCreateError("");
   };
@@ -143,6 +149,8 @@ export default function Users() {
         role: formData.role,
         studioId: formData.studioId,
         artistId: formData.artistId,
+        profilePhotoUrl: formData.profilePhotoUrl,
+        profilePhotoKey: formData.profilePhotoKey,
       });
     } else {
       if (!formData.openId || !formData.name) {
@@ -163,6 +171,8 @@ export default function Users() {
       role: user.role,
       studioId: user.studioId,
       artistId: user.artistId,
+      profilePhotoUrl: user.profilePhotoUrl ?? null,
+      profilePhotoKey: user.profilePhotoKey ?? null,
     });
     setIsEditModalOpen(true);
   };
@@ -185,6 +195,8 @@ export default function Users() {
       email: formData.email || undefined,
       role: formData.role,
       artistId: formData.artistId,
+      profilePhotoUrl: formData.profilePhotoUrl,
+      profilePhotoKey: formData.profilePhotoKey,
     });
   };
 
@@ -322,7 +334,12 @@ export default function Users() {
                           onClick={() => navigate(`/users/${user.id}`)}
                           className="flex items-center gap-2 hover:text-orange-400 transition-colors cursor-pointer text-left"
                         >
-                          <UserCircle className="h-5 w-5 text-muted-foreground" />
+                          <Avatar className="h-9 w-9 border shrink-0">
+                            {user.profilePhotoUrl && <AvatarImage src={user.profilePhotoUrl} alt={`Foto de ${user.name || "usuário"}`} className="object-cover" />}
+                            <AvatarFallback className="text-xs">
+                              {(user.name || "U").trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("")}
+                            </AvatarFallback>
+                          </Avatar>
                           <span className="underline decoration-dotted underline-offset-4">
                             {user.name || "Sem nome"}
                           </span>
@@ -441,7 +458,7 @@ export default function Users() {
 
       {/* Modal de Criação */}
       <Dialog open={isCreateModalOpen} onOpenChange={(open) => { setIsCreateModalOpen(open); if (!open) setCreateError(""); }}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Criar Novo Usuário</DialogTitle>
             <DialogDescription>Preencha os dados do novo usuário</DialogDescription>
@@ -465,6 +482,13 @@ export default function Users() {
               />
             </div>
             )}
+            <UserProfilePhotoField
+              name={formData.name}
+              profilePhotoUrl={formData.profilePhotoUrl}
+              profilePhotoKey={formData.profilePhotoKey}
+              onChange={(photo) => setFormData({ ...formData, ...photo })}
+              disabled={createUserMutation.isPending || createLocalUserMutation.isPending}
+            />
             <div>
               <Label htmlFor="name">
                 Nome <span className="text-red-500">*</span>
@@ -551,12 +575,19 @@ export default function Users() {
 
       {/* Modal de Edição */}
       <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Usuário</DialogTitle>
             <DialogDescription>Atualize os dados do usuário</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <UserProfilePhotoField
+              name={formData.name}
+              profilePhotoUrl={formData.profilePhotoUrl}
+              profilePhotoKey={formData.profilePhotoKey}
+              onChange={(photo) => setFormData({ ...formData, ...photo })}
+              disabled={updateUserMutation.isPending}
+            />
             <div>
               <Label htmlFor="edit-name">
                 Nome <span className="text-red-500">*</span>
