@@ -50,6 +50,13 @@
       "when": 1787688000000,
       "tag": "0006_legacy_anamnesis_import",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1787781600000,
+      "tag": "0007_user_profile_photo",
+      "breakpoints": true
     }
   ]
 }

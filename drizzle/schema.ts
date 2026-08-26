@@ -298,6 +298,8 @@ export const users = mysqlTable("users", {
 	isActive: tinyint().default(1).notNull(),
 	studioId: int(),
 	passwordHash: varchar({ length: 255 }),
+	profilePhotoUrl: varchar({ length: 500 }),
+	profilePhotoKey: varchar({ length: 500 }),
 }, (table) => [uniqueIndex("idx_users_openId").on(table.openId)]);
 
 // ============ ESTOQUE E FORNECEDORES ============

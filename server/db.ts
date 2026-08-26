@@ -212,7 +212,7 @@ export async function getUserById(id: number) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-export async function createUser(data: { openId: string; name?: string; email?: string; role?: "superadmin" | "admin" | "collaborator"; studioId?: number | null; artistId?: number | null; passwordHash?: string }) {
+export async function createUser(data: { openId: string; name?: string; email?: string; role?: "superadmin" | "admin" | "collaborator"; studioId?: number | null; artistId?: number | null; passwordHash?: string; profilePhotoUrl?: string | null; profilePhotoKey?: string | null }) {
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot create user: database not available");
@@ -228,12 +228,14 @@ export async function createUser(data: { openId: string; name?: string; email?: 
     artistId: data.artistId ?? null,
     isActive: 1,
     passwordHash: data.passwordHash ?? null,
+    profilePhotoUrl: data.profilePhotoUrl ?? null,
+    profilePhotoKey: data.profilePhotoKey ?? null,
   });
 
   return result;
 }
 
-export async function updateUser(id: number, data: { name?: string; email?: string; role?: "superadmin" | "admin" | "collaborator"; studioId?: number | null; artistId?: number | null; isActive?: number; passwordHash?: string; lastSignedIn?: string }) {
+export async function updateUser(id: number, data: { name?: string; email?: string; role?: "superadmin" | "admin" | "collaborator"; studioId?: number | null; artistId?: number | null; isActive?: number; passwordHash?: string; lastSignedIn?: string; profilePhotoUrl?: string | null; profilePhotoKey?: string | null }) {
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot update user: database not available");
@@ -248,6 +250,8 @@ export async function updateUser(id: number, data: { name?: string; email?: stri
   if (data.artistId !== undefined) updateData.artistId = data.artistId;
   if (data.isActive !== undefined) updateData.isActive = data.isActive;
   if (data.passwordHash !== undefined) updateData.passwordHash = data.passwordHash;
+  if (data.profilePhotoUrl !== undefined) updateData.profilePhotoUrl = data.profilePhotoUrl;
+  if (data.profilePhotoKey !== undefined) updateData.profilePhotoKey = data.profilePhotoKey;
   if (data.lastSignedIn !== undefined) {
     updateData.lastSignedIn = toDateStr(data.lastSignedIn);
   }
