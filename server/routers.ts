@@ -4045,7 +4045,13 @@ export const appRouter = router({
 
     deleteMaterial: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Apenas administradores podem remover materiais.",
+          });
+        }
         await db.deleteMaterial(input.id);
         return { success: true };
       }),
