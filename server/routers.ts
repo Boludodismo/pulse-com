@@ -4065,6 +4065,43 @@ export const appRouter = router({
       .input(z.object({ materialId: z.number().optional() }))
       .query(async ({ input }) => db.listMaterialLots(input.materialId)),
 
+    deactivateLot: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Apenas administradores podem desativar lotes.",
+          });
+        }
+
+        const lot = await db.deactivateMaterialLot(input.id);
+        if (!lot) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Lote não encontrado ou já desativado.",
+          });
+        }
+
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          userName: ctx.user.name || "Usuário sem nome",
+          action: "delete",
+          entity: "settings",
+          entityId: lot.id,
+          entityName: `Lote ${lot.lotNumber}`,
+          details: {
+            operation: "deactivate_material_lot",
+            deactivatedLot: lot,
+            stockTotalChanged: false,
+          },
+          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
+          userAgent: ctx.req.headers?.["user-agent"],
+        });
+
+        return { success: true };
+      }),
+
     getExpiryAlerts: protectedProcedure
       .input(z.object({ days: z.number().int().min(1).max(365).default(90) }))
       .query(async ({ input }) => db.getExpiryAlerts(input.days)),
