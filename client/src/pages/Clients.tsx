@@ -6,9 +6,21 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, Eye, Phone, Mail, Calendar, ArrowUpDown } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Plus, Search, Eye, Phone, Mail, Calendar, ArrowUpDown, Trash2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useIsMobile } from "@/hooks/useMobile";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { toast } from "sonner";
 
 const PAGE_SIZE = 50;
 
@@ -17,7 +29,11 @@ export default function Clients() {
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [clientToDelete, setClientToDelete] = useState<{ id: number; name: string } | null>(null);
   const isMobile = useIsMobile();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
+  const utils = trpc.useUtils();
 
   // Debounce: só dispara a query 300ms após parar de digitar
   useEffect(() => {
@@ -33,6 +49,20 @@ export default function Clients() {
     { term: debouncedSearch },
     { enabled: debouncedSearch.length > 0 }
   );
+
+  const deleteClient = trpc.clients.delete.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.clients.list.invalidate(),
+        utils.clients.search.invalidate(),
+      ]);
+      toast.success("Cliente excluído com sucesso.");
+      setClientToDelete(null);
+    },
+    onError: (error) => {
+      toast.error(`Não foi possível excluir o cliente: ${error.message}`);
+    },
+  });
 
   // Lista paginada para exibição sem busca (evita renderizar 5k+ linhas)
   const allClients = useMemo(() => clients ?? [], [clients]);
@@ -173,7 +203,24 @@ export default function Clients() {
                         <span className="font-medium text-foreground">{formatCurrency(client.totalSpent)}</span>
                       </div>
                     </div>
-                    <Eye className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                      {isAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-destructive hover:text-destructive"
+                          title="Excluir cliente"
+                          aria-label={`Excluir cliente ${client.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setClientToDelete({ id: client.id, name: client.name });
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -224,14 +271,31 @@ export default function Clients() {
                           <Badge variant="secondary">{client.appointmentCount}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => { e.stopPropagation(); setLocation(`/clients/${client.id}`); }}
-                          >
-                            <Eye className="h-4 w-4 mr-2" />
-                            Ver
-                          </Button>
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => { e.stopPropagation(); setLocation(`/clients/${client.id}`); }}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              Ver
+                            </Button>
+                            {isAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-9 w-9 text-destructive hover:text-destructive"
+                                title="Excluir cliente"
+                                aria-label={`Excluir cliente ${client.name}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setClientToDelete({ id: client.id, name: client.name });
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -269,6 +333,39 @@ export default function Clients() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={clientToDelete !== null}
+        onOpenChange={(open) => !open && setClientToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir cliente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Você está prestes a excluir permanentemente o cadastro
+              {clientToDelete ? ` de ${clientToDelete.name}` : " deste cliente"}.
+              Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteClient.isPending}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!clientToDelete || deleteClient.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (clientToDelete) {
+                  deleteClient.mutate({ id: clientToDelete.id });
+                }
+              }}
+            >
+              {deleteClient.isPending ? "Excluindo..." : "Excluir definitivamente"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
