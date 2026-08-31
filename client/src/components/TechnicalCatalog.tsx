@@ -137,6 +137,7 @@ export default function TechnicalCatalog() {
     onSuccess: () => {
       utils.stock.listMaterials.invalidate();
       utils.stock.getLowStock.invalidate();
+      utils.stock.getReorderSuggestions.invalidate();
       setStockDialogOpen(false);
       setStockForm({ baseUnit: "un", purchaseUnit: "cx", unitsPerPackage: "1", packageQuantity: "", minStock: "", targetStock: "", avgPrice: "", supplierId: "", lotNumber: "", expiresAt: "", notes: "" });
       toast.success("Variação técnica adicionada ao estoque.");
