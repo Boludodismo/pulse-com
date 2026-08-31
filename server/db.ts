@@ -3393,6 +3393,34 @@ export async function listMaterialLots(materialId?: number) {
     .orderBy(materialLots.expiresAt, materialLots.lotNumber);
 }
 
+export async function getExpiryAlerts(days = 90) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    id: materialLots.id,
+    materialId: materialLots.materialId,
+    materialName: materials.name,
+    baseUnit: materials.baseUnit,
+    lotNumber: materialLots.lotNumber,
+    expiresAt: materialLots.expiresAt,
+    currentQuantity: materialLots.currentQuantity,
+  }).from(materialLots)
+    .innerJoin(materials, eq(materials.id, materialLots.materialId))
+    .where(and(
+      eq(materialLots.isActive, 1),
+      eq(materials.isActive, 1),
+      sql`CAST(${materialLots.currentQuantity} AS DECIMAL(12,3)) > 0`,
+      sql`${materialLots.expiresAt} IS NOT NULL`,
+      sql`${materialLots.expiresAt} <= DATE_ADD(NOW(), INTERVAL ${days} DAY)`
+    ))
+    .orderBy(materialLots.expiresAt, materials.name);
+  const now = Date.now();
+  return rows.map((row) => ({
+    ...row,
+    daysRemaining: row.expiresAt ? Math.ceil((new Date(row.expiresAt).getTime() - now) / 86_400_000) : null,
+  }));
+}
+
 // ============ KITS DE PROCEDIMENTO ============
 
 type ProcedureKitItemInput = {
