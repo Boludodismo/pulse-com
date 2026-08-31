@@ -15,6 +15,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -35,6 +45,7 @@ import { SkeletonCard } from "@/components/SkeletonCard";
 import { SkeletonTable } from "@/components/SkeletonTable";
 import TechnicalCatalog from "@/components/TechnicalCatalog";
 import { toast } from "sonner";
+import { useAuth } from "@/_core/hooks/useAuth";
 import {
   Package,
   AlertTriangle,
@@ -121,6 +132,8 @@ const emptyForm = (): MaterialForm => ({
 
 export default function Stock() {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
 
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -148,6 +161,10 @@ export default function Stock() {
     null,
   );
   const [historyMaterialName, setHistoryMaterialName] = useState("");
+  const [lotToDeactivate, setLotToDeactivate] = useState<{
+    id: number;
+    lotNumber: string;
+  } | null>(null);
   const [showKitForm, setShowKitForm] = useState(false);
   const [kitForm, setKitForm] = useState<KitForm>(emptyKitForm());
   const [stockView, setStockView] = useState<"inventory" | "catalog">(
@@ -237,6 +254,18 @@ export default function Stock() {
         `Movimentação registrada! Estoque: ${result.previousStock} → ${result.newStock}`,
       );
       notifySync("movimentacao");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deactivateLot = trpc.stock.deactivateLot.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.stock.listLots.invalidate(),
+        utils.stock.getExpiryAlerts.invalidate(),
+      ]);
+      setLotToDeactivate(null);
+      toast.success("Lote desativado sem alterar o estoque total.");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -1463,6 +1492,7 @@ export default function Stock() {
                       <TableHead className="text-right">
                         Saldo do lote
                       </TableHead>
+                      {isAdmin && <TableHead className="w-12">Ações</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1486,6 +1516,25 @@ export default function Stock() {
                         <TableCell className="text-right font-mono text-xs">
                           {Number(lot.currentQuantity).toLocaleString("pt-BR")}
                         </TableCell>
+                        {isAdmin && (
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                              title="Desativar lote"
+                              aria-label={`Desativar lote ${lot.lotNumber}`}
+                              onClick={() =>
+                                setLotToDeactivate({
+                                  id: lot.id,
+                                  lotNumber: lot.lotNumber,
+                                })
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -1500,6 +1549,39 @@ export default function Stock() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={lotToDeactivate !== null}
+        onOpenChange={(open) => !open && setLotToDeactivate(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Desativar lote?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O lote {lotToDeactivate?.lotNumber} deixará de aparecer nas listas
+              e nos alertas. O histórico será preservado e o estoque total do
+              material não será alterado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deactivateLot.isPending}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!lotToDeactivate || deactivateLot.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (lotToDeactivate) {
+                  deactivateLot.mutate({ id: lotToDeactivate.id });
+                }
+              }}
+            >
+              {deactivateLot.isPending ? "Desativando..." : "Desativar lote"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 }
