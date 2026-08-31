@@ -63,8 +63,11 @@ type MaterialForm = {
   name: string;
   category: string;
   unit: string;
+  purchaseUnit: string;
+  unitsPerPackage: string;
   currentStock: string;
   minStock: string;
+  targetStock: string;
   avgPrice: string;
   supplierId: string;
   notes: string;
@@ -73,6 +76,9 @@ type MaterialForm = {
 type MovementForm = {
   type: "entrada" | "saida" | "ajuste";
   quantity: string;
+  inputUnit: "base" | "package";
+  lotNumber: string;
+  expiresAt: string;
   reason: string;
 };
 
@@ -100,8 +106,11 @@ const emptyForm = (): MaterialForm => ({
   name: "",
   category: "",
   unit: "un",
+  purchaseUnit: "un",
+  unitsPerPackage: "1",
   currentStock: "0",
   minStock: "0",
+  targetStock: "0",
   avgPrice: "0",
   supplierId: "",
   notes: "",
@@ -119,7 +128,7 @@ export default function Stock() {
   const [showMovement, setShowMovement] = useState(false);
   const [movementMaterialId, setMovementMaterialId] = useState<number | null>(null);
   const [movementMaterialName, setMovementMaterialName] = useState("");
-  const [movForm, setMovForm] = useState<MovementForm>({ type: "entrada", quantity: "", reason: "" });
+  const [movForm, setMovForm] = useState<MovementForm>({ type: "entrada", quantity: "", inputUnit: "base", lotNumber: "", expiresAt: "", reason: "" });
 
   const [showHistory, setShowHistory] = useState(false);
   const [historyMaterialId, setHistoryMaterialId] = useState<number | null>(null);
@@ -130,6 +139,7 @@ export default function Stock() {
 
   const { data: materials = [], isLoading } = trpc.stock.listMaterials.useQuery({ activeOnly: true });
   const { data: lowStock = [] } = trpc.stock.getLowStock.useQuery();
+  const { data: reorderSuggestions = [] } = trpc.stock.getReorderSuggestions.useQuery();
   const { data: suppliers = [] } = trpc.suppliers.list.useQuery({ activeOnly: true });
   const { data: movements = [] } = trpc.stock.listMovements.useQuery(
     { materialId: historyMaterialId ?? undefined, limit: 100 },
@@ -179,7 +189,7 @@ export default function Stock() {
       utils.stock.getLowStock.invalidate();
       utils.stock.listMovements.invalidate();
       setShowMovement(false);
-      setMovForm({ type: "entrada", quantity: "", reason: "" });
+      setMovForm({ type: "entrada", quantity: "", inputUnit: "base", lotNumber: "", expiresAt: "", reason: "" });
       toast.success(`Movimentação registrada! Estoque: ${result.previousStock} → ${result.newStock}`);
       notifySync("movimentacao");
     },
@@ -213,8 +223,12 @@ export default function Stock() {
       name: form.name,
       category: form.category,
       unit: form.unit,
+      baseUnit: form.unit,
+      purchaseUnit: form.purchaseUnit,
+      unitsPerPackage: parseFloat(form.unitsPerPackage) || 1,
       currentStock: parseFloat(form.currentStock) || 0,
       minStock: parseFloat(form.minStock) || 0,
+      targetStock: parseFloat(form.targetStock) || parseFloat(form.minStock) || 0,
       avgPrice: parseFloat(form.avgPrice) || 0,
       supplierId: form.supplierId ? parseInt(form.supplierId) : undefined,
       notes: form.notes || undefined,
@@ -232,8 +246,11 @@ export default function Stock() {
       name: mat.name,
       category: mat.category,
       unit: mat.unit,
+      purchaseUnit: mat.purchaseUnit || mat.unit,
+      unitsPerPackage: String(mat.unitsPerPackage || 1),
       currentStock: String(mat.currentStock),
       minStock: String(mat.minStock),
+      targetStock: String(mat.targetStock || mat.minStock),
       avgPrice: String(mat.avgPrice),
       supplierId: mat.supplierId ? String(mat.supplierId) : "",
       notes: mat.notes || "",
@@ -244,7 +261,7 @@ export default function Stock() {
   const handleMovement = (mat: any) => {
     setMovementMaterialId(mat.id);
     setMovementMaterialName(mat.name);
-    setMovForm({ type: "entrada", quantity: "", reason: "" });
+    setMovForm({ type: "entrada", quantity: "", inputUnit: "base", lotNumber: "", expiresAt: "", reason: "" });
     setShowMovement(true);
   };
 
@@ -253,10 +270,18 @@ export default function Stock() {
       toast.error("Informe a quantidade.");
       return;
     }
+    const material = materials.find((candidate) => candidate.id === movementMaterialId);
+    const conversionFactor = movForm.type === "ajuste" || movForm.inputUnit === "base" ? 1 : Number(material?.unitsPerPackage || 1);
     addMovement.mutate({
       materialId: movementMaterialId,
       type: movForm.type,
       quantity: parseFloat(movForm.quantity),
+      inputQuantity: parseFloat(movForm.quantity),
+      inputUnit: movForm.inputUnit === "package" ? (material?.purchaseUnit || "embalagem") : (material?.baseUnit || material?.unit || "un"),
+      conversionFactor,
+      lotNumber: movForm.lotNumber.trim() || undefined,
+      expiresAt: movForm.expiresAt ? `${movForm.expiresAt} 00:00:00` : undefined,
+      source: movForm.type === "entrada" ? "compra" : movForm.type === "ajuste" ? "ajuste" : "manual",
       reason: movForm.reason || undefined,
     });
   };
@@ -355,9 +380,9 @@ export default function Stock() {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                {lowStock.map((m) => (
+                {reorderSuggestions.map((m) => (
                   <Badge key={m.id} variant="outline" className="border-yellow-600 text-yellow-300 text-xs">
-                    {m.name} — {parseFloat(String(m.currentStock))} {m.unit} (mín: {parseFloat(String(m.minStock))})
+                    {m.name} — pedir {m.suggestedPackages} {m.purchaseUnit} ({m.suggestedBaseUnits} {m.baseUnit})
                   </Badge>
                 ))}
               </div>
@@ -413,8 +438,9 @@ export default function Stock() {
                       <TableCell className="hidden sm:table-cell"><Badge variant="outline" className="text-xs">{mat.category}</Badge></TableCell>
                       <TableCell className="text-right font-mono text-xs sm:text-sm">
                         <span className={status === "empty" ? "text-red-400" : status === "low" ? "text-yellow-400" : ""}>
-                          {parseFloat(String(mat.currentStock))} {mat.unit}
+                          {parseFloat(String(mat.currentStock))} {mat.baseUnit || mat.unit}
                         </span>
+                        {Number(mat.unitsPerPackage) > 1 && <span className="block text-[10px] text-muted-foreground">≈ {(Number(mat.currentStock) / Number(mat.unitsPerPackage)).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} {mat.purchaseUnit}</span>}
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-right font-mono text-xs text-muted-foreground">{parseFloat(String(mat.minStock))} {mat.unit}</TableCell>
                       <TableCell className="hidden lg:table-cell text-right font-mono text-xs text-muted-foreground">
@@ -541,13 +567,24 @@ export default function Stock() {
                 </Select>
               </div>
               <div>
-                <Label>Unidade *</Label>
+                <Label>Unidade de consumo *</Label>
                 <Select value={form.unit} onValueChange={v => setForm(f => ({ ...f, unit: v }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {UNITS.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                   </SelectContent>
                 </Select>
+              </div>
+              <div>
+                <Label>Unidade de compra</Label>
+                <Select value={form.purchaseUnit} onValueChange={v => setForm(f => ({ ...f, purchaseUnit: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{["un", "cx", "pct", "frasco", "galão", "rolo"].map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Conteúdo por embalagem</Label>
+                <Input type="number" min="0.001" step="0.001" value={form.unitsPerPackage} onChange={e => setForm(f => ({ ...f, unitsPerPackage: e.target.value }))} />
               </div>
               <div>
                 <Label>Estoque Atual</Label>
@@ -558,6 +595,10 @@ export default function Stock() {
                 <Label>Estoque Mínimo (alerta)</Label>
                 <Input type="number" min="0" step="0.01" value={form.minStock}
                   onChange={e => setForm(f => ({ ...f, minStock: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Estoque desejado</Label>
+                <Input type="number" min="0" step="0.01" value={form.targetStock} onChange={e => setForm(f => ({ ...f, targetStock: e.target.value }))} />
               </div>
               <div>
                 <Label>Preço Médio (R$)</Label>
@@ -680,6 +721,23 @@ export default function Stock() {
                 onChange={e => setMovForm(f => ({ ...f, quantity: e.target.value }))}
                 placeholder="0" />
             </div>
+            {movForm.type !== "ajuste" && <div>
+              <Label>Informar quantidade em</Label>
+              <Select value={movForm.inputUnit} onValueChange={v => setMovForm(f => ({ ...f, inputUnit: v as "base" | "package" }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="base">Unidade de consumo</SelectItem>
+                  <SelectItem value="package">Embalagem de compra</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>}
+            {(() => {
+              const material = materials.find((candidate) => candidate.id === movementMaterialId);
+              const factor = movForm.type === "ajuste" || movForm.inputUnit === "base" ? 1 : Number(material?.unitsPerPackage || 1);
+              const normalized = (Number(movForm.quantity) || 0) * factor;
+              return <div className="rounded-lg border border-orange-500/25 bg-orange-500/[0.06] p-3 text-sm"><span className="font-medium">Movimento calculado:</span> {normalized.toLocaleString("pt-BR")} {material?.baseUnit || material?.unit || "un"}</div>;
+            })()}
+            {movForm.type === "entrada" && <div className="grid grid-cols-2 gap-3"><div><Label>Lote</Label><Input value={movForm.lotNumber} onChange={e => setMovForm(f => ({ ...f, lotNumber: e.target.value }))} placeholder="Opcional" /></div><div><Label>Validade</Label><Input type="date" value={movForm.expiresAt} onChange={e => setMovForm(f => ({ ...f, expiresAt: e.target.value }))} /></div></div>}
             <div>
               <Label>Motivo / Referência</Label>
               <Input value={movForm.reason} onChange={e => setMovForm(f => ({ ...f, reason: e.target.value }))}
