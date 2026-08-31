@@ -2,7 +2,13 @@ import { useState, useRef, DragEvent, ChangeEvent } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SkeletonCard } from "@/components/SkeletonCard";
@@ -10,15 +16,63 @@ import { SkeletonTable } from "@/components/SkeletonTable";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { EventModal } from "@/components/EventModal";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Mail, Phone, Instagram, Cake, Calendar, DollarSign, Users, Plus, Loader2, AlertCircle, AlertTriangle, Upload, X, Image as ImageIcon, Clock, FileText, FileDown, Pencil, Trash2, CreditCard, Package, ChevronDown, Stethoscope, Play, CheckCircle2, MapPin, Palette } from "lucide-react";
+import {
+  ArrowLeft,
+  Mail,
+  Phone,
+  Instagram,
+  Cake,
+  Calendar,
+  DollarSign,
+  Users,
+  Plus,
+  Loader2,
+  AlertCircle,
+  AlertTriangle,
+  Upload,
+  X,
+  Image as ImageIcon,
+  Clock,
+  FileText,
+  FileDown,
+  Pencil,
+  Trash2,
+  CreditCard,
+  Package,
+  ChevronDown,
+  Stethoscope,
+  Play,
+  CheckCircle2,
+  MapPin,
+  Palette,
+} from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import SendAnamneseDialog from "@/components/SendAnamneseDialog";
@@ -29,14 +83,27 @@ export default function ClientProfile() {
   const params = useParams<{ id: string }>();
   const clientId = parseInt(params.id || "0");
 
-  const { data: client, isLoading } = trpc.clients.getById.useQuery({ id: clientId });
-  const { data: appointments } = trpc.appointments.getByClientId.useQuery({ clientId });
-  const { data: appointmentResponses } = trpc.appointments.getResponseHistory.useQuery({ clientId });
-  const { data: anamnesis } = trpc.anamnesis.getByClientId.useQuery({ clientId });
-  const { data: anamneseSubmissions } = trpc.anamnese.getRequestsByClientId.useQuery({ clientId });
-  const { data: anamnesisRiskHistory } = trpc.anamnesis.getRiskHistoryByClientId.useQuery({ clientId });
-  const { data: transactions } = trpc.transactions.getByClientId.useQuery({ clientId });
-  const { data: availableMaterials } = trpc.stock.listMaterials.useQuery({ activeOnly: true });
+  const { data: client, isLoading } = trpc.clients.getById.useQuery({
+    id: clientId,
+  });
+  const { data: appointments } = trpc.appointments.getByClientId.useQuery({
+    clientId,
+  });
+  const { data: appointmentResponses } =
+    trpc.appointments.getResponseHistory.useQuery({ clientId });
+  const { data: anamnesis } = trpc.anamnesis.getByClientId.useQuery({
+    clientId,
+  });
+  const { data: anamneseSubmissions } =
+    trpc.anamnese.getRequestsByClientId.useQuery({ clientId });
+  const { data: anamnesisRiskHistory } =
+    trpc.anamnesis.getRiskHistoryByClientId.useQuery({ clientId });
+  const { data: transactions } = trpc.transactions.getByClientId.useQuery({
+    clientId,
+  });
+  const { data: availableMaterials } = trpc.stock.listMaterials.useQuery({
+    activeOnly: true,
+  });
   const { data: gallery } = trpc.gallery.getByClientId.useQuery({ clientId });
   const { data: notes } = trpc.notes.getByClientId.useQuery({ clientId });
 
@@ -48,8 +115,12 @@ export default function ClientProfile() {
   const [anamnesisDialogOpen, setAnamnesisDialogOpen] = useState(false);
   const [sendLinkDialogOpen, setSendLinkDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
-  const [appointmentToComplete, setAppointmentToComplete] = useState<number | null>(null);
-  const [legacyDateEdits, setLegacyDateEdits] = useState<Record<number, string>>({});
+  const [appointmentToComplete, setAppointmentToComplete] = useState<
+    number | null
+  >(null);
+  const [legacyDateEdits, setLegacyDateEdits] = useState<
+    Record<number, string>
+  >({});
 
   // Estados para upload de imagem
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -67,18 +138,21 @@ export default function ClientProfile() {
     category: "",
     description: "",
     amount: "",
-    paymentMethod: "dinheiro" as "dinheiro" | "pix" | "credito" | "debito" | "transferencia",
-    date: new Date().toISOString().split('T')[0],
+    paymentMethod: "dinheiro" as
+      "dinheiro" | "pix" | "credito" | "debito" | "transferencia",
+    date: new Date().toISOString().split("T")[0],
   });
 
   // Materiais selecionados para baixa no estoque
-  const [selectedMaterials, setSelectedMaterials] = useState<Array<{
-    materialId: number;
-    materialName: string;
-    unit: string;
-    currentStock: number;
-    quantity: string;
-  }>>([]);
+  const [selectedMaterials, setSelectedMaterials] = useState<
+    Array<{
+      materialId: number;
+      materialName: string;
+      unit: string;
+      currentStock: number;
+      quantity: string;
+    }>
+  >([]);
 
   const [noteContent, setNoteContent] = useState("");
 
@@ -105,26 +179,33 @@ export default function ClientProfile() {
         utils.dashboard.metrics.invalidate(),
       ]);
       setAppointmentToComplete(null);
-      toast.success("Trabalho confirmado. Pós-vendas de 7, 60, 180 e 365 dias programados!");
+      toast.success(
+        "Trabalho confirmado. Pós-vendas de 7, 60, 180 e 365 dias programados!",
+      );
     },
-    onError: (error) => toast.error(`Erro ao concluir trabalho: ${error.message}`),
+    onError: (error) =>
+      toast.error(`Erro ao concluir trabalho: ${error.message}`),
   });
-  const confirmLegacyDate = trpc.legacyAnamnesis.confirmProcedureDate.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.anamnese.getRequestsByClientId.invalidate({ clientId }),
-        utils.postSaleFollowups.list.invalidate(),
-      ]);
-      toast.success("Data histórica confirmada e pós-venda anual recalculado.");
-    },
-    onError: (error) => toast.error(error.message),
-  });
+  const confirmLegacyDate =
+    trpc.legacyAnamnesis.confirmProcedureDate.useMutation({
+      onSuccess: async () => {
+        await Promise.all([
+          utils.anamnese.getRequestsByClientId.invalidate({ clientId }),
+          utils.postSaleFollowups.list.invalidate(),
+        ]);
+        toast.success(
+          "Data histórica confirmada e pós-venda anual recalculado.",
+        );
+      },
+      onError: (error) => toast.error(error.message),
+    });
 
   const createTransaction = trpc.transactions.createWithMaterials.useMutation({
     onSuccess: (data) => {
-      const stockMsg = data.stockMovements.length > 0
-        ? ` | Baixa em ${data.stockMovements.length} material(is) realizada.`
-        : "";
+      const stockMsg =
+        data.stockMovements.length > 0
+          ? ` | Baixa em ${data.stockMovements.length} material(is) realizada.`
+          : "";
       toast.success(`Transação registrada com sucesso!${stockMsg}`);
       utils.transactions.getByClientId.invalidate({ clientId });
       utils.clients.getById.invalidate({ id: clientId });
@@ -138,7 +219,7 @@ export default function ClientProfile() {
         description: "",
         amount: "",
         paymentMethod: "dinheiro",
-        date: new Date().toISOString().split('T')[0],
+        date: new Date().toISOString().split("T")[0],
       });
       setSelectedMaterials([]);
     },
@@ -163,13 +244,22 @@ export default function ClientProfile() {
   const [editRecordDialogOpen, setEditRecordDialogOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<any>(null);
   const [editRecordData, setEditRecordData] = useState({
-    hasAllergies: false, allergiesDetails: "",
-    hasDiseases: false, diseasesDetails: "",
-    usesMedication: false, medicationDetails: "",
-    isPregnant: false, hasKeloid: false, acceptedTerms: false, notes: "",
+    hasAllergies: false,
+    allergiesDetails: "",
+    hasDiseases: false,
+    diseasesDetails: "",
+    usesMedication: false,
+    medicationDetails: "",
+    isPregnant: false,
+    hasKeloid: false,
+    acceptedTerms: false,
+    notes: "",
   });
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deletingItem, setDeletingItem] = useState<{ type: 'record' | 'submission'; id: number } | null>(null);
+  const [deletingItem, setDeletingItem] = useState<{
+    type: "record" | "submission";
+    id: number;
+  } | null>(null);
 
   const createAnamnesis = trpc.anamnesis.create.useMutation({
     onSuccess: () => {
@@ -177,10 +267,15 @@ export default function ClientProfile() {
       utils.anamnesis.getByClientId.invalidate({ clientId });
       setAnamnesisDialogOpen(false);
       setAnamnesisData({
-        hasAllergies: false, allergiesDetails: "",
-        hasDiseases: false, diseasesDetails: "",
-        usesMedication: false, medicationDetails: "",
-        isPregnant: false, hasKeloid: false, consentAccepted: false,
+        hasAllergies: false,
+        allergiesDetails: "",
+        hasDiseases: false,
+        diseasesDetails: "",
+        usesMedication: false,
+        medicationDetails: "",
+        isPregnant: false,
+        hasKeloid: false,
+        consentAccepted: false,
       });
     },
     onError: (error) => {
@@ -195,14 +290,16 @@ export default function ClientProfile() {
       setEditRecordDialogOpen(false);
       setEditingRecord(null);
     },
-    onError: (error) => toast.error(`Erro ao atualizar ficha: ${error.message}`),
+    onError: (error) =>
+      toast.error(`Erro ao atualizar ficha: ${error.message}`),
   });
 
   const deleteRecord = trpc.anamnese.deleteRecord.useMutation({
     onSuccess: () => {
       toast.success("Ficha excluída com sucesso!");
       utils.anamnesis.getByClientId.invalidate({ clientId });
-      setDeleteConfirmOpen(false); setDeletingItem(null);
+      setDeleteConfirmOpen(false);
+      setDeletingItem(null);
     },
     onError: (error) => toast.error(`Erro ao excluir ficha: ${error.message}`),
   });
@@ -211,7 +308,8 @@ export default function ClientProfile() {
     onSuccess: () => {
       toast.success("Ficha excluída com sucesso!");
       utils.anamnese.getRequestsByClientId.invalidate({ clientId });
-      setDeleteConfirmOpen(false); setDeletingItem(null);
+      setDeleteConfirmOpen(false);
+      setDeletingItem(null);
     },
     onError: (error) => toast.error(`Erro ao excluir ficha: ${error.message}`),
   });
@@ -219,18 +317,24 @@ export default function ClientProfile() {
   const handleOpenEditRecord = (record: any) => {
     setEditingRecord(record);
     setEditRecordData({
-      hasAllergies: !!record.hasAllergies, allergiesDetails: record.allergiesDetails || "",
-      hasDiseases: !!record.hasDiseases, diseasesDetails: record.diseasesDetails || "",
-      usesMedication: !!record.usesMedication, medicationDetails: record.medicationDetails || "",
-      isPregnant: !!record.isPregnant, hasKeloid: !!record.hasKeloid,
-      acceptedTerms: !!record.acceptedTerms, notes: record.notes || "",
+      hasAllergies: !!record.hasAllergies,
+      allergiesDetails: record.allergiesDetails || "",
+      hasDiseases: !!record.hasDiseases,
+      diseasesDetails: record.diseasesDetails || "",
+      usesMedication: !!record.usesMedication,
+      medicationDetails: record.medicationDetails || "",
+      isPregnant: !!record.isPregnant,
+      hasKeloid: !!record.hasKeloid,
+      acceptedTerms: !!record.acceptedTerms,
+      notes: record.notes || "",
     });
     setEditRecordDialogOpen(true);
   };
 
   const handleConfirmDelete = () => {
     if (!deletingItem) return;
-    if (deletingItem.type === 'record') deleteRecord.mutate({ id: deletingItem.id });
+    if (deletingItem.type === "record")
+      deleteRecord.mutate({ id: deletingItem.id });
     else deleteSubmission.mutate({ id: deletingItem.id });
   };
 
@@ -263,15 +367,15 @@ export default function ClientProfile() {
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    
+
     const files = Array.from(e.dataTransfer.files);
     processFiles(files);
   };
 
   const processFiles = (files: File[]) => {
     // Filtrar apenas imagens
-    const imageFiles = files.filter(file => file.type.startsWith('image/'));
-    
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+
     if (imageFiles.length === 0) {
       toast.error("Por favor, selecione apenas arquivos de imagem");
       return;
@@ -279,8 +383,8 @@ export default function ClientProfile() {
 
     // Validar tamanho (máximo 5MB por imagem)
     const maxSize = 5 * 1024 * 1024; // 5MB
-    const oversizedFiles = imageFiles.filter(file => file.size > maxSize);
-    
+    const oversizedFiles = imageFiles.filter((file) => file.size > maxSize);
+
     if (oversizedFiles.length > 0) {
       toast.error("Algumas imagens excedem o tamanho máximo de 5MB");
       return;
@@ -290,7 +394,7 @@ export default function ClientProfile() {
 
     // Criar previews
     const urls: string[] = [];
-    imageFiles.forEach(file => {
+    imageFiles.forEach((file) => {
       const reader = new FileReader();
       reader.onloadend = () => {
         urls.push(reader.result as string);
@@ -303,8 +407,8 @@ export default function ClientProfile() {
   };
 
   const removeFile = (index: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-    setPreviewUrls(prev => prev.filter((_, i) => i !== index));
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setPreviewUrls((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleUploadImages = async () => {
@@ -317,7 +421,7 @@ export default function ClientProfile() {
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
         const reader = new FileReader();
-        
+
         await new Promise<void>((resolve, reject) => {
           reader.onloadend = async () => {
             try {
@@ -328,7 +432,9 @@ export default function ClientProfile() {
                 mimeType: file.type,
                 description: uploadDescription || undefined,
                 tags: uploadTags || undefined,
-                appointmentId: uploadAppointmentId ? parseInt(uploadAppointmentId) : undefined,
+                appointmentId: uploadAppointmentId
+                  ? parseInt(uploadAppointmentId)
+                  : undefined,
               });
               resolve();
             } catch (error) {
@@ -340,7 +446,9 @@ export default function ClientProfile() {
         });
       }
 
-      toast.success(`${selectedFiles.length} imagem(ns) enviada(s) com sucesso!`);
+      toast.success(
+        `${selectedFiles.length} imagem(ns) enviada(s) com sucesso!`,
+      );
       setUploadDialogOpen(false);
       setSelectedFiles([]);
       setPreviewUrls([]);
@@ -384,8 +492,8 @@ export default function ClientProfile() {
       paymentMethod: transactionData.paymentMethod,
       date: transactionData.date,
       materials: selectedMaterials
-        .filter(m => parseFloat(m.quantity) > 0)
-        .map(m => ({
+        .filter((m) => parseFloat(m.quantity) > 0)
+        .map((m) => ({
           materialId: m.materialId,
           quantity: parseFloat(m.quantity),
           reason: `Usado em ${transactionData.category} - ${transactionData.date}`,
@@ -395,29 +503,36 @@ export default function ClientProfile() {
 
   const handleAddMaterial = (materialId: number) => {
     if (!availableMaterials) return;
-    const mat = availableMaterials.find(m => m.id === materialId);
+    const mat = availableMaterials.find((m) => m.id === materialId);
     if (!mat) return;
-    if (selectedMaterials.some(m => m.materialId === materialId)) {
+    if (selectedMaterials.some((m) => m.materialId === materialId)) {
       toast.error("Material já adicionado");
       return;
     }
-    setSelectedMaterials(prev => [...prev, {
-      materialId: mat.id,
-      materialName: mat.name,
-      unit: mat.unit || "un",
-      currentStock: parseFloat(String(mat.currentStock)) || 0,
-      quantity: "1",
-    }]);
+    setSelectedMaterials((prev) => [
+      ...prev,
+      {
+        materialId: mat.id,
+        materialName: mat.name,
+        unit: mat.unit || "un",
+        currentStock: parseFloat(String(mat.currentStock)) || 0,
+        quantity: "1",
+      },
+    ]);
   };
 
   const handleRemoveMaterial = (materialId: number) => {
-    setSelectedMaterials(prev => prev.filter(m => m.materialId !== materialId));
+    setSelectedMaterials((prev) =>
+      prev.filter((m) => m.materialId !== materialId),
+    );
   };
 
   const handleMaterialQtyChange = (materialId: number, qty: string) => {
-    setSelectedMaterials(prev => prev.map(m =>
-      m.materialId === materialId ? { ...m, quantity: qty } : m
-    ));
+    setSelectedMaterials((prev) =>
+      prev.map((m) =>
+        m.materialId === materialId ? { ...m, quantity: qty } : m,
+      ),
+    );
   };
 
   const handleCreateNote = () => {
@@ -448,7 +563,10 @@ export default function ClientProfile() {
       return;
     }
 
-    if (anamnesisData.usesMedication && !anamnesisData.medicationDetails.trim()) {
+    if (
+      anamnesisData.usesMedication &&
+      !anamnesisData.medicationDetails.trim()
+    ) {
       toast.error("Descreva os medicamentos");
       return;
     }
@@ -456,11 +574,17 @@ export default function ClientProfile() {
     createAnamnesis.mutate({
       clientId,
       hasAllergies: anamnesisData.hasAllergies,
-      allergiesDetails: anamnesisData.hasAllergies ? anamnesisData.allergiesDetails : undefined,
+      allergiesDetails: anamnesisData.hasAllergies
+        ? anamnesisData.allergiesDetails
+        : undefined,
       hasDiseases: anamnesisData.hasDiseases,
-      diseasesDetails: anamnesisData.hasDiseases ? anamnesisData.diseasesDetails : undefined,
+      diseasesDetails: anamnesisData.hasDiseases
+        ? anamnesisData.diseasesDetails
+        : undefined,
       usesMedication: anamnesisData.usesMedication,
-      medicationDetails: anamnesisData.usesMedication ? anamnesisData.medicationDetails : undefined,
+      medicationDetails: anamnesisData.usesMedication
+        ? anamnesisData.medicationDetails
+        : undefined,
       isPregnant: anamnesisData.isPregnant,
       hasKeloid: anamnesisData.hasKeloid,
       acceptedTerms: anamnesisData.consentAccepted,
@@ -468,32 +592,32 @@ export default function ClientProfile() {
   };
 
   const formatCurrency = (cents: number) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL",
     }).format(cents / 100);
   };
 
   // Bug 5: usar timezone America/Sao_Paulo para evitar deslocamento UTC
   const formatDate = (date: Date | string | null) => {
     if (!date) return "-";
-    return new Date(date).toLocaleDateString('pt-BR', { 
-      day: '2-digit', 
-      month: '2-digit', 
-      year: 'numeric',
-      timeZone: 'America/Sao_Paulo'
+    return new Date(date).toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      timeZone: "America/Sao_Paulo",
     });
   };
 
   const formatDateTime = (date: Date | string | null) => {
     if (!date) return "-";
-    return new Date(date).toLocaleString('pt-BR', { 
-      day: '2-digit', 
-      month: '2-digit', 
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'America/Sao_Paulo'
+    return new Date(date).toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "America/Sao_Paulo",
     });
   };
 
@@ -559,9 +683,14 @@ export default function ClientProfile() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl sm:text-3xl font-bold tracking-tight truncate">{client.name}</h1>
+          <h1 className="text-xl sm:text-3xl font-bold tracking-tight truncate">
+            {client.name}
+          </h1>
         </div>
-        <Badge variant="outline" className={`${getLoyaltyBadgeClass(client.loyaltyLevel)} text-xs sm:text-sm px-2 sm:px-4 py-1 sm:py-2 shrink-0`}>
+        <Badge
+          variant="outline"
+          className={`${getLoyaltyBadgeClass(client.loyaltyLevel)} text-xs sm:text-sm px-2 sm:px-4 py-1 sm:py-2 shrink-0`}
+        >
           {client.loyaltyLevel}
         </Badge>
       </div>
@@ -598,7 +727,9 @@ export default function ClientProfile() {
               {client.docNumber && (
                 <div className="flex items-center gap-2 text-sm">
                   <CreditCard className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground text-xs">{client.docType === 'passport' ? 'Passaporte' : 'CPF'}:</span>
+                  <span className="text-muted-foreground text-xs">
+                    {client.docType === "passport" ? "Passaporte" : "CPF"}:
+                  </span>
                   <span>{client.docNumber}</span>
                 </div>
               )}
@@ -612,7 +743,9 @@ export default function ClientProfile() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-bold">{formatCurrency(client.totalSpent)}</p>
+                <p className="text-2xl font-bold">
+                  {formatCurrency(client.totalSpent)}
+                </p>
               </CardContent>
             </Card>
 
@@ -637,9 +770,9 @@ export default function ClientProfile() {
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold">
-                  {new Date(client.createdAt).toLocaleDateString('pt-BR', { 
-                    month: 'short', 
-                    year: 'numeric' 
+                  {new Date(client.createdAt).toLocaleDateString("pt-BR", {
+                    month: "short",
+                    year: "numeric",
                   })}
                 </p>
               </CardContent>
@@ -651,37 +784,53 @@ export default function ClientProfile() {
       {/* Tabs */}
       <Tabs defaultValue="appointments" className="w-full">
         <TabsList className="flex w-full bg-zinc-800 rounded-lg p-1 min-h-[44px] overflow-x-auto">
-          <TabsTrigger value="appointments" className="flex-1 min-w-fit text-xs sm:text-sm py-2">
+          <TabsTrigger
+            value="appointments"
+            className="flex-1 min-w-fit text-xs sm:text-sm py-2"
+          >
             <span className="hidden sm:inline">Agendamentos</span>
             <span className="sm:hidden text-[11px]">Agenda</span>
             {(appointments?.length ?? 0) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
-                {appointments!.length > 99 ? '99+' : appointments!.length}
+                {appointments!.length > 99 ? "99+" : appointments!.length}
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="anamnesis" className="flex-1 text-xs sm:text-sm py-2">
+          <TabsTrigger
+            value="anamnesis"
+            className="flex-1 text-xs sm:text-sm py-2"
+          >
             Anamnese
-            {((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0)) > 0 && (
+            {(anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0) >
+              0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
-                {Math.min((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0), 99)}
+                {Math.min(
+                  (anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0),
+                  99,
+                )}
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="transactions" className="flex-1 text-xs sm:text-sm py-2">
+          <TabsTrigger
+            value="transactions"
+            className="flex-1 text-xs sm:text-sm py-2"
+          >
             <span className="hidden sm:inline">Financeiro</span>
             <span className="sm:hidden">R$</span>
             {(transactions?.length ?? 0) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
-                {transactions!.length > 99 ? '99+' : transactions!.length}
+                {transactions!.length > 99 ? "99+" : transactions!.length}
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="gallery" className="flex-1 text-xs sm:text-sm py-2">
+          <TabsTrigger
+            value="gallery"
+            className="flex-1 text-xs sm:text-sm py-2"
+          >
             Galeria
             {(gallery?.length ?? 0) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
-                {gallery!.length > 99 ? '99+' : gallery!.length}
+                {gallery!.length > 99 ? "99+" : gallery!.length}
               </span>
             )}
           </TabsTrigger>
@@ -689,12 +838,18 @@ export default function ClientProfile() {
             Notas
             {(notes?.length ?? 0) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
-                {notes!.length > 99 ? '99+' : notes!.length}
+                {notes!.length > 99 ? "99+" : notes!.length}
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="procedures" className="flex-1 text-xs sm:text-sm py-2">
-            <span className="hidden sm:inline-flex items-center gap-1"><Stethoscope className="w-3 h-3" />POD</span>
+          <TabsTrigger
+            value="procedures"
+            className="flex-1 text-xs sm:text-sm py-2"
+          >
+            <span className="hidden sm:inline-flex items-center gap-1">
+              <Stethoscope className="w-3 h-3" />
+              POD
+            </span>
             <span className="sm:hidden">POD</span>
           </TabsTrigger>
         </TabsList>
@@ -705,11 +860,18 @@ export default function ClientProfile() {
             <CardHeader>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
                 <div className="flex-1 min-w-0">
-                  <CardTitle className="text-base sm:text-lg">Agendamentos</CardTitle>
-                  <CardDescription className="text-xs sm:text-sm">Histórico de agendamentos do cliente</CardDescription>
+                  <CardTitle className="text-base sm:text-lg">
+                    Agendamentos
+                  </CardTitle>
+                  <CardDescription className="text-xs sm:text-sm">
+                    Histórico de agendamentos do cliente
+                  </CardDescription>
                 </div>
                 {/* Bug 2: Substituído pelo EventModal unificado */}
-                <Button onClick={() => setEventModalOpen(true)} className="w-full sm:w-auto text-xs sm:text-sm">
+                <Button
+                  onClick={() => setEventModalOpen(true)}
+                  className="w-full sm:w-auto text-xs sm:text-sm"
+                >
                   <Plus className="h-3 w-3 sm:h-4 sm:w-4 mr-2" />
                   Novo Agendamento
                 </Button>
@@ -733,42 +895,67 @@ export default function ClientProfile() {
                       <CardContent className="pt-6">
                         <div className="flex items-start justify-between gap-4">
                           <div className="space-y-2">
-                            <p className="font-semibold text-lg">{appointment.service}</p>
+                            <p className="font-semibold text-lg">
+                              {appointment.service}
+                            </p>
                             <p className="text-sm text-muted-foreground">
-                              {formatDateTime(appointment.date)} • {appointment.duration} minutos
+                              {formatDateTime(appointment.date)} •{" "}
+                              {appointment.duration} minutos
                             </p>
                             <p className="text-sm">
-                              <span className="text-muted-foreground">Artista:</span> {appointment.artist}
+                              <span className="text-muted-foreground">
+                                Artista:
+                              </span>{" "}
+                              {appointment.artist}
                             </p>
                             {appointment.notes && (
-                              <p className="text-sm text-muted-foreground mt-2">{appointment.notes}</p>
-                            )}
-                            {appointment.confirmationStatus && appointment.confirmationStatus !== "pendente" && (
-                              <p className="text-xs text-orange-400">
-                                Resposta do cliente: {
-                                  appointment.confirmationStatus === "confirmado" ? "Confirmou o horário" :
-                                  appointment.confirmationStatus === "atraso" ? `Avisou que vai atrasar aproximadamente ${appointment.confirmationDelayMinutes || "?"} minutos` :
-                                  appointment.confirmationStatus === "reagendar" ? "Solicitou reagendamento" :
-                                  appointment.confirmationStatus === "nao_confirmado" ? "Não poderá comparecer" :
-                                  "Chegará antecipadamente"
-                                }
+                              <p className="text-sm text-muted-foreground mt-2">
+                                {appointment.notes}
                               </p>
                             )}
+                            {appointment.confirmationStatus &&
+                              appointment.confirmationStatus !== "pendente" && (
+                                <p className="text-xs text-orange-400">
+                                  Resposta do cliente:{" "}
+                                  {appointment.confirmationStatus ===
+                                  "confirmado"
+                                    ? "Confirmou o horário"
+                                    : appointment.confirmationStatus ===
+                                        "atraso"
+                                      ? `Avisou que vai atrasar aproximadamente ${appointment.confirmationDelayMinutes || "?"} minutos`
+                                      : appointment.confirmationStatus ===
+                                          "reagendar"
+                                        ? "Solicitou reagendamento"
+                                        : appointment.confirmationStatus ===
+                                            "nao_confirmado"
+                                          ? "Não poderá comparecer"
+                                          : "Chegará antecipadamente"}
+                                </p>
+                              )}
                           </div>
                           <div className="flex flex-col items-end gap-2 shrink-0">
-                            <Badge variant="outline" className={getStatusBadgeClass(appointment.status)}>
+                            <Badge
+                              variant="outline"
+                              className={getStatusBadgeClass(
+                                appointment.status,
+                              )}
+                            >
                               {appointment.status}
                             </Badge>
                             {appointment.status === "concluido" ? (
                               <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
-                                <CheckCircle2 className="h-3.5 w-3.5" /> Pós-venda programado
+                                <CheckCircle2 className="h-3.5 w-3.5" />{" "}
+                                Pós-venda programado
                               </span>
-                            ) : appointment.status !== "cancelado" && appointment.status !== "reagendado" ? (
+                            ) : appointment.status !== "cancelado" &&
+                              appointment.status !== "reagendado" ? (
                               <Button
                                 size="sm"
                                 variant="outline"
                                 className="h-8 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10"
-                                onClick={() => setAppointmentToComplete(appointment.id)}
+                                onClick={() =>
+                                  setAppointmentToComplete(appointment.id)
+                                }
                               >
                                 <CheckCircle2 className="h-4 w-4 mr-1.5" />
                                 Confirmar trabalho realizado
@@ -794,10 +981,16 @@ export default function ClientProfile() {
                   </h3>
                   <div className="space-y-3">
                     {appointmentResponses.map((response) => (
-                      <div key={response.id} className="rounded-lg border bg-muted/30 p-3">
-                        <p className="text-sm font-medium">{response.message}</p>
+                      <div
+                        key={response.id}
+                        className="rounded-lg border bg-muted/30 p-3"
+                      >
+                        <p className="text-sm font-medium">
+                          {response.message}
+                        </p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {formatDateTime(response.sentAt)} · Agendamento #{response.appointmentId}
+                          {formatDateTime(response.sentAt)} · Agendamento #
+                          {response.appointmentId}
                         </p>
                       </div>
                     ))}
@@ -807,25 +1000,40 @@ export default function ClientProfile() {
             </CardContent>
           </Card>
 
-          <AlertDialog open={appointmentToComplete !== null} onOpenChange={(open) => !open && setAppointmentToComplete(null)}>
+          <AlertDialog
+            open={appointmentToComplete !== null}
+            onOpenChange={(open) => !open && setAppointmentToComplete(null)}
+          >
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Confirmar execução do trabalho?</AlertDialogTitle>
+                <AlertDialogTitle>
+                  Confirmar execução do trabalho?
+                </AlertDialogTitle>
                 <AlertDialogDescription>
-                  O agendamento será marcado como concluído e o sistema criará automaticamente lembretes de pós-venda para 7, 60, 180 e 365 dias após a sessão.
+                  O agendamento será marcado como concluído e o sistema criará
+                  automaticamente lembretes de pós-venda para 7, 60, 180 e 365
+                  dias após a sessão.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={completeAppointment.isPending}>Voltar</AlertDialogCancel>
+                <AlertDialogCancel disabled={completeAppointment.isPending}>
+                  Voltar
+                </AlertDialogCancel>
                 <AlertDialogAction
                   className="bg-emerald-600 hover:bg-emerald-700"
-                  disabled={completeAppointment.isPending || appointmentToComplete === null}
+                  disabled={
+                    completeAppointment.isPending ||
+                    appointmentToComplete === null
+                  }
                   onClick={(event) => {
                     event.preventDefault();
-                    if (appointmentToComplete !== null) completeAppointment.mutate({ id: appointmentToComplete });
+                    if (appointmentToComplete !== null)
+                      completeAppointment.mutate({ id: appointmentToComplete });
                   }}
                 >
-                  {completeAppointment.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {completeAppointment.isPending && (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  )}
                   Confirmar e criar pós-vendas
                 </AlertDialogAction>
               </AlertDialogFooter>
@@ -840,183 +1048,251 @@ export default function ClientProfile() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Fichas de Anamnese</CardTitle>
-                  <CardDescription>Histórico de fichas preenchidas</CardDescription>
+                  <CardDescription>
+                    Histórico de fichas preenchidas
+                  </CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button onClick={() => setSendLinkDialogOpen(true)}>
                     <Mail className="h-4 w-4 mr-2" />
                     Enviar Link
                   </Button>
-                  <Dialog open={anamnesisDialogOpen} onOpenChange={setAnamnesisDialogOpen}>
+                  <Dialog
+                    open={anamnesisDialogOpen}
+                    onOpenChange={setAnamnesisDialogOpen}
+                  >
                     <DialogTrigger asChild>
                       <Button variant="outline">
                         <Plus className="h-4 w-4 mr-2" />
                         Nova Ficha
                       </Button>
                     </DialogTrigger>
-                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
-                      <DialogTitle>Ficha de Anamnese</DialogTitle>
-                      <DialogDescription>
-                        Preencha as informações de saúde de {client.name}
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-6 py-4">
-                      {/* Alergias */}
-                      <div className="space-y-3">
+                    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                      <DialogHeader>
+                        <DialogTitle>Ficha de Anamnese</DialogTitle>
+                        <DialogDescription>
+                          Preencha as informações de saúde de {client.name}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-6 py-4">
+                        {/* Alergias */}
+                        <div className="space-y-3">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              id="hasAllergies"
+                              checked={anamnesisData.hasAllergies}
+                              onCheckedChange={(checked) =>
+                                setAnamnesisData({
+                                  ...anamnesisData,
+                                  hasAllergies: checked as boolean,
+                                })
+                              }
+                            />
+                            <Label
+                              htmlFor="hasAllergies"
+                              className="font-semibold cursor-pointer"
+                            >
+                              Possui alergias?
+                            </Label>
+                          </div>
+                          {anamnesisData.hasAllergies && (
+                            <Textarea
+                              placeholder="Descreva as alergias..."
+                              value={anamnesisData.allergiesDetails}
+                              onChange={(e) =>
+                                setAnamnesisData({
+                                  ...anamnesisData,
+                                  allergiesDetails: e.target.value,
+                                })
+                              }
+                              rows={3}
+                            />
+                          )}
+                        </div>
+
+                        {/* Doenças */}
+                        <div className="space-y-3">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              id="hasDiseases"
+                              checked={anamnesisData.hasDiseases}
+                              onCheckedChange={(checked) =>
+                                setAnamnesisData({
+                                  ...anamnesisData,
+                                  hasDiseases: checked as boolean,
+                                })
+                              }
+                            />
+                            <Label
+                              htmlFor="hasDiseases"
+                              className="font-semibold cursor-pointer"
+                            >
+                              Possui doenças ou condições médicas?
+                            </Label>
+                          </div>
+                          {anamnesisData.hasDiseases && (
+                            <Textarea
+                              placeholder="Descreva as doenças ou condições médicas..."
+                              value={anamnesisData.diseasesDetails}
+                              onChange={(e) =>
+                                setAnamnesisData({
+                                  ...anamnesisData,
+                                  diseasesDetails: e.target.value,
+                                })
+                              }
+                              rows={3}
+                            />
+                          )}
+                        </div>
+
+                        {/* Medicamentos */}
+                        <div className="space-y-3">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              id="usesMedication"
+                              checked={anamnesisData.usesMedication}
+                              onCheckedChange={(checked) =>
+                                setAnamnesisData({
+                                  ...anamnesisData,
+                                  usesMedication: checked as boolean,
+                                })
+                              }
+                            />
+                            <Label
+                              htmlFor="usesMedication"
+                              className="font-semibold cursor-pointer"
+                            >
+                              Faz uso de medicamentos?
+                            </Label>
+                          </div>
+                          {anamnesisData.usesMedication && (
+                            <Textarea
+                              placeholder="Liste os medicamentos em uso..."
+                              value={anamnesisData.medicationDetails}
+                              onChange={(e) =>
+                                setAnamnesisData({
+                                  ...anamnesisData,
+                                  medicationDetails: e.target.value,
+                                })
+                              }
+                              rows={3}
+                            />
+                          )}
+                        </div>
+
+                        {/* Gravidez */}
                         <div className="flex items-center space-x-2">
                           <Checkbox
-                            id="hasAllergies"
-                            checked={anamnesisData.hasAllergies}
-                            onCheckedChange={(checked) => 
-                              setAnamnesisData({ ...anamnesisData, hasAllergies: checked as boolean })
+                            id="isPregnant"
+                            checked={anamnesisData.isPregnant}
+                            onCheckedChange={(checked) =>
+                              setAnamnesisData({
+                                ...anamnesisData,
+                                isPregnant: checked as boolean,
+                              })
                             }
                           />
-                          <Label htmlFor="hasAllergies" className="font-semibold cursor-pointer">
-                            Possui alergias?
+                          <Label
+                            htmlFor="isPregnant"
+                            className="font-semibold cursor-pointer"
+                          >
+                            Está grávida?
                           </Label>
                         </div>
-                        {anamnesisData.hasAllergies && (
-                          <Textarea
-                            placeholder="Descreva as alergias..."
-                            value={anamnesisData.allergiesDetails}
-                            onChange={(e) => setAnamnesisData({ ...anamnesisData, allergiesDetails: e.target.value })}
-                            rows={3}
-                          />
-                        )}
-                      </div>
 
-                      {/* Doenças */}
-                      <div className="space-y-3">
+                        {/* Quelóide */}
                         <div className="flex items-center space-x-2">
                           <Checkbox
-                            id="hasDiseases"
-                            checked={anamnesisData.hasDiseases}
-                            onCheckedChange={(checked) => 
-                              setAnamnesisData({ ...anamnesisData, hasDiseases: checked as boolean })
+                            id="hasKeloid"
+                            checked={anamnesisData.hasKeloid}
+                            onCheckedChange={(checked) =>
+                              setAnamnesisData({
+                                ...anamnesisData,
+                                hasKeloid: checked as boolean,
+                              })
                             }
                           />
-                          <Label htmlFor="hasDiseases" className="font-semibold cursor-pointer">
-                            Possui doenças ou condições médicas?
+                          <Label
+                            htmlFor="hasKeloid"
+                            className="font-semibold cursor-pointer"
+                          >
+                            Possui tendência a quelóide?
                           </Label>
                         </div>
-                        {anamnesisData.hasDiseases && (
-                          <Textarea
-                            placeholder="Descreva as doenças ou condições médicas..."
-                            value={anamnesisData.diseasesDetails}
-                            onChange={(e) => setAnamnesisData({ ...anamnesisData, diseasesDetails: e.target.value })}
-                            rows={3}
-                          />
-                        )}
-                      </div>
 
-                      {/* Medicamentos */}
-                      <div className="space-y-3">
-                        <div className="flex items-center space-x-2">
-                          <Checkbox
-                            id="usesMedication"
-                            checked={anamnesisData.usesMedication}
-                            onCheckedChange={(checked) => 
-                              setAnamnesisData({ ...anamnesisData, usesMedication: checked as boolean })
-                            }
-                          />
-                          <Label htmlFor="usesMedication" className="font-semibold cursor-pointer">
-                            Faz uso de medicamentos?
-                          </Label>
-                        </div>
-                        {anamnesisData.usesMedication && (
-                          <Textarea
-                            placeholder="Liste os medicamentos em uso..."
-                            value={anamnesisData.medicationDetails}
-                            onChange={(e) => setAnamnesisData({ ...anamnesisData, medicationDetails: e.target.value })}
-                            rows={3}
-                          />
-                        )}
-                      </div>
-
-                      {/* Gravidez */}
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="isPregnant"
-                          checked={anamnesisData.isPregnant}
-                          onCheckedChange={(checked) => 
-                            setAnamnesisData({ ...anamnesisData, isPregnant: checked as boolean })
-                          }
-                        />
-                        <Label htmlFor="isPregnant" className="font-semibold cursor-pointer">
-                          Está grávida?
-                        </Label>
-                      </div>
-
-                      {/* Quelóide */}
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="hasKeloid"
-                          checked={anamnesisData.hasKeloid}
-                          onCheckedChange={(checked) => 
-                            setAnamnesisData({ ...anamnesisData, hasKeloid: checked as boolean })
-                          }
-                        />
-                        <Label htmlFor="hasKeloid" className="font-semibold cursor-pointer">
-                          Possui tendência a quelóide?
-                        </Label>
-                      </div>
-
-                      {/* Termo de Consentimento */}
-                      <div className="border-t pt-6 space-y-4">
-                        <div className="bg-muted/50 p-4 rounded-lg space-y-2">
-                          <div className="flex items-start gap-2">
-                            <AlertCircle className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                            <div className="space-y-2 text-sm">
-                              <p className="font-semibold">Termo de Consentimento e Responsabilidade</p>
-                              <p className="text-muted-foreground">
-                                Declaro que as informações prestadas acima são verdadeiras e estou ciente de que a omissão de dados pode comprometer o resultado do procedimento e minha saúde. 
-                              </p>
-                              <p className="text-muted-foreground">
-                                Autorizo a realização do procedimento de tatuagem e me comprometo a seguir todas as orientações de cuidados pós-procedimento fornecidas pelo profissional.
-                              </p>
+                        {/* Termo de Consentimento */}
+                        <div className="border-t pt-6 space-y-4">
+                          <div className="bg-muted/50 p-4 rounded-lg space-y-2">
+                            <div className="flex items-start gap-2">
+                              <AlertCircle className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                              <div className="space-y-2 text-sm">
+                                <p className="font-semibold">
+                                  Termo de Consentimento e Responsabilidade
+                                </p>
+                                <p className="text-muted-foreground">
+                                  Declaro que as informações prestadas acima são
+                                  verdadeiras e estou ciente de que a omissão de
+                                  dados pode comprometer o resultado do
+                                  procedimento e minha saúde.
+                                </p>
+                                <p className="text-muted-foreground">
+                                  Autorizo a realização do procedimento de
+                                  tatuagem e me comprometo a seguir todas as
+                                  orientações de cuidados pós-procedimento
+                                  fornecidas pelo profissional.
+                                </p>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-start space-x-2">
-                          <Checkbox
-                            id="consentAccepted"
-                            checked={anamnesisData.consentAccepted}
-                            onCheckedChange={(checked) => 
-                              setAnamnesisData({ ...anamnesisData, consentAccepted: checked as boolean })
-                            }
-                          />
-                          <Label htmlFor="consentAccepted" className="font-medium cursor-pointer leading-relaxed">
-                            Li e aceito os termos de consentimento e responsabilidade *
-                          </Label>
+                          <div className="flex items-start space-x-2">
+                            <Checkbox
+                              id="consentAccepted"
+                              checked={anamnesisData.consentAccepted}
+                              onCheckedChange={(checked) =>
+                                setAnamnesisData({
+                                  ...anamnesisData,
+                                  consentAccepted: checked as boolean,
+                                })
+                              }
+                            />
+                            <Label
+                              htmlFor="consentAccepted"
+                              className="font-medium cursor-pointer leading-relaxed"
+                            >
+                              Li e aceito os termos de consentimento e
+                              responsabilidade *
+                            </Label>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <Button
-                        onClick={handleCreateAnamnesis}
-                        disabled={createAnamnesis.isPending || !anamnesisData.consentAccepted}
-                        className="flex-1"
-                      >
-                        {createAnamnesis.isPending ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Salvando...
-                          </>
-                        ) : (
-                          "Salvar Ficha"
-                        )}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setAnamnesisDialogOpen(false)}
-                        disabled={createAnamnesis.isPending}
-                      >
-                        Cancelar
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                      <div className="flex gap-3">
+                        <Button
+                          onClick={handleCreateAnamnesis}
+                          disabled={
+                            createAnamnesis.isPending ||
+                            !anamnesisData.consentAccepted
+                          }
+                          className="flex-1"
+                        >
+                          {createAnamnesis.isPending ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Salvando...
+                            </>
+                          ) : (
+                            "Salvar Ficha"
+                          )}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setAnamnesisDialogOpen(false)}
+                          disabled={createAnamnesis.isPending}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
                 <SendAnamneseDialog
                   open={sendLinkDialogOpen}
@@ -1037,50 +1313,108 @@ export default function ClientProfile() {
                       <Mail className="h-4 w-4" />
                       Fichas de anamnese ({anamneseSubmissions.length})
                     </h3>
-                    {anamneseSubmissions
-                      .map((req: any) => {
-                        const isCompleted = !!req.completedAt;
-                        const isExpired = !isCompleted && req.expiresAt && new Date(req.expiresAt) < new Date();
-                        const isPending = !isCompleted && !isExpired;
-                        return (
-                        <Card key={`req-${req.id}`} className={`border ${isCompleted ? 'border-orange-500/20' : isExpired ? 'border-zinc-700/40' : 'border-yellow-500/20'}`}>
+                    {anamneseSubmissions.map((req: any) => {
+                      const isCompleted = !!req.completedAt;
+                      const isExpired =
+                        !isCompleted &&
+                        req.expiresAt &&
+                        new Date(req.expiresAt) < new Date();
+                      const isPending = !isCompleted && !isExpired;
+                      return (
+                        <Card
+                          key={`req-${req.id}`}
+                          className={`border ${isCompleted ? "border-orange-500/20" : isExpired ? "border-zinc-700/40" : "border-yellow-500/20"}`}
+                        >
                           <CardContent className="pt-4">
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2 flex-wrap">
                                 {isCompleted && (
-                                  <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/30 text-xs">Preenchida</Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-green-500/10 text-green-400 border-green-500/30 text-xs"
+                                  >
+                                    Preenchida
+                                  </Badge>
                                 )}
                                 {req.source === "legacy_csv" && (
-                                  <Badge variant="outline" className="bg-blue-500/10 text-blue-300 border-blue-500/30 text-xs">Histórico importado</Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-blue-500/10 text-blue-300 border-blue-500/30 text-xs"
+                                  >
+                                    Histórico importado
+                                  </Badge>
                                 )}
                                 {req.riskLevel && isCompleted && (
-                                  <Badge variant="outline" className={
-                                    req.riskLevel === "critical" ? "bg-red-500/10 text-red-400 border-red-500/40 text-xs" :
-                                    req.riskLevel === "high" ? "bg-orange-500/10 text-orange-400 border-orange-500/40 text-xs" :
-                                    req.riskLevel === "medium" ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/40 text-xs" :
-                                    "bg-green-500/10 text-green-400 border-green-500/40 text-xs"
-                                  }>
-                                    {req.riskLevel === "critical" ? "🚨 Bloqueio preventivo" : req.riskLevel === "high" ? "⚠️ Atenção alta" : req.riskLevel === "medium" ? "⚠️ Atenção" : "✅ Sem alerta relevante"}
+                                  <Badge
+                                    variant="outline"
+                                    className={
+                                      req.riskLevel === "critical"
+                                        ? "bg-red-500/10 text-red-400 border-red-500/40 text-xs"
+                                        : req.riskLevel === "high"
+                                          ? "bg-orange-500/10 text-orange-400 border-orange-500/40 text-xs"
+                                          : req.riskLevel === "medium"
+                                            ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/40 text-xs"
+                                            : "bg-green-500/10 text-green-400 border-green-500/40 text-xs"
+                                    }
+                                  >
+                                    {req.riskLevel === "critical"
+                                      ? "🚨 Bloqueio preventivo"
+                                      : req.riskLevel === "high"
+                                        ? "⚠️ Atenção alta"
+                                        : req.riskLevel === "medium"
+                                          ? "⚠️ Atenção"
+                                          : "✅ Sem alerta relevante"}
                                   </Badge>
                                 )}
                                 {isPending && (
-                                  <Badge variant="outline" className="bg-yellow-500/10 text-yellow-400 border-yellow-500/30 text-xs">Aguardando</Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-yellow-500/10 text-yellow-400 border-yellow-500/30 text-xs"
+                                  >
+                                    Aguardando
+                                  </Badge>
                                 )}
                                 {isExpired && (
-                                  <Badge variant="outline" className="bg-zinc-500/10 text-zinc-400 border-zinc-500/30 text-xs">Expirada</Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-zinc-500/10 text-zinc-400 border-zinc-500/30 text-xs"
+                                  >
+                                    Expirada
+                                  </Badge>
                                 )}
                                 <span className="text-xs text-muted-foreground">
-                                  {req.source === "legacy_csv" ? `Registro original em ${formatDate(req.createdAt)}` : `Enviado em ${formatDate(req.createdAt)}`}
-                                  {req.completedAt && req.source !== "legacy_csv" && ` · Preenchido em ${formatDate(req.completedAt)}`}
-                                  {isPending && req.expiresAt && ` · Expira em ${formatDate(req.expiresAt)}`}
+                                  {req.source === "legacy_csv"
+                                    ? `Registro original em ${formatDate(req.createdAt)}`
+                                    : `Enviado em ${formatDate(req.createdAt)}`}
+                                  {req.completedAt &&
+                                    req.source !== "legacy_csv" &&
+                                    ` · Preenchido em ${formatDate(req.completedAt)}`}
+                                  {isPending &&
+                                    req.expiresAt &&
+                                    ` · Expira em ${formatDate(req.expiresAt)}`}
                                 </span>
                                 {req.source === "legacy_csv" ? (
-                                  <Badge variant="outline" className="text-xs text-blue-300 border-blue-500/30">
-                                    Data histórica: {req.procedureDate ? formatDate(req.procedureDate) : "não informada"} · {req.procedureDateStatus === "confirmed" ? "confirmada" : "informada/inferida"}
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs text-blue-300 border-blue-500/30"
+                                  >
+                                    Data histórica:{" "}
+                                    {req.procedureDate
+                                      ? formatDate(req.procedureDate)
+                                      : "não informada"}{" "}
+                                    ·{" "}
+                                    {req.procedureDateStatus === "confirmed"
+                                      ? "confirmada"
+                                      : "informada/inferida"}
                                   </Badge>
                                 ) : (
-                                  <Badge variant="outline" className="text-xs text-zinc-400 border-zinc-600">
-                                    {req.sentVia === 'whatsapp' ? '📱 WhatsApp' : '✉️ E-mail'}
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs text-zinc-400 border-zinc-600"
+                                  >
+                                    {req.sentVia === "whatsapp"
+                                      ? "📱 WhatsApp"
+                                      : "✉️ E-mail"}
                                   </Badge>
                                 )}
                               </div>
@@ -1090,7 +1424,13 @@ export default function ClientProfile() {
                                     variant="ghost"
                                     size="sm"
                                     className="h-7 w-7 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                                    onClick={() => { setDeletingItem({ type: 'submission', id: req.submissionId || req.id }); setDeleteConfirmOpen(true); }}
+                                    onClick={() => {
+                                      setDeletingItem({
+                                        type: "submission",
+                                        id: req.submissionId || req.id,
+                                      });
+                                      setDeleteConfirmOpen(true);
+                                    }}
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </Button>
@@ -1100,36 +1440,83 @@ export default function ClientProfile() {
                             {req.source === "legacy_csv" && (
                               <div className="mb-3 flex flex-wrap items-end gap-2 rounded-md border border-blue-500/20 bg-blue-500/5 p-3">
                                 <div>
-                                  <Label className="text-xs">Corrigir/confirmar data histórica da tattoo</Label>
+                                  <Label className="text-xs">
+                                    Corrigir/confirmar data histórica da tattoo
+                                  </Label>
                                   <Input
                                     type="date"
                                     className="mt-1 h-8 w-[170px]"
-                                    value={legacyDateEdits[req.id] ?? String(req.procedureDate ?? "").slice(0, 10)}
-                                    onChange={(event) => setLegacyDateEdits((current) => ({ ...current, [req.id]: event.target.value }))}
+                                    value={
+                                      legacyDateEdits[req.id] ??
+                                      String(req.procedureDate ?? "").slice(
+                                        0,
+                                        10,
+                                      )
+                                    }
+                                    onChange={(event) =>
+                                      setLegacyDateEdits((current) => ({
+                                        ...current,
+                                        [req.id]: event.target.value,
+                                      }))
+                                    }
                                   />
                                 </div>
-                                <Button size="sm" variant="outline" disabled={confirmLegacyDate.isPending || !(legacyDateEdits[req.id] ?? String(req.procedureDate ?? "").slice(0, 10))}
-                                  onClick={() => confirmLegacyDate.mutate({ requestId: req.id, procedureDate: legacyDateEdits[req.id] ?? String(req.procedureDate).slice(0, 10) })}>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={
+                                    confirmLegacyDate.isPending ||
+                                    !(
+                                      legacyDateEdits[req.id] ??
+                                      String(req.procedureDate ?? "").slice(
+                                        0,
+                                        10,
+                                      )
+                                    )
+                                  }
+                                  onClick={() =>
+                                    confirmLegacyDate.mutate({
+                                      requestId: req.id,
+                                      procedureDate:
+                                        legacyDateEdits[req.id] ??
+                                        String(req.procedureDate).slice(0, 10),
+                                    })
+                                  }
+                                >
                                   Confirmar data
                                 </Button>
-                                <p className="text-[11px] text-muted-foreground max-w-md">Ao confirmar, o lembrete anual é movido para o próximo aniversário correto. Isso não cria um agendamento.</p>
+                                <p className="text-[11px] text-muted-foreground max-w-md">
+                                  Ao confirmar, o lembrete anual é movido para o
+                                  próximo aniversário correto. Isso não cria um
+                                  agendamento.
+                                </p>
                               </div>
                             )}
                             {/* Exibe o payload JSON com os 39 campos */}
                             {req.payloadJson ? (
                               <AnamneseSubmissionView
-                                payload={(() => { try { return JSON.parse(req.payloadJson); } catch { return {}; } })()} 
+                                payload={(() => {
+                                  try {
+                                    return JSON.parse(req.payloadJson);
+                                  } catch {
+                                    return {};
+                                  }
+                                })()}
                                 submittedAt={req.completedAt}
                               />
                             ) : (
                               <p className="text-xs text-muted-foreground">
-                                {isPending ? 'Aguardando preenchimento pelo cliente.' : isExpired ? 'Link expirado sem preenchimento.' : ''}
+                                {isPending
+                                  ? "Aguardando preenchimento pelo cliente."
+                                  : isExpired
+                                    ? "Link expirado sem preenchimento."
+                                    : ""}
                               </p>
                             )}
                           </CardContent>
                         </Card>
-                        );
-                      })}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1140,39 +1527,77 @@ export default function ClientProfile() {
                       Histórico de avaliações de risco
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      Registro imutável das avaliações geradas a cada preenchimento ou edição da anamnese.
+                      Registro imutável das avaliações geradas a cada
+                      preenchimento ou edição da anamnese.
                     </p>
                     {anamnesisRiskHistory.map((entry) => {
                       let factors: any[] = [];
-                      try { factors = JSON.parse(entry.riskFactors); } catch {}
+                      try {
+                        factors = JSON.parse(entry.riskFactors);
+                      } catch {}
                       return (
-                        <div key={entry.id} className="rounded-lg border p-3 space-y-2">
+                        <div
+                          key={entry.id}
+                          className="rounded-lg border p-3 space-y-2"
+                        >
                           <div className="flex items-center gap-2 flex-wrap">
-                            <Badge variant="outline" className={
-                              entry.riskLevel === "critical" ? "text-red-400 border-red-500/40" :
-                              entry.riskLevel === "high" ? "text-orange-400 border-orange-500/40" :
-                              entry.riskLevel === "medium" ? "text-yellow-400 border-yellow-500/40" :
-                              "text-green-400 border-green-500/40"
-                            }>
-                              {entry.riskLevel === "critical" ? "Bloqueio preventivo" : entry.riskLevel === "high" ? "Atenção alta" : entry.riskLevel === "medium" ? "Atenção" : "Baixo"}
+                            <Badge
+                              variant="outline"
+                              className={
+                                entry.riskLevel === "critical"
+                                  ? "text-red-400 border-red-500/40"
+                                  : entry.riskLevel === "high"
+                                    ? "text-orange-400 border-orange-500/40"
+                                    : entry.riskLevel === "medium"
+                                      ? "text-yellow-400 border-yellow-500/40"
+                                      : "text-green-400 border-green-500/40"
+                              }
+                            >
+                              {entry.riskLevel === "critical"
+                                ? "Bloqueio preventivo"
+                                : entry.riskLevel === "high"
+                                  ? "Atenção alta"
+                                  : entry.riskLevel === "medium"
+                                    ? "Atenção"
+                                    : "Baixo"}
                             </Badge>
                             <span className="text-xs text-muted-foreground">
-                              {entry.eventType === "updated" ? "Reavaliada" : "Avaliada"} em {formatDate(entry.createdAt)} · {entry.source === "public_link" ? "via link" : "manual"}
+                              {entry.eventType === "updated"
+                                ? "Reavaliada"
+                                : "Avaliada"}{" "}
+                              em {formatDate(entry.createdAt)} ·{" "}
+                              {entry.source === "public_link"
+                                ? "via link"
+                                : "manual"}
                             </span>
                           </div>
                           <div className="space-y-1">
-                            {factors.filter((factor) => factor.severity !== "low").map((factor, index) => (
-                              <p key={`${factor.code || factor.category}-${index}`} className="text-sm">
-                                <span className="font-medium">{factor.category}:</span> {factor.description}
-                                {factor.guidance && <span className="block text-xs text-muted-foreground mt-0.5">Conduta sugerida: {factor.guidance}</span>}
-                              </p>
-                            ))}
+                            {factors
+                              .filter((factor) => factor.severity !== "low")
+                              .map((factor, index) => (
+                                <p
+                                  key={`${factor.code || factor.category}-${index}`}
+                                  className="text-sm"
+                                >
+                                  <span className="font-medium">
+                                    {factor.category}:
+                                  </span>{" "}
+                                  {factor.description}
+                                  {factor.guidance && (
+                                    <span className="block text-xs text-muted-foreground mt-0.5">
+                                      Conduta sugerida: {factor.guidance}
+                                    </span>
+                                  )}
+                                </p>
+                              ))}
                           </div>
                         </div>
                       );
                     })}
                     <p className="text-xs text-muted-foreground">
-                      Apoio operacional baseado em dados autodeclarados; não substitui avaliação ou diagnóstico de profissional de saúde.
+                      Apoio operacional baseado em dados autodeclarados; não
+                      substitui avaliação ou diagnóstico de profissional de
+                      saúde.
                     </p>
                   </div>
                 )}
@@ -1199,19 +1624,19 @@ export default function ClientProfile() {
                                     record.riskLevel === "critical"
                                       ? "bg-red-500/10 text-red-500 border-red-500/50"
                                       : record.riskLevel === "high"
-                                      ? "bg-orange-500/10 text-orange-500 border-orange-500/50"
-                                      : record.riskLevel === "medium"
-                                      ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/50"
-                                      : "bg-green-500/10 text-green-500 border-green-500/50"
+                                        ? "bg-orange-500/10 text-orange-500 border-orange-500/50"
+                                        : record.riskLevel === "medium"
+                                          ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/50"
+                                          : "bg-green-500/10 text-green-500 border-green-500/50"
                                   }
                                 >
                                   {record.riskLevel === "critical"
                                     ? "🚨 Risco Crítico"
                                     : record.riskLevel === "high"
-                                    ? "⚠️ Risco Alto"
-                                    : record.riskLevel === "medium"
-                                    ? "⚠️ Risco Médio"
-                                    : "✅ Baixo Risco"}
+                                      ? "⚠️ Risco Alto"
+                                      : record.riskLevel === "medium"
+                                        ? "⚠️ Risco Médio"
+                                        : "✅ Baixo Risco"}
                                 </Badge>
                               )}
                             </div>
@@ -1219,7 +1644,12 @@ export default function ClientProfile() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => window.open(`/anamnese/view/${record.id}`, '_blank')}
+                                onClick={() =>
+                                  window.open(
+                                    `/anamnese/view/${record.id}`,
+                                    "_blank",
+                                  )
+                                }
                               >
                                 <FileText className="h-4 w-4 mr-2" />
                                 Visualizar
@@ -1227,7 +1657,12 @@ export default function ClientProfile() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => window.open(`/anamnese/pdf/${record.id}`, '_blank')}
+                                onClick={() =>
+                                  window.open(
+                                    `/anamnese/pdf/${record.id}`,
+                                    "_blank",
+                                  )
+                                }
                               >
                                 <FileDown className="h-4 w-4 mr-2" />
                                 PDF
@@ -1244,7 +1679,13 @@ export default function ClientProfile() {
                                 variant="outline"
                                 size="sm"
                                 className="text-red-400 hover:text-red-300 hover:bg-red-500/10 border-red-500/30"
-                                onClick={() => { setDeletingItem({ type: 'record', id: record.id }); setDeleteConfirmOpen(true); }}
+                                onClick={() => {
+                                  setDeletingItem({
+                                    type: "record",
+                                    id: record.id,
+                                  });
+                                  setDeleteConfirmOpen(true);
+                                }}
                               >
                                 <Trash2 className="h-4 w-4 mr-2" />
                                 Excluir
@@ -1254,15 +1695,27 @@ export default function ClientProfile() {
                           <div className="grid gap-3 text-sm">
                             <div className="flex items-center gap-2">
                               <span className="font-medium">Alergias:</span>
-                              <span>{record.hasAllergies ? `Sim - ${record.allergiesDetails}` : "Não"}</span>
+                              <span>
+                                {record.hasAllergies
+                                  ? `Sim - ${record.allergiesDetails}`
+                                  : "Não"}
+                              </span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium">Doenças:</span>
-                              <span>{record.hasDiseases ? `Sim - ${record.diseasesDetails}` : "Não"}</span>
+                              <span>
+                                {record.hasDiseases
+                                  ? `Sim - ${record.diseasesDetails}`
+                                  : "Não"}
+                              </span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium">Medicamentos:</span>
-                              <span>{record.usesMedication ? `Sim - ${record.medicationDetails}` : "Não"}</span>
+                              <span>
+                                {record.usesMedication
+                                  ? `Sim - ${record.medicationDetails}`
+                                  : "Não"}
+                              </span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium">Grávida:</span>
@@ -1281,13 +1734,17 @@ export default function ClientProfile() {
 
                 {/* Estado vazio */}
                 {(!anamnesis || anamnesis.length === 0) &&
-                  (!anamneseSubmissions || anamneseSubmissions.length === 0) && (
-                  <div className="text-center py-8 text-muted-foreground">
-                    Nenhuma ficha de anamnese encontrada.
-                    <br />
-                    <span className="text-sm">Envie um link para o cliente ou crie uma ficha manualmente.</span>
-                  </div>
-                )}
+                  (!anamneseSubmissions ||
+                    anamneseSubmissions.length === 0) && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      Nenhuma ficha de anamnese encontrada.
+                      <br />
+                      <span className="text-sm">
+                        Envie um link para o cliente ou crie uma ficha
+                        manualmente.
+                      </span>
+                    </div>
+                  )}
               </div>
             </CardContent>
           </Card>
@@ -1299,10 +1756,17 @@ export default function ClientProfile() {
             <CardHeader>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
                 <div className="flex-1 min-w-0">
-                  <CardTitle className="text-base sm:text-lg">Transações Financeiras</CardTitle>
-                  <CardDescription className="text-xs sm:text-sm">Histórico de transações do cliente</CardDescription>
+                  <CardTitle className="text-base sm:text-lg">
+                    Transações Financeiras
+                  </CardTitle>
+                  <CardDescription className="text-xs sm:text-sm">
+                    Histórico de transações do cliente
+                  </CardDescription>
                 </div>
-                <Dialog open={transactionDialogOpen} onOpenChange={setTransactionDialogOpen}>
+                <Dialog
+                  open={transactionDialogOpen}
+                  onOpenChange={setTransactionDialogOpen}
+                >
                   <DialogTrigger asChild>
                     <Button className="w-full sm:w-auto text-xs sm:text-sm">
                       <Plus className="h-3 w-3 sm:h-4 sm:w-4 mr-2" />
@@ -1319,11 +1783,16 @@ export default function ClientProfile() {
                     <div className="space-y-4 py-4">
                       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
                         <div className="space-y-2">
-                          <Label htmlFor="type" className="text-xs sm:text-sm">Tipo *</Label>
+                          <Label htmlFor="type" className="text-xs sm:text-sm">
+                            Tipo *
+                          </Label>
                           <Select
                             value={transactionData.type}
-                            onValueChange={(value: "entrada" | "saida") => 
-                              setTransactionData({ ...transactionData, type: value })
+                            onValueChange={(value: "entrada" | "saida") =>
+                              setTransactionData({
+                                ...transactionData,
+                                type: value,
+                              })
                             }
                           >
                             <SelectTrigger className="text-xs sm:text-sm">
@@ -1336,11 +1805,21 @@ export default function ClientProfile() {
                           </Select>
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="category" className="text-xs sm:text-sm">Categoria *</Label>
+                          <Label
+                            htmlFor="category"
+                            className="text-xs sm:text-sm"
+                          >
+                            Categoria *
+                          </Label>
                           <Input
                             id="category"
                             value={transactionData.category}
-                            onChange={(e) => setTransactionData({ ...transactionData, category: e.target.value })}
+                            onChange={(e) =>
+                              setTransactionData({
+                                ...transactionData,
+                                category: e.target.value,
+                              })
+                            }
                             placeholder="Ex: Tatuagem, Material, Aluguel"
                             className="text-xs sm:text-sm"
                           />
@@ -1355,16 +1834,26 @@ export default function ClientProfile() {
                             step="0.01"
                             min="0"
                             value={transactionData.amount}
-                            onChange={(e) => setTransactionData({ ...transactionData, amount: e.target.value })}
+                            onChange={(e) =>
+                              setTransactionData({
+                                ...transactionData,
+                                amount: e.target.value,
+                              })
+                            }
                             placeholder="0.00"
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="paymentMethod">Método de Pagamento *</Label>
+                          <Label htmlFor="paymentMethod">
+                            Método de Pagamento *
+                          </Label>
                           <Select
                             value={transactionData.paymentMethod}
-                            onValueChange={(value: any) => 
-                              setTransactionData({ ...transactionData, paymentMethod: value })
+                            onValueChange={(value: any) =>
+                              setTransactionData({
+                                ...transactionData,
+                                paymentMethod: value,
+                              })
                             }
                           >
                             <SelectTrigger>
@@ -1375,7 +1864,9 @@ export default function ClientProfile() {
                               <SelectItem value="pix">PIX</SelectItem>
                               <SelectItem value="credito">Crédito</SelectItem>
                               <SelectItem value="debito">Débito</SelectItem>
-                              <SelectItem value="transferencia">Transferência</SelectItem>
+                              <SelectItem value="transferencia">
+                                Transferência
+                              </SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1386,7 +1877,12 @@ export default function ClientProfile() {
                           id="transaction-date"
                           type="date"
                           value={transactionData.date}
-                          onChange={(e) => setTransactionData({ ...transactionData, date: e.target.value })}
+                          onChange={(e) =>
+                            setTransactionData({
+                              ...transactionData,
+                              date: e.target.value,
+                            })
+                          }
                         />
                       </div>
                       <div className="space-y-2">
@@ -1394,7 +1890,12 @@ export default function ClientProfile() {
                         <Textarea
                           id="description"
                           value={transactionData.description}
-                          onChange={(e) => setTransactionData({ ...transactionData, description: e.target.value })}
+                          onChange={(e) =>
+                            setTransactionData({
+                              ...transactionData,
+                              description: e.target.value,
+                            })
+                          }
                           placeholder="Detalhes da transação..."
                           rows={3}
                         />
@@ -1404,53 +1905,86 @@ export default function ClientProfile() {
                       <div className="space-y-3 border border-border rounded-lg p-3">
                         <div className="flex items-center gap-2">
                           <Package className="h-4 w-4 text-muted-foreground" />
-                          <Label className="text-sm font-medium">Materiais Utilizados (opcional)</Label>
+                          <Label className="text-sm font-medium">
+                            Materiais Utilizados (opcional)
+                          </Label>
                         </div>
-                        <p className="text-xs text-muted-foreground">Selecione materiais do estoque para dar baixa automática ao registrar esta transação.</p>
+                        <p className="text-xs text-muted-foreground">
+                          Selecione materiais do estoque para dar baixa
+                          automática ao registrar esta transação.
+                        </p>
 
                         {/* Dropdown para adicionar material */}
-                        {availableMaterials && availableMaterials.length > 0 && (
-                          <Select
-                            value=""
-                            onValueChange={(val) => val && handleAddMaterial(parseInt(val))}
-                          >
-                            <SelectTrigger className="h-8 text-sm">
-                              <SelectValue placeholder="+ Adicionar material do estoque" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {availableMaterials
-                                .filter(m => !selectedMaterials.some(s => s.materialId === m.id))
-                                .map(m => (
-                                  <SelectItem key={m.id} value={String(m.id)}>
-                                    {m.name} — {parseFloat(String(m.currentStock)).toFixed(0)} {m.unit || "un"} em estoque
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-                          </Select>
-                        )}
+                        {availableMaterials &&
+                          availableMaterials.length > 0 && (
+                            <Select
+                              value=""
+                              onValueChange={(val) =>
+                                val && handleAddMaterial(parseInt(val))
+                              }
+                            >
+                              <SelectTrigger className="h-8 text-sm">
+                                <SelectValue placeholder="+ Adicionar material do estoque" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableMaterials
+                                  .filter(
+                                    (m) =>
+                                      !selectedMaterials.some(
+                                        (s) => s.materialId === m.id,
+                                      ),
+                                  )
+                                  .map((m) => (
+                                    <SelectItem key={m.id} value={String(m.id)}>
+                                      {m.name} —{" "}
+                                      {parseFloat(
+                                        String(m.currentStock),
+                                      ).toFixed(0)}{" "}
+                                      {m.unit || "un"} em estoque
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                          )}
 
                         {/* Lista de materiais selecionados */}
                         {selectedMaterials.length > 0 && (
                           <div className="space-y-2">
-                            {selectedMaterials.map(mat => (
-                              <div key={mat.materialId} className="flex items-center gap-2 bg-muted/40 rounded px-2 py-1">
-                                <span className="flex-1 text-sm truncate">{mat.materialName}</span>
-                                <span className="text-xs text-muted-foreground">{mat.unit}</span>
+                            {selectedMaterials.map((mat) => (
+                              <div
+                                key={mat.materialId}
+                                className="flex items-center gap-2 bg-muted/40 rounded px-2 py-1"
+                              >
+                                <span className="flex-1 text-sm truncate">
+                                  {mat.materialName}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {mat.unit}
+                                </span>
                                 <Input
                                   type="number"
                                   step="0.1"
                                   min="0.1"
                                   max={mat.currentStock}
                                   value={mat.quantity}
-                                  onChange={(e) => handleMaterialQtyChange(mat.materialId, e.target.value)}
+                                  onChange={(e) =>
+                                    handleMaterialQtyChange(
+                                      mat.materialId,
+                                      e.target.value,
+                                    )
+                                  }
                                   className="w-20 h-7 text-sm px-2"
                                 />
-                                <span className="text-xs text-muted-foreground">/ {mat.currentStock.toFixed(0)}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  / {mat.currentStock.toFixed(0)}
+                                </span>
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                                  onClick={() => handleRemoveMaterial(mat.materialId)}
+                                  onClick={() =>
+                                    handleRemoveMaterial(mat.materialId)
+                                  }
                                 >
                                   <X className="h-3 w-3" />
                                 </Button>
@@ -1459,9 +1993,12 @@ export default function ClientProfile() {
                           </div>
                         )}
 
-                        {availableMaterials && availableMaterials.length === 0 && (
-                          <p className="text-xs text-muted-foreground italic">Nenhum material cadastrado no estoque.</p>
-                        )}
+                        {availableMaterials &&
+                          availableMaterials.length === 0 && (
+                            <p className="text-xs text-muted-foreground italic">
+                              Nenhum material cadastrado no estoque.
+                            </p>
+                          )}
                       </div>
                     </div>
                     <div className="flex gap-3">
@@ -1475,15 +2012,18 @@ export default function ClientProfile() {
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             Registrando...
                           </>
+                        ) : selectedMaterials.length > 0 ? (
+                          `Registrar + Baixar ${selectedMaterials.length} material(is)`
                         ) : (
-                          selectedMaterials.length > 0
-                            ? `Registrar + Baixar ${selectedMaterials.length} material(is)`
-                            : "Registrar Transação"
+                          "Registrar Transação"
                         )}
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => { setTransactionDialogOpen(false); setSelectedMaterials([]); }}
+                        onClick={() => {
+                          setTransactionDialogOpen(false);
+                          setSelectedMaterials([]);
+                        }}
                         disabled={createTransaction.isPending}
                       >
                         Cancelar
@@ -1501,16 +2041,24 @@ export default function ClientProfile() {
                       <CardContent className="pt-6">
                         <div className="flex items-start justify-between">
                           <div className="space-y-2">
-                            <p className="font-semibold">{transaction.category}</p>
+                            <p className="font-semibold">
+                              {transaction.category}
+                            </p>
                             {transaction.description && (
-                              <p className="text-sm text-muted-foreground">{transaction.description}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {transaction.description}
+                              </p>
                             )}
                             <p className="text-sm text-muted-foreground">
-                              {formatDate(transaction.date)} • {transaction.paymentMethod}
+                              {formatDate(transaction.date)} •{" "}
+                              {transaction.paymentMethod}
                             </p>
                           </div>
-                          <p className={`text-lg font-bold ${transaction.type === "entrada" ? "text-green-600" : "text-red-600"}`}>
-                            {transaction.type === "entrada" ? "+" : "-"}{formatCurrency(transaction.amount)}
+                          <p
+                            className={`text-lg font-bold ${transaction.type === "entrada" ? "text-green-600" : "text-red-600"}`}
+                          >
+                            {transaction.type === "entrada" ? "+" : "-"}
+                            {formatCurrency(transaction.amount)}
                           </p>
                         </div>
                       </CardContent>
@@ -1532,10 +2080,17 @@ export default function ClientProfile() {
             <CardHeader>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
                 <div className="flex-1 min-w-0">
-                  <CardTitle className="text-base sm:text-lg">Galeria de Trabalhos</CardTitle>
-                  <CardDescription className="text-xs sm:text-sm">Portfólio de tatuagens realizadas</CardDescription>
+                  <CardTitle className="text-base sm:text-lg">
+                    Galeria de Trabalhos
+                  </CardTitle>
+                  <CardDescription className="text-xs sm:text-sm">
+                    Portfólio de tatuagens realizadas
+                  </CardDescription>
                 </div>
-                <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+                <Dialog
+                  open={uploadDialogOpen}
+                  onOpenChange={setUploadDialogOpen}
+                >
                   <DialogTrigger asChild>
                     <Button className="w-full sm:w-auto text-xs sm:text-sm">
                       <Upload className="h-3 w-3 sm:h-4 sm:w-4 mr-2" />
@@ -1546,7 +2101,8 @@ export default function ClientProfile() {
                     <DialogHeader>
                       <DialogTitle>Upload de Imagens</DialogTitle>
                       <DialogDescription>
-                        Adicione fotos dos trabalhos realizados para {client.name}
+                        Adicione fotos dos trabalhos realizados para{" "}
+                        {client.name}
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-6 py-4">
@@ -1558,9 +2114,10 @@ export default function ClientProfile() {
                         onClick={() => fileInputRef.current?.click()}
                         className={`
                           border-2 border-dashed rounded-lg p-6 sm:p-12 text-center cursor-pointer transition-colors
-                          ${isDragging 
-                            ? 'border-primary bg-primary/5' 
-                            : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-accent/50'
+                          ${
+                            isDragging
+                              ? "border-primary bg-primary/5"
+                              : "border-muted-foreground/25 hover:border-primary/50 hover:bg-accent/50"
                           }
                         `}
                       >
@@ -1570,10 +2127,13 @@ export default function ClientProfile() {
                           </div>
                           <div className="space-y-2">
                             <p className="text-lg font-medium">
-                              {isDragging ? 'Solte as imagens aqui' : 'Arraste imagens ou clique para selecionar'}
+                              {isDragging
+                                ? "Solte as imagens aqui"
+                                : "Arraste imagens ou clique para selecionar"}
                             </p>
                             <p className="text-sm text-muted-foreground">
-                              Formatos aceitos: JPG, PNG, GIF • Máximo 5MB por imagem
+                              Formatos aceitos: JPG, PNG, GIF • Máximo 5MB por
+                              imagem
                             </p>
                           </div>
                         </div>
@@ -1622,11 +2182,15 @@ export default function ClientProfile() {
                       {previewUrls.length > 0 && (
                         <div className="space-y-4 border-t pt-4">
                           <div className="space-y-2">
-                            <Label htmlFor="upload-description">Descrição</Label>
+                            <Label htmlFor="upload-description">
+                              Descrição
+                            </Label>
                             <Textarea
                               id="upload-description"
                               value={uploadDescription}
-                              onChange={(e) => setUploadDescription(e.target.value)}
+                              onChange={(e) =>
+                                setUploadDescription(e.target.value)
+                              }
                               placeholder="Descreva o trabalho realizado..."
                               rows={3}
                             />
@@ -1642,7 +2206,9 @@ export default function ClientProfile() {
                               />
                             </div>
                             <div className="space-y-2">
-                              <Label htmlFor="upload-appointment">Vincular a Agendamento (opcional)</Label>
+                              <Label htmlFor="upload-appointment">
+                                Vincular a Agendamento (opcional)
+                              </Label>
                               <Select
                                 value={uploadAppointmentId}
                                 onValueChange={setUploadAppointmentId}
@@ -1653,7 +2219,10 @@ export default function ClientProfile() {
                                 <SelectContent>
                                   <SelectItem value="none">Nenhum</SelectItem>
                                   {appointments?.map((apt) => (
-                                    <SelectItem key={apt.id} value={apt.id.toString()}>
+                                    <SelectItem
+                                      key={apt.id}
+                                      value={apt.id.toString()}
+                                    >
                                       {apt.service} - {formatDate(apt.date)}
                                     </SelectItem>
                                   ))}
@@ -1667,7 +2236,9 @@ export default function ClientProfile() {
                     <div className="flex gap-3">
                       <Button
                         onClick={handleUploadImages}
-                        disabled={uploadImage.isPending || selectedFiles.length === 0}
+                        disabled={
+                          uploadImage.isPending || selectedFiles.length === 0
+                        }
                         className="flex-1"
                       >
                         {uploadImage.isPending ? (
@@ -1676,7 +2247,7 @@ export default function ClientProfile() {
                             Enviando...
                           </>
                         ) : (
-                          `Enviar ${selectedFiles.length > 0 ? `(${selectedFiles.length})` : ''}`
+                          `Enviar ${selectedFiles.length > 0 ? `(${selectedFiles.length})` : ""}`
                         )}
                       </Button>
                       <Button
@@ -1702,7 +2273,10 @@ export default function ClientProfile() {
               {gallery && gallery.length > 0 ? (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {gallery.map((image) => (
-                    <div key={image.id} className="relative aspect-square rounded-lg overflow-hidden group">
+                    <div
+                      key={image.id}
+                      className="relative aspect-square rounded-lg overflow-hidden group"
+                    >
                       <img
                         src={image.imageUrl}
                         alt={image.description || "Tatuagem"}
@@ -1710,7 +2284,9 @@ export default function ClientProfile() {
                       />
                       {image.description && (
                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-                          <p className="text-white text-sm">{image.description}</p>
+                          <p className="text-white text-sm">
+                            {image.description}
+                          </p>
                         </div>
                       )}
                     </div>
@@ -1720,7 +2296,9 @@ export default function ClientProfile() {
                 <div className="text-center py-12 text-muted-foreground">
                   <ImageIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>Nenhuma imagem na galeria</p>
-                  <p className="text-sm mt-2">Adicione fotos dos trabalhos realizados</p>
+                  <p className="text-sm mt-2">
+                    Adicione fotos dos trabalhos realizados
+                  </p>
                 </div>
               )}
             </CardContent>
@@ -1733,8 +2311,12 @@ export default function ClientProfile() {
             <CardHeader>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
                 <div className="flex-1 min-w-0">
-                  <CardTitle className="text-base sm:text-lg">Notas do Tatuador</CardTitle>
-                  <CardDescription className="text-xs sm:text-sm">Observações e anotações sobre o cliente</CardDescription>
+                  <CardTitle className="text-base sm:text-lg">
+                    Notas do Tatuador
+                  </CardTitle>
+                  <CardDescription className="text-xs sm:text-sm">
+                    Observações e anotações sobre o cliente
+                  </CardDescription>
                 </div>
                 <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
                   <DialogTrigger asChild>
@@ -1819,67 +2401,164 @@ export default function ClientProfile() {
       </Tabs>
 
       {/* Dialog de Edição de Ficha Manual */}
-      <Dialog open={editRecordDialogOpen} onOpenChange={setEditRecordDialogOpen}>
+      <Dialog
+        open={editRecordDialogOpen}
+        onOpenChange={setEditRecordDialogOpen}
+      >
         <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Ficha de Anamnese</DialogTitle>
-            <DialogDescription>Atualize as informações de saúde do cliente</DialogDescription>
+            <DialogDescription>
+              Atualize as informações de saúde do cliente
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-3">
               <div className="flex items-center space-x-2">
-                <Checkbox id="edit-hasAllergies" checked={editRecordData.hasAllergies}
-                  onCheckedChange={(c) => setEditRecordData({ ...editRecordData, hasAllergies: !!c })} />
+                <Checkbox
+                  id="edit-hasAllergies"
+                  checked={editRecordData.hasAllergies}
+                  onCheckedChange={(c) =>
+                    setEditRecordData({ ...editRecordData, hasAllergies: !!c })
+                  }
+                />
                 <Label htmlFor="edit-hasAllergies">Possui alergias?</Label>
               </div>
               {editRecordData.hasAllergies && (
-                <Textarea placeholder="Descreva as alergias..." value={editRecordData.allergiesDetails}
-                  onChange={(e) => setEditRecordData({ ...editRecordData, allergiesDetails: e.target.value })} rows={2} />
+                <Textarea
+                  placeholder="Descreva as alergias..."
+                  value={editRecordData.allergiesDetails}
+                  onChange={(e) =>
+                    setEditRecordData({
+                      ...editRecordData,
+                      allergiesDetails: e.target.value,
+                    })
+                  }
+                  rows={2}
+                />
               )}
             </div>
             <div className="space-y-3">
               <div className="flex items-center space-x-2">
-                <Checkbox id="edit-hasDiseases" checked={editRecordData.hasDiseases}
-                  onCheckedChange={(c) => setEditRecordData({ ...editRecordData, hasDiseases: !!c })} />
-                <Label htmlFor="edit-hasDiseases">Possui doenças ou condições médicas?</Label>
+                <Checkbox
+                  id="edit-hasDiseases"
+                  checked={editRecordData.hasDiseases}
+                  onCheckedChange={(c) =>
+                    setEditRecordData({ ...editRecordData, hasDiseases: !!c })
+                  }
+                />
+                <Label htmlFor="edit-hasDiseases">
+                  Possui doenças ou condições médicas?
+                </Label>
               </div>
               {editRecordData.hasDiseases && (
-                <Textarea placeholder="Descreva as doenças..." value={editRecordData.diseasesDetails}
-                  onChange={(e) => setEditRecordData({ ...editRecordData, diseasesDetails: e.target.value })} rows={2} />
+                <Textarea
+                  placeholder="Descreva as doenças..."
+                  value={editRecordData.diseasesDetails}
+                  onChange={(e) =>
+                    setEditRecordData({
+                      ...editRecordData,
+                      diseasesDetails: e.target.value,
+                    })
+                  }
+                  rows={2}
+                />
               )}
             </div>
             <div className="space-y-3">
               <div className="flex items-center space-x-2">
-                <Checkbox id="edit-usesMedication" checked={editRecordData.usesMedication}
-                  onCheckedChange={(c) => setEditRecordData({ ...editRecordData, usesMedication: !!c })} />
-                <Label htmlFor="edit-usesMedication">Faz uso de medicamentos?</Label>
+                <Checkbox
+                  id="edit-usesMedication"
+                  checked={editRecordData.usesMedication}
+                  onCheckedChange={(c) =>
+                    setEditRecordData({
+                      ...editRecordData,
+                      usesMedication: !!c,
+                    })
+                  }
+                />
+                <Label htmlFor="edit-usesMedication">
+                  Faz uso de medicamentos?
+                </Label>
               </div>
               {editRecordData.usesMedication && (
-                <Textarea placeholder="Liste os medicamentos..." value={editRecordData.medicationDetails}
-                  onChange={(e) => setEditRecordData({ ...editRecordData, medicationDetails: e.target.value })} rows={2} />
+                <Textarea
+                  placeholder="Liste os medicamentos..."
+                  value={editRecordData.medicationDetails}
+                  onChange={(e) =>
+                    setEditRecordData({
+                      ...editRecordData,
+                      medicationDetails: e.target.value,
+                    })
+                  }
+                  rows={2}
+                />
               )}
             </div>
             <div className="flex items-center space-x-2">
-              <Checkbox id="edit-isPregnant" checked={editRecordData.isPregnant}
-                onCheckedChange={(c) => setEditRecordData({ ...editRecordData, isPregnant: !!c })} />
+              <Checkbox
+                id="edit-isPregnant"
+                checked={editRecordData.isPregnant}
+                onCheckedChange={(c) =>
+                  setEditRecordData({ ...editRecordData, isPregnant: !!c })
+                }
+              />
               <Label htmlFor="edit-isPregnant">Está grávida?</Label>
             </div>
             <div className="flex items-center space-x-2">
-              <Checkbox id="edit-hasKeloid" checked={editRecordData.hasKeloid}
-                onCheckedChange={(c) => setEditRecordData({ ...editRecordData, hasKeloid: !!c })} />
-              <Label htmlFor="edit-hasKeloid">Possui tendência a quelóide?</Label>
+              <Checkbox
+                id="edit-hasKeloid"
+                checked={editRecordData.hasKeloid}
+                onCheckedChange={(c) =>
+                  setEditRecordData({ ...editRecordData, hasKeloid: !!c })
+                }
+              />
+              <Label htmlFor="edit-hasKeloid">
+                Possui tendência a quelóide?
+              </Label>
             </div>
             <div className="space-y-2">
               <Label>Observações adicionais</Label>
-              <Textarea placeholder="Observações..." value={editRecordData.notes}
-                onChange={(e) => setEditRecordData({ ...editRecordData, notes: e.target.value })} rows={3} />
+              <Textarea
+                placeholder="Observações..."
+                value={editRecordData.notes}
+                onChange={(e) =>
+                  setEditRecordData({
+                    ...editRecordData,
+                    notes: e.target.value,
+                  })
+                }
+                rows={3}
+              />
             </div>
           </div>
           <div className="flex gap-3">
-            <Button onClick={() => updateRecord.mutate({ id: editingRecord?.id, ...editRecordData })} disabled={updateRecord.isPending} className="flex-1">
-              {updateRecord.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Salvando...</> : "Salvar Alterações"}
+            <Button
+              onClick={() =>
+                updateRecord.mutate({
+                  id: editingRecord?.id,
+                  ...editRecordData,
+                })
+              }
+              disabled={updateRecord.isPending}
+              className="flex-1"
+            >
+              {updateRecord.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Salvando...
+                </>
+              ) : (
+                "Salvar Alterações"
+              )}
             </Button>
-            <Button variant="outline" onClick={() => setEditRecordDialogOpen(false)} disabled={updateRecord.isPending}>Cancelar</Button>
+            <Button
+              variant="outline"
+              onClick={() => setEditRecordDialogOpen(false)}
+              disabled={updateRecord.isPending}
+            >
+              Cancelar
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -1888,9 +2567,12 @@ export default function ClientProfile() {
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-red-400">Excluir Ficha de Anamnese</DialogTitle>
+            <DialogTitle className="text-red-400">
+              Excluir Ficha de Anamnese
+            </DialogTitle>
             <DialogDescription>
-              Tem certeza que deseja excluir esta ficha? Esta ação não pode ser desfeita.
+              Tem certeza que deseja excluir esta ficha? Esta ação não pode ser
+              desfeita.
             </DialogDescription>
           </DialogHeader>
           <div className="flex gap-3 pt-4">
@@ -1900,9 +2582,24 @@ export default function ClientProfile() {
               disabled={deleteRecord.isPending || deleteSubmission.isPending}
               className="flex-1"
             >
-              {(deleteRecord.isPending || deleteSubmission.isPending) ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Excluindo...</> : "Sim, Excluir"}
+              {deleteRecord.isPending || deleteSubmission.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                "Sim, Excluir"
+              )}
             </Button>
-            <Button variant="outline" onClick={() => { setDeleteConfirmOpen(false); setDeletingItem(null); }}>Cancelar</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteConfirmOpen(false);
+                setDeletingItem(null);
+              }}
+            >
+              Cancelar
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -1913,19 +2610,40 @@ export default function ClientProfile() {
 // ─── Aba Prontuário Técnico (POD Session) ──────────────────────────────────
 
 const STATUS_LABELS_POD: Record<string, { label: string; color: string }> = {
-  em_andamento: { label: "Em andamento", color: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
-  pausado: { label: "Pausado", color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" },
-  finalizado: { label: "Finalizado", color: "bg-green-500/20 text-green-400 border-green-500/30" },
-  retorno: { label: "Retorno", color: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
-  retoque: { label: "Retoque", color: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
+  em_andamento: {
+    label: "Em andamento",
+    color: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  },
+  pausado: {
+    label: "Pausado",
+    color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  },
+  finalizado: {
+    label: "Finalizado",
+    color: "bg-green-500/20 text-green-400 border-green-500/30",
+  },
+  retorno: {
+    label: "Retorno",
+    color: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  },
+  retoque: {
+    label: "Retoque",
+    color: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+  },
 };
 
-function ProceduresTab({ clientId, clientName }: { clientId: number; clientName: string }) {
+function ProceduresTab({
+  clientId,
+  clientName,
+}: {
+  clientId: number;
+  clientName: string;
+}) {
   const [, navigate] = useLocation();
 
   const proceduresQuery = trpc.procedures.listByClient.useQuery(
     { clientId },
-    { enabled: clientId > 0, staleTime: 30_000 }
+    { enabled: clientId > 0, staleTime: 30_000 },
   );
 
   const utils = trpc.useUtils();
@@ -1958,7 +2676,9 @@ function ProceduresTab({ clientId, clientName }: { clientId: number; clientName:
               <Stethoscope className="w-5 h-5 text-primary" />
               Prontuário Técnico
             </CardTitle>
-            <CardDescription>Sessões de execução de tatuagem com timer, insumos e fotos</CardDescription>
+            <CardDescription>
+              Sessões de execução de tatuagem com timer, insumos e fotos
+            </CardDescription>
           </div>
           <Button
             size="sm"
@@ -1982,12 +2702,15 @@ function ProceduresTab({ clientId, clientName }: { clientId: number; clientName:
           <div className="text-center py-12 text-muted-foreground">
             <Stethoscope className="w-10 h-10 mx-auto mb-3 opacity-30" />
             <p className="font-medium">Nenhuma sessão registrada</p>
-            <p className="text-sm mt-1">Clique em "Nova Sessão" para iniciar o prontuário técnico</p>
+            <p className="text-sm mt-1">
+              Clique em "Nova Sessão" para iniciar o prontuário técnico
+            </p>
           </div>
         ) : (
           <div className="space-y-3">
             {procedures.map((p) => {
-              const statusInfo = STATUS_LABELS_POD[p.status] ?? STATUS_LABELS_POD.em_andamento;
+              const statusInfo =
+                STATUS_LABELS_POD[p.status] ?? STATUS_LABELS_POD.em_andamento;
               const duration = formatDuration(p.totalDurationMinutes);
               return (
                 <div
@@ -2010,9 +2733,14 @@ function ProceduresTab({ clientId, clientName }: { clientId: number; clientName:
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-medium text-sm truncate">{p.title}</p>
+                        <p className="font-medium text-sm truncate">
+                          {p.title}
+                        </p>
                         <div className="flex flex-wrap items-center gap-2 mt-1">
-                          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-4 ${statusInfo.color}`}>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] px-1.5 py-0 h-4 ${statusInfo.color}`}
+                          >
                             {statusInfo.label}
                           </Badge>
                           {p.bodyLocation && (
@@ -2050,7 +2778,11 @@ function ProceduresTab({ clientId, clientName }: { clientId: number; clientName:
                           variant="ghost"
                           className="h-7 w-7 p-0 text-destructive hover:text-destructive"
                           onClick={() => {
-                            if (confirm("Excluir este procedimento? Esta ação não pode ser desfeita.")) {
+                            if (
+                              confirm(
+                                "Excluir este procedimento? Esta ação não pode ser desfeita.",
+                              )
+                            ) {
                               deleteMutation.mutate({ id: p.id });
                             }
                           }}
@@ -2064,6 +2796,39 @@ function ProceduresTab({ clientId, clientName }: { clientId: number; clientName:
                       <p className="text-xs text-muted-foreground mt-1">
                         Artista: {p.artistName}
                       </p>
+                    )}
+                    {p.consumables.length > 0 && (
+                      <div className="mt-3 rounded-lg border bg-muted/30 p-2.5">
+                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Materiais utilizados
+                        </p>
+                        <div className="space-y-1">
+                          {p.consumables.map((material) => (
+                            <p
+                              key={material.id}
+                              className="break-words text-xs"
+                            >
+                              <span className="font-medium">
+                                {material.name}
+                              </span>{" "}
+                              ·{" "}
+                              {Number(material.quantity).toLocaleString(
+                                "pt-BR",
+                              )}{" "}
+                              {material.unit}
+                              {material.lotNumber && (
+                                <span className="text-amber-600 dark:text-amber-300">
+                                  {" "}
+                                  · lote {material.lotNumber}
+                                  {material.expiresAt
+                                    ? ` · validade ${new Date(material.expiresAt).toLocaleDateString("pt-BR")}`
+                                    : ""}
+                                </span>
+                              )}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
