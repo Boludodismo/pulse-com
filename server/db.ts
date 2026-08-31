@@ -3966,6 +3966,24 @@ export async function listMaterialLots(materialId?: number) {
     .orderBy(materialLots.expiresAt, materialLots.lotNumber);
 }
 
+export async function deactivateMaterialLot(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const rows = await db
+    .select()
+    .from(materialLots)
+    .where(and(eq(materialLots.id, id), eq(materialLots.isActive, 1)));
+  const lot = rows[0];
+  if (!lot) return undefined;
+
+  await db
+    .update(materialLots)
+    .set({ isActive: 0, updatedAt: Date.now() })
+    .where(eq(materialLots.id, id));
+  return lot;
+}
+
 export async function getExpiryAlerts(days = 90) {
   const db = await getDb();
   if (!db) return [];
