@@ -4419,8 +4419,8 @@ export async function getPurchaseOrderById(id: number) {
     .select({
       id: purchaseOrderItems.id,
       materialId: purchaseOrderItems.materialId,
-      materialName: materials.name,
-      materialUnit: materials.unit,
+      materialName: sql<string>`COALESCE(${purchaseOrderItems.materialName}, ${materials.name})`,
+      materialUnit: sql<string>`COALESCE(${purchaseOrderItems.materialUnit}, ${materials.purchaseUnit}, ${materials.unit})`,
       quantity: purchaseOrderItems.quantity,
       unitPrice: purchaseOrderItems.unitPrice,
       notes: purchaseOrderItems.notes,
@@ -4437,7 +4437,9 @@ export async function createPurchaseOrder(data: {
   notes?: string;
   createdBy?: number;
   items: {
-    materialId: number;
+    materialId?: number;
+    materialName: string;
+    materialUnit: string;
     quantity: number;
     unitPrice?: number;
     notes?: string;
@@ -4459,6 +4461,8 @@ export async function createPurchaseOrder(data: {
       data.items.map((item) => ({
         orderId,
         materialId: item.materialId,
+        materialName: item.materialName,
+        materialUnit: item.materialUnit,
         quantity: String(item.quantity),
         unitPrice: String(item.unitPrice ?? 0),
         notes: item.notes,
