@@ -44,6 +44,8 @@ import {
   Copy,
   CheckCircle2,
   ClipboardList,
+  PackageSearch,
+  Sparkles,
 } from "lucide-react";
 
 type SupplierForm = {
@@ -65,6 +67,19 @@ type OrderItem = {
   unitPrice: string;
   notes: string;
 };
+
+const CATALOG_CATEGORIES = [
+  "Cartuchos e agulhas",
+  "Tintas e pigmentos",
+  "Barreiras e descartáveis",
+  "EPIs de procedimento",
+  "Higiene e antissepsia",
+  "Stencil e transferência",
+  "Cuidados pós-tatuagem",
+  "Limpeza do estúdio",
+  "Sacos, lixeiras e resíduos",
+  "Equipamentos e acessórios",
+];
 
 const emptySupplierForm = (): SupplierForm => ({
   name: "",
@@ -91,6 +106,10 @@ export default function Suppliers() {
   const [orderSupplierName, setOrderSupplierName] = useState("");
   const [orderNotes, setOrderNotes] = useState("");
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
+  const [showOrderCatalog, setShowOrderCatalog] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogBrandId, setCatalogBrandId] = useState("all");
+  const [catalogCategory, setCatalogCategory] = useState("all");
 
   // Visualizar pedido existente
   const [viewOrderId, setViewOrderId] = useState<number | null>(null);
@@ -101,6 +120,17 @@ export default function Suppliers() {
 
   const { data: suppliers = [], isLoading } = trpc.suppliers.list.useQuery({ activeOnly: true });
   const { data: materials = [] } = trpc.stock.listMaterials.useQuery({ activeOnly: true });
+  const { data: catalogBrands = [] } = trpc.catalog.brands.useQuery();
+  const { data: catalogVariants = [], isLoading: catalogLoading } =
+    trpc.catalog.search.useQuery(
+      {
+        query: catalogSearch.trim() || undefined,
+        brandId: catalogBrandId === "all" ? undefined : Number(catalogBrandId),
+        category: catalogCategory === "all" ? undefined : catalogCategory,
+        limit: 100,
+      },
+      { enabled: showOrder && showOrderCatalog },
+    );
   const { data: orders = [] } = trpc.stock.listOrders.useQuery();
   const { data: viewOrder } = trpc.stock.getOrder.useQuery(
     { id: viewOrderId! },
@@ -213,7 +243,111 @@ export default function Suppliers() {
     setOrderSupplierName(supplier.name);
     setOrderItems([]);
     setOrderNotes("");
+    setShowOrderCatalog(false);
+    setCatalogSearch("");
+    setCatalogBrandId("all");
+    setCatalogCategory("all");
     setShowOrder(true);
+  };
+
+  const getSuggestedPackages = (material: any) => {
+    const current = Number(material.currentStock) || 0;
+    const configuredTarget = Number(material.targetStock) || 0;
+    const target =
+      configuredTarget > 0 ? configuredTarget : Number(material.minStock) || 0;
+    const unitsPerPackage = Number(material.unitsPerPackage) || 1;
+    return Math.max(1, Math.ceil(Math.max(target - current, 0) / unitsPerPackage));
+  };
+
+  const addMaterialToOrder = (material: any, suggested = false) => {
+    if (orderItems.some((item) => item.materialId === material.id)) {
+      toast.info("Este material já está no pedido.");
+      return;
+    }
+    const quantity = suggested ? String(getSuggestedPackages(material)) : "";
+    setOrderItems((prev) => [
+      ...prev,
+      {
+        materialId: material.id,
+        materialName: material.name,
+        materialUnit: material.purchaseUnit || material.unit || "un",
+        quantity,
+        unitPrice: Number(material.avgPrice) > 0 ? String(material.avgPrice) : "",
+        notes: suggested
+          ? `Sugestão pelo estoque atual: ${Number(material.currentStock).toLocaleString("pt-BR")} ${material.baseUnit || material.unit || "un"}`
+          : "",
+      },
+    ]);
+  };
+
+  const addStockSuggestions = () => {
+    const suggestions = materials.filter((material) => {
+      const current = Number(material.currentStock) || 0;
+      const configuredTarget = Number(material.targetStock) || 0;
+      const target =
+        configuredTarget > 0
+          ? configuredTarget
+          : Number(material.minStock) || 0;
+      const supplierMatches =
+        !material.supplierId || material.supplierId === orderSupplierId;
+      return supplierMatches && target > current;
+    });
+    const existingIds = new Set(orderItems.map((item) => item.materialId));
+    const newItems = suggestions
+      .filter((material) => !existingIds.has(material.id))
+      .map((material) => ({
+        materialId: material.id,
+        materialName: material.name,
+        materialUnit: material.purchaseUnit || material.unit || "un",
+        quantity: String(getSuggestedPackages(material)),
+        unitPrice: Number(material.avgPrice) > 0 ? String(material.avgPrice) : "",
+        notes: `Sugestão pelo estoque atual: ${Number(material.currentStock).toLocaleString("pt-BR")} ${material.baseUnit || material.unit || "un"}`,
+      }));
+    if (newItems.length === 0) {
+      toast.info("Nenhuma nova sugestão de reposição para este fornecedor.");
+      return;
+    }
+    setOrderItems((prev) => [...prev, ...newItems]);
+    toast.success(`${newItems.length} sugestão(ões) adicionada(s).`);
+  };
+
+  const addCatalogVariantToOrder = (variant: any) => {
+    const linkedMaterial = materials.find(
+      (material) => material.catalogVariantId === variant.id,
+    );
+    if (linkedMaterial) {
+      addMaterialToOrder(linkedMaterial, true);
+      return;
+    }
+    const name = [
+      variant.brandName,
+      variant.lineName,
+      variant.name,
+      variant.sku,
+    ]
+      .filter(Boolean)
+      .join(" · ")
+      .slice(0, 255);
+    if (
+      orderItems.some(
+        (item) => item.materialId === 0 && item.materialName === name,
+      )
+    ) {
+      toast.info("Este preset já está no pedido.");
+      return;
+    }
+    setOrderItems((prev) => [
+      ...prev,
+      {
+        materialId: 0,
+        materialName: name,
+        materialUnit: variant.purchaseUnit || "un",
+        quantity: "1",
+        unitPrice: "",
+        notes: "Novo item selecionado no catálogo técnico",
+      },
+    ]);
+    toast.success("Preset adicionado ao pedido.");
   };
 
   const addOrderItem = () => {
@@ -236,7 +370,7 @@ export default function Suppliers() {
           ...updated[index],
           materialId: parseInt(value),
           materialName: mat?.name || "",
-          materialUnit: mat?.unit || "",
+          materialUnit: mat?.purchaseUnit || mat?.unit || "",
         };
       } else {
         updated[index] = { ...updated[index], [field]: value };
@@ -251,7 +385,9 @@ export default function Suppliers() {
 
   const handleCreateOrder = () => {
     if (!orderSupplierId) return;
-    const validItems = orderItems.filter(i => i.materialId > 0 && parseFloat(i.quantity) > 0);
+    const validItems = orderItems.filter(
+      i => i.materialName && parseFloat(i.quantity) > 0,
+    );
     if (validItems.length === 0) {
       toast.error("Adicione pelo menos um item ao pedido.");
       return;
@@ -260,7 +396,9 @@ export default function Suppliers() {
       supplierId: orderSupplierId,
       notes: orderNotes || undefined,
       items: validItems.map(i => ({
-        materialId: i.materialId,
+        materialId: i.materialId > 0 ? i.materialId : undefined,
+        materialName: i.materialName,
+        materialUnit: i.materialUnit || "un",
         quantity: parseFloat(i.quantity),
         unitPrice: i.unitPrice ? parseFloat(i.unitPrice) : 0,
         notes: i.notes || undefined,
@@ -508,22 +646,133 @@ export default function Suppliers() {
           <div className="space-y-4">
             {/* Itens do pedido */}
             <div>
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
                 <Label className="text-base">Itens do Pedido</Label>
-                <Button size="sm" variant="outline" onClick={addOrderItem}>
-                  <Plus className="w-3 h-3 mr-1" /> Adicionar Item
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={addStockSuggestions}>
+                    <Sparkles className="w-3 h-3 mr-1" /> Sugestões do estoque
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={showOrderCatalog ? "default" : "outline"}
+                    onClick={() => setShowOrderCatalog((open) => !open)}
+                  >
+                    <PackageSearch className="w-3 h-3 mr-1" /> Catálogo técnico
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={addOrderItem}>
+                    <Plus className="w-3 h-3 mr-1" /> Manual
+                  </Button>
+                </div>
               </div>
+
+              {showOrderCatalog && (
+                <div className="mb-4 space-y-3 rounded-lg border border-orange-500/30 bg-orange-500/[0.04] p-3">
+                  <div>
+                    <p className="text-sm font-medium">Escolher no catálogo técnico</p>
+                    <p className="text-xs text-muted-foreground">
+                      Busque o preset por marca, modelo, SKU, cor ou medida. A
+                      quantidade sugerida usa o estoque atual quando o item já
+                      estiver cadastrado.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <Input
+                      value={catalogSearch}
+                      onChange={(event) => setCatalogSearch(event.target.value)}
+                      placeholder="Buscar material ou SKU..."
+                      className="sm:col-span-3"
+                    />
+                    <Select value={catalogBrandId} onValueChange={setCatalogBrandId}>
+                      <SelectTrigger className="sm:col-span-1">
+                        <SelectValue placeholder="Todas as marcas" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todas as marcas</SelectItem>
+                        {catalogBrands.map((brand) => (
+                          <SelectItem key={brand.id} value={String(brand.id)}>
+                            {brand.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={catalogCategory} onValueChange={setCatalogCategory}>
+                      <SelectTrigger className="sm:col-span-2">
+                        <SelectValue placeholder="Todas as categorias" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todas as categorias</SelectItem>
+                        {CATALOG_CATEGORIES.map((category) => (
+                          <SelectItem key={category} value={category}>
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                    {catalogLoading ? (
+                      <p className="py-4 text-center text-sm text-muted-foreground">
+                        Carregando catálogo...
+                      </p>
+                    ) : catalogVariants.length === 0 ? (
+                      <p className="py-4 text-center text-sm text-muted-foreground">
+                        Nenhum preset encontrado.
+                      </p>
+                    ) : (
+                      catalogVariants.map((variant) => {
+                        const linkedMaterial = materials.find(
+                          (material) => material.catalogVariantId === variant.id,
+                        );
+                        return (
+                          <div
+                            key={variant.id}
+                            className="flex flex-col gap-2 rounded-md border bg-card p-3 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div className="min-w-0">
+                              <p className="break-words text-sm font-medium">
+                                {[variant.brandName, variant.lineName, variant.name]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </p>
+                              <p className="break-words text-xs text-muted-foreground">
+                                {[variant.sku, variant.format, variant.colorName]
+                                  .filter(Boolean)
+                                  .join(" · ") || "Preset técnico"}
+                              </p>
+                              <p className="mt-1 text-xs text-orange-400">
+                                {linkedMaterial
+                                  ? `Estoque: ${Number(linkedMaterial.currentStock).toLocaleString("pt-BR")} ${linkedMaterial.baseUnit || linkedMaterial.unit} · sugestão: ${getSuggestedPackages(linkedMaterial)} ${linkedMaterial.purchaseUnit || linkedMaterial.unit}`
+                                  : `Novo no estoque · pedido inicial: 1 ${variant.purchaseUnit || "un"}`}
+                              </p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="shrink-0"
+                              onClick={() => addCatalogVariantToOrder(variant)}
+                            >
+                              <Plus className="mr-1 h-3 w-3" /> Adicionar
+                            </Button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
               {orderItems.length === 0 ? (
                 <div className="text-center py-6 text-muted-foreground border border-dashed rounded-lg">
                   <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">Nenhum item adicionado. Clique em "Adicionar Item".</p>
+                  <p className="text-sm">
+                    Nenhum item adicionado. Use as sugestões, o catálogo ou o
+                    preenchimento manual.
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {orderItems.map((item, i) => (
-                    <div key={i} className="grid grid-cols-12 gap-2 items-end p-3 bg-card rounded-lg border border-border">
-                      <div className="col-span-4">
+                    <div key={i} className="grid grid-cols-1 gap-2 items-end p-3 bg-card rounded-lg border border-border sm:grid-cols-12">
+                      <div className="sm:col-span-4">
                         <Label className="text-xs">Material</Label>
                         <Select value={item.materialId > 0 ? String(item.materialId) : ""}
                           onValueChange={v => updateOrderItem(i, "materialId", v)}>
@@ -532,30 +781,30 @@ export default function Suppliers() {
                           </SelectTrigger>
                           <SelectContent>
                             {materials.map(m => (
-                              <SelectItem key={m.id} value={String(m.id)}>{m.name} ({m.unit})</SelectItem>
+                              <SelectItem key={m.id} value={String(m.id)}>{m.name} ({m.purchaseUnit || m.unit})</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="col-span-2">
+                      <div className="sm:col-span-2">
                         <Label className="text-xs">Qtd ({item.materialUnit || "un"})</Label>
                         <Input className="h-8 text-xs" type="number" min="0" step="0.01"
                           value={item.quantity} onChange={e => updateOrderItem(i, "quantity", e.target.value)}
                           placeholder="0" />
                       </div>
-                      <div className="col-span-2">
+                      <div className="sm:col-span-2">
                         <Label className="text-xs">Preço Unit. (R$)</Label>
                         <Input className="h-8 text-xs" type="number" min="0" step="0.01"
                           value={item.unitPrice} onChange={e => updateOrderItem(i, "unitPrice", e.target.value)}
                           placeholder="0,00" />
                       </div>
-                      <div className="col-span-3">
+                      <div className="sm:col-span-3">
                         <Label className="text-xs">Observação</Label>
                         <Input className="h-8 text-xs" value={item.notes}
                           onChange={e => updateOrderItem(i, "notes", e.target.value)}
                           placeholder="Opcional..." />
                       </div>
-                      <div className="col-span-1 flex justify-end">
+                      <div className="flex justify-end sm:col-span-1">
                         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => removeOrderItem(i)}>
                           <Trash2 className="w-3 h-3 text-red-400" />
                         </Button>
