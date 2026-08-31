@@ -508,8 +508,22 @@ export const appRouter = router({
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Apenas administradores podem excluir clientes.",
+          });
+        }
+
         // Buscar dados antes da exclusão
         const clientBefore = await db.getClientById(input.id);
+
+        if (!clientBefore) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Cliente não encontrado.",
+          });
+        }
 
         const result = await db.deleteClient(input.id);
 
