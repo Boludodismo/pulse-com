@@ -61,6 +61,7 @@ import {
 	catalogProductLines,
 	catalogVariants,
 	supplierCatalogOfferings,
+	materialLots,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { POST_SALE_STAGES, type PostSaleStage } from "../shared/postSale";
@@ -3001,7 +3002,8 @@ export async function searchCatalogVariants(input: CatalogSearchInput = {}) {
       ${catalogBrands.name}, ${catalogProductLines.name}, ${catalogVariants.name},
       ${catalogVariants.sku}, ${catalogVariants.format}, ${catalogVariants.needleCount},
       ${catalogVariants.needleDiameter}, ${catalogVariants.taper}, ${catalogVariants.packageQuantity},
-      ${catalogVariants.packageUnit}, ${catalogVariants.application}
+      ${catalogVariants.packageUnit}, ${catalogVariants.application}, ${catalogVariants.colorName},
+      ${catalogVariants.volumeMl}, ${catalogVariants.anvisaRegistration}
     )) LIKE ${`%${token}%`}`);
   }
 
@@ -3017,6 +3019,14 @@ export async function searchCatalogVariants(input: CatalogSearchInput = {}) {
     taper: catalogVariants.taper,
     packageQuantity: catalogVariants.packageQuantity,
     packageUnit: catalogVariants.packageUnit,
+    baseUnit: catalogVariants.baseUnit,
+    purchaseUnit: catalogVariants.purchaseUnit,
+    unitsPerPackage: catalogVariants.unitsPerPackage,
+    volumeMl: catalogVariants.volumeMl,
+    colorName: catalogVariants.colorName,
+    anvisaRegistration: catalogVariants.anvisaRegistration,
+    anvisaStatus: catalogVariants.anvisaStatus,
+    requiresLotControl: catalogVariants.requiresLotControl,
     application: catalogVariants.application,
     evidenceStatus: catalogVariants.evidenceStatus,
     sourceUrl: catalogVariants.sourceUrl,
@@ -3089,6 +3099,14 @@ export async function getCatalogVariantById(id: number) {
     taper: catalogVariants.taper,
     packageQuantity: catalogVariants.packageQuantity,
     packageUnit: catalogVariants.packageUnit,
+    baseUnit: catalogVariants.baseUnit,
+    purchaseUnit: catalogVariants.purchaseUnit,
+    unitsPerPackage: catalogVariants.unitsPerPackage,
+    volumeMl: catalogVariants.volumeMl,
+    colorName: catalogVariants.colorName,
+    anvisaRegistration: catalogVariants.anvisaRegistration,
+    anvisaStatus: catalogVariants.anvisaStatus,
+    requiresLotControl: catalogVariants.requiresLotControl,
     application: catalogVariants.application,
     evidenceStatus: catalogVariants.evidenceStatus,
     sourceUrl: catalogVariants.sourceUrl,
@@ -3169,11 +3187,17 @@ export async function listMaterials(activeOnly = true) {
     name: materials.name,
     category: materials.category,
     unit: materials.unit,
+    baseUnit: materials.baseUnit,
+    purchaseUnit: materials.purchaseUnit,
+    unitsPerPackage: materials.unitsPerPackage,
     currentStock: materials.currentStock,
     minStock: materials.minStock,
+    targetStock: materials.targetStock,
     avgPrice: materials.avgPrice,
     supplierId: materials.supplierId,
 	  catalogVariantId: materials.catalogVariantId,
+    requiresLotControl: materials.requiresLotControl,
+    anvisaStatus: materials.anvisaStatus,
     supplierName: suppliers.name,
     notes: materials.notes,
     isActive: materials.isActive,
@@ -3223,8 +3247,12 @@ export async function getLowStockMaterials() {
     name: materials.name,
     category: materials.category,
     unit: materials.unit,
+    baseUnit: materials.baseUnit,
+    purchaseUnit: materials.purchaseUnit,
+    unitsPerPackage: materials.unitsPerPackage,
     currentStock: materials.currentStock,
     minStock: materials.minStock,
+    targetStock: materials.targetStock,
     supplierName: suppliers.name,
     supplierWhatsapp: suppliers.whatsapp,
   })
@@ -3237,6 +3265,25 @@ export async function getLowStockMaterials() {
     ))
     .orderBy(materials.category, materials.name);
   return rows;
+}
+
+export async function getReorderSuggestions() {
+  const rows = await getLowStockMaterials();
+  return rows.map((material) => {
+    const currentStock = Number(material.currentStock) || 0;
+    const minStock = Number(material.minStock) || 0;
+    const targetStock = Math.max(Number(material.targetStock) || 0, minStock);
+    const unitsPerPackage = Math.max(Number(material.unitsPerPackage) || 1, 0.001);
+    const missingBaseUnits = Math.max(targetStock - currentStock, 0);
+    const suggestedPackages = Math.ceil(missingBaseUnits / unitsPerPackage);
+    return {
+      ...material,
+      targetStock,
+      missingBaseUnits,
+      suggestedPackages,
+      suggestedBaseUnits: suggestedPackages * unitsPerPackage,
+    };
+  });
 }
 
 // ============ MOVIMENTAÇÕES DE ESTOQUE ============
@@ -3255,8 +3302,14 @@ export async function addStockMovement(data: {
   materialId: number;
   type: 'entrada' | 'saida' | 'ajuste';
   quantity: number;
+  inputQuantity?: number;
+  inputUnit?: string;
+  conversionFactor?: number;
   reason?: string;
   notes?: string;
+  lotNumber?: string;
+  expiresAt?: string;
+  source?: 'manual' | 'procedimento' | 'compra' | 'ajuste';
   createdBy?: number;
 }) {
   const db = await getDb();
@@ -3267,36 +3320,77 @@ export async function addStockMovement(data: {
   if (!mat) throw new Error("Material não encontrado");
 
   const previousStock = parseFloat(String(mat.currentStock)) || 0;
+  const inputQuantity = data.inputQuantity ?? data.quantity;
+  const conversionFactor = data.type === 'ajuste' ? 1 : (data.conversionFactor ?? 1);
+  const normalizedQuantity = data.type === 'ajuste' ? data.quantity : inputQuantity * conversionFactor;
+  if (!Number.isFinite(normalizedQuantity) || normalizedQuantity < 0) {
+    throw new Error("Quantidade ou fator de conversão inválido");
+  }
   let newStock: number;
 
   if (data.type === 'entrada') {
-    newStock = previousStock + data.quantity;
+    newStock = previousStock + normalizedQuantity;
   } else if (data.type === 'saida') {
-    newStock = Math.max(0, previousStock - data.quantity);
+    if (normalizedQuantity > previousStock) throw new Error("Saída maior que o estoque disponível");
+    newStock = previousStock - normalizedQuantity;
   } else {
     // ajuste: quantity é o novo valor absoluto
-    newStock = data.quantity;
+    newStock = normalizedQuantity;
   }
 
   // Inserir movimentação
   await db.insert(stockMovements).values({
     materialId: data.materialId,
     type: data.type,
-    quantity: String(data.quantity),
+    quantity: String(normalizedQuantity),
+    inputQuantity: String(inputQuantity),
+    inputUnit: data.inputUnit || mat.baseUnit || mat.unit || 'un',
+    conversionFactor: String(conversionFactor),
     previousStock: String(previousStock),
     newStock: String(newStock),
     reason: data.reason,
     notes: data.notes,
+    lotNumber: data.lotNumber,
+    expiresAt: data.expiresAt,
+    source: data.source || (data.type === 'ajuste' ? 'ajuste' : 'manual'),
     createdBy: data.createdBy,
     createdAt: Date.now(),
   });
 
   // Atualizar estoque atual do material
   await db.update(materials)
-    .set({ currentStock: String(newStock) })
+    .set({ currentStock: String(newStock), updatedAt: Date.now() })
     .where(eq(materials.id, data.materialId));
 
-  return { previousStock, newStock };
+  if (data.type === 'entrada' && data.lotNumber) {
+    const now = Date.now();
+    await db.insert(materialLots).values({
+      materialId: data.materialId,
+      lotNumber: data.lotNumber,
+      expiresAt: data.expiresAt,
+      currentQuantity: String(normalizedQuantity),
+      supplierId: mat.supplierId,
+      receivedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    }).onDuplicateKeyUpdate({
+      set: {
+        currentQuantity: sql`${materialLots.currentQuantity} + ${normalizedQuantity}`,
+        expiresAt: data.expiresAt,
+        updatedAt: now,
+      },
+    });
+  }
+
+  return { previousStock, newStock, normalizedQuantity, baseUnit: mat.baseUnit || mat.unit || 'un' };
+}
+
+export async function listMaterialLots(materialId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(materialLots)
+    .where(materialId ? and(eq(materialLots.materialId, materialId), eq(materialLots.isActive, 1)) : eq(materialLots.isActive, 1))
+    .orderBy(materialLots.expiresAt, materialLots.lotNumber);
 }
 
 // ============ KITS DE PROCEDIMENTO ============
