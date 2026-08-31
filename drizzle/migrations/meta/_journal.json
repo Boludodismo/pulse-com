@@ -57,6 +57,27 @@
       "when": 1787781600000,
       "tag": "0007_user_profile_photo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1788134400000,
+      "tag": "0008_inventory_packaging_lots",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1788138000000,
+      "tag": "0009_tattoo_reference_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1788141600000,
+      "tag": "0010_lot_alerts_client_history",
+      "breakpoints": true
     }
   ]
 }

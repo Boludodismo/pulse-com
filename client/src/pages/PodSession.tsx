@@ -62,6 +62,10 @@ type Consumable = {
   procedureId: number;
   category: string;
   name: string;
+  inventoryItemId: number | null;
+  materialLotId: number | null;
+  lotNumber: string | null;
+  expiresAt: string | null;
   unit: string;
   quantity: string;
   estimatedUnitCost: string | null;
@@ -69,6 +73,28 @@ type Consumable = {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type ConsumableCategory =
+  | "ink"
+  | "cartridge"
+  | "disposable"
+  | "liquid"
+  | "protection"
+  | "stencil"
+  | "aftercare"
+  | "other";
+type ConsumableUnit =
+  "drop" | "ml" | "unit" | "pair" | "gram" | "portion" | "roll_fraction";
+type ConsumableForm = {
+  inventoryItemId: string;
+  materialLotId: string;
+  name: string;
+  category: ConsumableCategory;
+  unit: ConsumableUnit;
+  quantity: number;
+  estimatedUnitCost: number;
+  notes: string;
 };
 
 // ─── Constantes ─────────────────────────────────────────────────────────────
@@ -105,16 +131,96 @@ const UNIT_LABELS: Record<string, string> = {
   roll_fraction: "fração rolo",
 };
 
+function inventoryCategory(category: string): ConsumableCategory {
+  const value = category.toLowerCase();
+  if (value.includes("tinta") || value.includes("pigment")) return "ink";
+  if (value.includes("cartucho") || value.includes("agulha"))
+    return "cartridge";
+  if (
+    value.includes("proteção") ||
+    value.includes("protecao") ||
+    value.includes("epi") ||
+    value.includes("luva")
+  )
+    return "protection";
+  if (
+    value.includes("líquido") ||
+    value.includes("liquido") ||
+    value.includes("higien")
+  )
+    return "liquid";
+  if (value.includes("stencil") || value.includes("papel")) return "stencil";
+  if (value.includes("pós") || value.includes("pos") || value.includes("after"))
+    return "aftercare";
+  if (value.includes("descart") || value.includes("barreira"))
+    return "disposable";
+  return "other";
+}
+
+function inventoryUnit(unit: string): ConsumableUnit {
+  const value = unit.toLowerCase();
+  if (value === "ml" || value === "l") return "ml";
+  if (value === "par") return "pair";
+  if (value === "g" || value === "kg") return "gram";
+  if (value === "m" || value === "rolo") return "roll_fraction";
+  return "unit";
+}
+
 const QUICK_CONSUMABLES = [
-  { name: "Tinta preta", category: "ink" as const, unit: "drop" as const, qty: 5 },
-  { name: "Tinta colorida", category: "ink" as const, unit: "drop" as const, qty: 3 },
-  { name: "Cartucho liner", category: "cartridge" as const, unit: "unit" as const, qty: 1 },
-  { name: "Cartucho shader", category: "cartridge" as const, unit: "unit" as const, qty: 1 },
-  { name: "Luvas", category: "protection" as const, unit: "pair" as const, qty: 1 },
-  { name: "Película", category: "protection" as const, unit: "unit" as const, qty: 1 },
-  { name: "Vaselina", category: "liquid" as const, unit: "portion" as const, qty: 1 },
-  { name: "Green Soap", category: "liquid" as const, unit: "ml" as const, qty: 10 },
-  { name: "Papel stencil", category: "stencil" as const, unit: "unit" as const, qty: 1 },
+  {
+    name: "Tinta preta",
+    category: "ink" as const,
+    unit: "drop" as const,
+    qty: 5,
+  },
+  {
+    name: "Tinta colorida",
+    category: "ink" as const,
+    unit: "drop" as const,
+    qty: 3,
+  },
+  {
+    name: "Cartucho liner",
+    category: "cartridge" as const,
+    unit: "unit" as const,
+    qty: 1,
+  },
+  {
+    name: "Cartucho shader",
+    category: "cartridge" as const,
+    unit: "unit" as const,
+    qty: 1,
+  },
+  {
+    name: "Luvas",
+    category: "protection" as const,
+    unit: "pair" as const,
+    qty: 1,
+  },
+  {
+    name: "Película",
+    category: "protection" as const,
+    unit: "unit" as const,
+    qty: 1,
+  },
+  {
+    name: "Vaselina",
+    category: "liquid" as const,
+    unit: "portion" as const,
+    qty: 1,
+  },
+  {
+    name: "Green Soap",
+    category: "liquid" as const,
+    unit: "ml" as const,
+    qty: 10,
+  },
+  {
+    name: "Papel stencil",
+    category: "stencil" as const,
+    unit: "unit" as const,
+    qty: 1,
+  },
 ];
 
 // ─── Componente principal ────────────────────────────────────────────────────
@@ -140,10 +246,12 @@ export default function PodSession() {
   // ── Estado do modal de insumo ────────────────────────────────────────────
   const [addConsumableOpen, setAddConsumableOpen] = useState(false);
   const [selectedKitId, setSelectedKitId] = useState("");
-  const [consumableForm, setConsumableForm] = useState({
+  const [consumableForm, setConsumableForm] = useState<ConsumableForm>({
+    inventoryItemId: "",
+    materialLotId: "",
     name: "",
-    category: "ink" as const,
-    unit: "drop" as const,
+    category: "ink",
+    unit: "drop",
     quantity: 1,
     estimatedUnitCost: 0,
     notes: "",
@@ -157,14 +265,15 @@ export default function PodSession() {
   const [finalizeOpen, setFinalizeOpen] = useState(false);
   const [finalizeForm, setFinalizeForm] = useState({
     chargedAmount: "",
-    paymentMethod: "pix" as "pix" | "dinheiro" | "credito" | "debito" | "transferencia",
+    paymentMethod: "pix" as
+      "pix" | "dinheiro" | "credito" | "debito" | "transferencia",
     notes: "",
   });
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const procedureQuery = trpc.procedures.getById.useQuery(
     { id: procedureId },
-    { enabled: procedureId > 0, refetchInterval: 30_000 }
+    { enabled: procedureId > 0, refetchInterval: 30_000 },
   );
 
   const utils = trpc.useUtils();
@@ -173,11 +282,24 @@ export default function PodSession() {
   const consumables = procedureQuery.data?.consumables ?? [];
   const images = procedureQuery.data?.images ?? [];
   const { data: kits = [] } = trpc.kits.list.useQuery();
+  const { data: inventoryMaterials = [] } = trpc.stock.listMaterials.useQuery({
+    activeOnly: true,
+  });
+  const { data: inventoryLots = [] } = trpc.stock.listLots.useQuery({});
+  const availableLots = inventoryLots.filter(
+    (lot) =>
+      String(lot.materialId) === consumableForm.inventoryItemId &&
+      Number(lot.currentQuantity) > 0 &&
+      (!lot.expiresAt || new Date(lot.expiresAt).getTime() >= Date.now()),
+  );
 
   // Agendamento vinculado (se houver)
   const linkedAppointmentQuery = trpc.appointments.getById.useQuery(
     { id: procedure?.appointmentId ?? 0 },
-    { enabled: !!procedure?.appointmentId && (procedure?.appointmentId ?? 0) > 0 }
+    {
+      enabled:
+        !!procedure?.appointmentId && (procedure?.appointmentId ?? 0) > 0,
+    },
   );
   const linkedAppointment = linkedAppointmentQuery.data;
 
@@ -191,21 +313,34 @@ export default function PodSession() {
     onSuccess: () => {
       utils.procedures.getById.invalidate({ id: procedureId });
       setAddConsumableOpen(false);
-      setConsumableForm({ name: "", category: "ink", unit: "drop", quantity: 1, estimatedUnitCost: 0, notes: "" });
+      setConsumableForm({
+        inventoryItemId: "",
+        materialLotId: "",
+        name: "",
+        category: "ink",
+        unit: "drop",
+        quantity: 1,
+        estimatedUnitCost: 0,
+        notes: "",
+      });
       toast.success("Insumo adicionado.");
     },
     onError: (err) => toast.error("Erro: " + err.message),
   });
 
-  const updateConsumableMutation = trpc.procedures.updateConsumable.useMutation({
-    onSuccess: () => utils.procedures.getById.invalidate({ id: procedureId }),
-    onError: (err) => toast.error("Erro: " + err.message),
-  });
+  const updateConsumableMutation = trpc.procedures.updateConsumable.useMutation(
+    {
+      onSuccess: () => utils.procedures.getById.invalidate({ id: procedureId }),
+      onError: (err) => toast.error("Erro: " + err.message),
+    },
+  );
 
-  const removeConsumableMutation = trpc.procedures.removeConsumable.useMutation({
-    onSuccess: () => utils.procedures.getById.invalidate({ id: procedureId }),
-    onError: (err) => toast.error("Erro: " + err.message),
-  });
+  const removeConsumableMutation = trpc.procedures.removeConsumable.useMutation(
+    {
+      onSuccess: () => utils.procedures.getById.invalidate({ id: procedureId }),
+      onError: (err) => toast.error("Erro: " + err.message),
+    },
+  );
 
   const finalizeMutation = trpc.procedures.finalize.useMutation({
     onSuccess: (data) => {
@@ -213,7 +348,8 @@ export default function PodSession() {
       utils.appointments.list.invalidate();
       setFinalizeOpen(false);
       const msgs: string[] = ["Sessão finalizada com sucesso!"];
-      if (data.appointmentUpdated) msgs.push("Agendamento marcado como concluído.");
+      if (data.appointmentUpdated)
+        msgs.push("Agendamento marcado como concluído.");
       if (data.transactionCreated) msgs.push("Valor registrado no financeiro.");
       toast.success(msgs.join(" "));
       navigate(`/procedures/${procedureId}/summary`);
@@ -251,7 +387,11 @@ export default function PodSession() {
       setElapsed((procedure.totalDurationMinutes ?? 0) * 60);
       setIsRunning(false);
     }
-  }, [procedure?.status, procedure?.startedAt, procedure?.totalDurationMinutes]);
+  }, [
+    procedure?.status,
+    procedure?.startedAt,
+    procedure?.totalDurationMinutes,
+  ]);
 
   // ── Timer: incrementar a cada segundo ───────────────────────────────────
   useEffect(() => {
@@ -276,7 +416,8 @@ export default function PodSession() {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    if (h > 0)
+      return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   };
 
@@ -303,17 +444,23 @@ export default function PodSession() {
     setIsRunning(false);
     // Pré-preencher valor cobrado com o valor do procedimento, se existir
     if (procedure?.chargedAmount) {
-      setFinalizeForm((f) => ({ ...f, chargedAmount: String(procedure.chargedAmount) }));
+      setFinalizeForm((f) => ({
+        ...f,
+        chargedAmount: String(procedure.chargedAmount),
+      }));
     }
     setFinalizeOpen(true);
   };
 
   const handleConfirmFinalize = () => {
-    const charged = finalizeForm.chargedAmount ? parseFloat(finalizeForm.chargedAmount) : 0;
+    const charged = finalizeForm.chargedAmount
+      ? parseFloat(finalizeForm.chargedAmount)
+      : 0;
     finalizeMutation.mutate({
       procedureId,
       chargedAmount: charged,
-      paymentMethod: finalizeForm.paymentMethod as "pix" | "dinheiro" | "credito" | "debito" | "transferencia",
+      paymentMethod: finalizeForm.paymentMethod as
+        "pix" | "dinheiro" | "credito" | "debito" | "transferencia",
       notes: finalizeForm.notes || undefined,
     });
   };
@@ -326,7 +473,12 @@ export default function PodSession() {
 
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
-    dragStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+    dragStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -345,7 +497,10 @@ export default function PodSession() {
   };
 
   // ── Upload de imagem ─────────────────────────────────────────────────────
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, imageType: "reference" | "progress" | "final") => {
+  const handleFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    imageType: "reference" | "progress" | "final",
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 16 * 1024 * 1024) {
@@ -377,7 +532,7 @@ export default function PodSession() {
     onError: (err) => toast.error("Erro ao registrar: " + err.message),
   });
 
-  const handleQuickAdd = (item: typeof QUICK_CONSUMABLES[number]) => {
+  const handleQuickAdd = (item: (typeof QUICK_CONSUMABLES)[number]) => {
     addConsumableMutation.mutate({
       procedureId,
       name: item.name,
@@ -387,7 +542,7 @@ export default function PodSession() {
     });
   };
 
-  const handleQuickConsume = (item: typeof QUICK_CONSUMABLES[number]) => {
+  const handleQuickConsume = (item: (typeof QUICK_CONSUMABLES)[number]) => {
     quickConsumeMutation.mutate({
       procedureId,
       inventoryItemId: 0,
@@ -402,9 +557,12 @@ export default function PodSession() {
     onSuccess: (data) => {
       utils.procedures.getById.invalidate({ id: procedureId });
       setSelectedKitId("");
-      toast.success(`${data.kitName} aplicado: ${data.itemCount} insumos registrados.`);
+      toast.success(
+        `${data.kitName} aplicado: ${data.itemCount} insumos registrados.`,
+      );
     },
-    onError: (err) => toast.error("Não foi possível aplicar o kit: " + err.message),
+    onError: (err) =>
+      toast.error("Não foi possível aplicar o kit: " + err.message),
   });
 
   const handleApplyKit = () => {
@@ -452,8 +610,11 @@ export default function PodSession() {
     );
   }
 
-  const referenceImage = images.find((i) => i.imageType === "reference") ||
-    (procedure.referenceImageUrl ? { imageUrl: procedure.referenceImageUrl, imageType: "reference" } : null);
+  const referenceImage =
+    images.find((i) => i.imageType === "reference") ||
+    (procedure.referenceImageUrl
+      ? { imageUrl: procedure.referenceImageUrl, imageType: "reference" }
+      : null);
 
   const isFinished = procedure.status === "finalizado";
   const isPaused = procedure.status === "pausado";
@@ -461,13 +622,18 @@ export default function PodSession() {
   const isNew = !procedure.startedAt;
 
   // Agrupar insumos por categoria
-  const consumablesByCategory = consumables.reduce<Record<string, Consumable[]>>((acc, c) => {
+  const consumablesByCategory = consumables.reduce<
+    Record<string, Consumable[]>
+  >((acc, c) => {
     if (!acc[c.category]) acc[c.category] = [];
     acc[c.category].push(c);
     return acc;
   }, {});
 
-  const totalCost = consumables.reduce((sum, c) => sum + Number(c.estimatedTotalCost ?? 0), 0);
+  const totalCost = consumables.reduce(
+    (sum, c) => sum + Number(c.estimatedTotalCost ?? 0),
+    0,
+  );
 
   // Formatar data do agendamento vinculado
   const formatLinkedDate = (dateStr: string) => {
@@ -490,12 +656,16 @@ export default function PodSession() {
           variant="ghost"
           size="icon"
           className="h-8 w-8 sm:h-10 sm:w-10"
-          onClick={() => navigate(`/clients/${procedure.clientId}?tab=procedures`)}
+          onClick={() =>
+            navigate(`/clients/${procedure.clientId}?tab=procedures`)
+          }
         >
           <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h1 className="font-semibold truncate text-xs sm:text-sm md:text-base">{procedure.title}</h1>
+          <h1 className="font-semibold truncate text-xs sm:text-sm md:text-base">
+            {procedure.title}
+          </h1>
           <p className="text-[10px] sm:text-xs text-muted-foreground truncate">
             {procedure.artistName && `${procedure.artistName} · `}
             {procedure.bodyLocation && `${procedure.bodyLocation} · `}
@@ -513,7 +683,9 @@ export default function PodSession() {
               <Link2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
               <span className="truncate max-w-[120px] sm:max-w-[160px]">
                 {linkedAppointment.service || "Agendamento"}
-                {linkedAppointment.date ? ` · ${linkedAppointment.date.slice(8, 10)}/${linkedAppointment.date.slice(5, 7)}` : ""}
+                {linkedAppointment.date
+                  ? ` · ${linkedAppointment.date.slice(8, 10)}/${linkedAppointment.date.slice(5, 7)}`
+                  : ""}
               </span>
               <ExternalLink className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0 opacity-60" />
             </button>
@@ -561,19 +733,24 @@ export default function PodSession() {
 
       {/* ── Layout principal ────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-
         {/* ── Coluna esquerda: imagem + timer ──────────────────────────── */}
         <div className="lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r">
-
           {/* Timer */}
           <div className="bg-card border-b px-4 py-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Clock className={`w-5 h-5 ${isRunning ? "text-green-500 animate-pulse" : "text-muted-foreground"}`} />
-              <span className={`font-mono text-2xl font-bold tabular-nums ${isRunning ? "text-green-500" : isFinished ? "text-muted-foreground" : "text-foreground"}`}>
+              <Clock
+                className={`w-5 h-5 ${isRunning ? "text-green-500 animate-pulse" : "text-muted-foreground"}`}
+              />
+              <span
+                className={`font-mono text-2xl font-bold tabular-nums ${isRunning ? "text-green-500" : isFinished ? "text-muted-foreground" : "text-foreground"}`}
+              >
                 {formatTime(elapsed)}
               </span>
               {isFinished && (
-                <Badge variant="outline" className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
+                <Badge
+                  variant="outline"
+                  className="bg-green-500/20 text-green-400 border-green-500/30 text-xs"
+                >
                   <CheckCircle2 className="w-3 h-3 mr-1" />
                   Finalizado
                 </Badge>
@@ -582,18 +759,31 @@ export default function PodSession() {
 
             <div className="flex gap-2">
               {isNew && (
-                <Button size="sm" onClick={handleStart} className="gap-1.5 bg-green-600 hover:bg-green-700">
+                <Button
+                  size="sm"
+                  onClick={handleStart}
+                  className="gap-1.5 bg-green-600 hover:bg-green-700"
+                >
                   <Play className="w-4 h-4" />
                   Iniciar
                 </Button>
               )}
               {isActive && (
                 <>
-                  <Button size="sm" variant="outline" onClick={handlePause} className="gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handlePause}
+                    className="gap-1.5"
+                  >
                     <Pause className="w-4 h-4" />
                     Pausar
                   </Button>
-                  <Button size="sm" onClick={handleFinish} className="gap-1.5 bg-green-600 hover:bg-green-700">
+                  <Button
+                    size="sm"
+                    onClick={handleFinish}
+                    className="gap-1.5 bg-green-600 hover:bg-green-700"
+                  >
                     <CheckCircle2 className="w-4 h-4" />
                     Finalizar
                   </Button>
@@ -601,7 +791,11 @@ export default function PodSession() {
               )}
               {isPaused && (
                 <>
-                  <Button size="sm" onClick={handleResume} className="gap-1.5 bg-green-600 hover:bg-green-700">
+                  <Button
+                    size="sm"
+                    onClick={handleResume}
+                    className="gap-1.5 bg-green-600 hover:bg-green-700"
+                  >
                     <Play className="w-4 h-4" />
                     Retomar
                   </Button>
@@ -702,7 +896,9 @@ export default function PodSession() {
             type="file"
             accept="image/*"
             className="hidden"
-            onChange={(e) => handleFileChange(e, isFinished ? "final" : "progress")}
+            onChange={(e) =>
+              handleFileChange(e, isFinished ? "final" : "progress")
+            }
           />
 
           {/* Galeria de imagens de progresso */}
@@ -724,10 +920,11 @@ export default function PodSession() {
 
         {/* ── Coluna direita: insumos ──────────────────────────────────── */}
         <div className="lg:w-1/2 xl:w-2/5 flex flex-col overflow-hidden">
-
           {/* Insumos rápidos */}
           <div className="border-b p-3">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Lançamento rápido</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
+              Lançamento rápido
+            </p>
             {kits.length > 0 && (
               <div className="flex flex-col sm:flex-row gap-1.5 mb-2">
                 <Select value={selectedKitId} onValueChange={setSelectedKitId}>
@@ -736,7 +933,9 @@ export default function PodSession() {
                   </SelectTrigger>
                   <SelectContent>
                     {kits.map((kit) => (
-                      <SelectItem key={kit.id} value={String(kit.id)}>{kit.name}</SelectItem>
+                      <SelectItem key={kit.id} value={String(kit.id)}>
+                        {kit.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -783,25 +982,43 @@ export default function PodSession() {
               <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
                 <Package className="w-8 h-8 opacity-30 mb-2" />
                 <p className="text-sm">Nenhum insumo lançado</p>
-                <p className="text-xs mt-1">Use os botões acima para registrar</p>
+                <p className="text-xs mt-1">
+                  Use os botões acima para registrar
+                </p>
               </div>
             ) : (
               Object.entries(consumablesByCategory).map(([category, items]) => (
                 <div key={category}>
                   <div className="flex items-center gap-1.5 mb-1.5">
-                    <span className="text-muted-foreground">{CATEGORY_ICONS[category]}</span>
+                    <span className="text-muted-foreground">
+                      {CATEGORY_ICONS[category]}
+                    </span>
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                       {CATEGORY_LABELS[category] ?? category}
                     </p>
                   </div>
                   <div className="space-y-1.5">
                     {items.map((c) => (
-                      <div key={c.id} className="flex items-center gap-2 p-2 rounded-lg bg-muted/40 border">
+                      <div
+                        key={c.id}
+                        className="flex items-center gap-2 p-2 rounded-lg bg-muted/40 border"
+                      >
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{c.name}</p>
-                          {c.estimatedTotalCost && Number(c.estimatedTotalCost) > 0 && (
-                            <p className="text-xs text-muted-foreground">
-                              R$ {Number(c.estimatedTotalCost).toFixed(2)}
+                          <p className="text-sm font-medium truncate">
+                            {c.name}
+                          </p>
+                          {c.estimatedTotalCost &&
+                            Number(c.estimatedTotalCost) > 0 && (
+                              <p className="text-xs text-muted-foreground">
+                                R$ {Number(c.estimatedTotalCost).toFixed(2)}
+                              </p>
+                            )}
+                          {c.lotNumber && (
+                            <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-300">
+                              Lote {c.lotNumber}
+                              {c.expiresAt
+                                ? ` · validade ${new Date(c.expiresAt).toLocaleDateString("pt-BR")}`
+                                : ""}
                             </p>
                           )}
                         </div>
@@ -815,7 +1032,10 @@ export default function PodSession() {
                             <Minus className="w-3 h-3" />
                           </Button>
                           <span className="text-sm font-mono w-8 text-center tabular-nums">
-                            {Number(c.quantity)}{UNIT_LABELS[c.unit] ? ` ${UNIT_LABELS[c.unit]}` : ""}
+                            {Number(c.quantity)}
+                            {UNIT_LABELS[c.unit]
+                              ? ` ${UNIT_LABELS[c.unit]}`
+                              : ""}
                           </span>
                           <Button
                             size="icon"
@@ -829,7 +1049,12 @@ export default function PodSession() {
                             size="icon"
                             variant="ghost"
                             className="h-6 w-6 text-destructive hover:text-destructive"
-                            onClick={() => removeConsumableMutation.mutate({ id: c.id, procedureId })}
+                            onClick={() =>
+                              removeConsumableMutation.mutate({
+                                id: c.id,
+                                procedureId,
+                              })
+                            }
                           >
                             <Trash2 className="w-3 h-3" />
                           </Button>
@@ -845,7 +1070,9 @@ export default function PodSession() {
           {/* Rodapé: custo total */}
           {consumables.length > 0 && (
             <div className="border-t p-3 flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">Custo estimado de insumos</p>
+              <p className="text-sm text-muted-foreground">
+                Custo estimado de insumos
+              </p>
               <p className="font-semibold text-sm">R$ {totalCost.toFixed(2)}</p>
             </div>
           )}
@@ -860,10 +1087,101 @@ export default function PodSession() {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <div>
+              <Label>
+                Material do estoque{" "}
+                <span className="text-muted-foreground">(opcional)</span>
+              </Label>
+              <Select
+                value={consumableForm.inventoryItemId || "manual"}
+                onValueChange={(value) => {
+                  if (value === "manual") {
+                    setConsumableForm((form) => ({
+                      ...form,
+                      inventoryItemId: "",
+                      materialLotId: "",
+                    }));
+                    return;
+                  }
+                  const material = inventoryMaterials.find(
+                    (item) => item.id === Number(value),
+                  );
+                  if (!material) return;
+                  setConsumableForm((form) => ({
+                    ...form,
+                    inventoryItemId: value,
+                    materialLotId: "",
+                    name: material.name,
+                    category: inventoryCategory(material.category || ""),
+                    unit: inventoryUnit(
+                      material.baseUnit || material.unit || "un",
+                    ),
+                    estimatedUnitCost: Number(material.avgPrice || 0),
+                  }));
+                }}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manual">
+                    Lançamento sem vínculo com estoque
+                  </SelectItem>
+                  {inventoryMaterials.map((material) => (
+                    <SelectItem key={material.id} value={String(material.id)}>
+                      {material.name} · saldo{" "}
+                      {Number(material.currentStock).toLocaleString("pt-BR")}{" "}
+                      {material.baseUnit || material.unit}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {consumableForm.inventoryItemId && (
+              <div>
+                <Label>
+                  Lote utilizado{" "}
+                  <span className="text-muted-foreground">(opcional)</span>
+                </Label>
+                <Select
+                  value={consumableForm.materialLotId || "none"}
+                  onValueChange={(value) =>
+                    setConsumableForm((form) => ({
+                      ...form,
+                      materialLotId: value === "none" ? "" : value,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem lote informado</SelectItem>
+                    {availableLots.map((lot) => (
+                      <SelectItem key={lot.id} value={String(lot.id)}>
+                        {lot.lotNumber} · saldo{" "}
+                        {Number(lot.currentQuantity).toLocaleString("pt-BR")}
+                        {lot.expiresAt
+                          ? ` · vence ${new Date(lot.expiresAt).toLocaleDateString("pt-BR")}`
+                          : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {availableLots.length === 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Este material não possui lote válido com saldo. O lançamento
+                    ainda pode ser feito sem lote.
+                  </p>
+                )}
+              </div>
+            )}
+            <div>
               <Label>Nome *</Label>
               <Input
                 value={consumableForm.name}
-                onChange={(e) => setConsumableForm((f) => ({ ...f, name: e.target.value }))}
+                onChange={(e) =>
+                  setConsumableForm((f) => ({ ...f, name: e.target.value }))
+                }
                 placeholder="Ex: Tinta vermelha, Agulha 7RL..."
                 className="mt-1"
               />
@@ -873,14 +1191,21 @@ export default function PodSession() {
                 <Label>Categoria</Label>
                 <Select
                   value={consumableForm.category}
-                  onValueChange={(v) => setConsumableForm((f) => ({ ...f, category: v as typeof f.category }))}
+                  onValueChange={(v) =>
+                    setConsumableForm((f) => ({
+                      ...f,
+                      category: v as typeof f.category,
+                    }))
+                  }
                 >
                   <SelectTrigger className="mt-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-                      <SelectItem key={k} value={k}>{v}</SelectItem>
+                      <SelectItem key={k} value={k}>
+                        {v}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -889,14 +1214,21 @@ export default function PodSession() {
                 <Label>Unidade</Label>
                 <Select
                   value={consumableForm.unit}
-                  onValueChange={(v) => setConsumableForm((f) => ({ ...f, unit: v as typeof f.unit }))}
+                  onValueChange={(v) =>
+                    setConsumableForm((f) => ({
+                      ...f,
+                      unit: v as typeof f.unit,
+                    }))
+                  }
                 >
                   <SelectTrigger className="mt-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {Object.entries(UNIT_LABELS).map(([k, v]) => (
-                      <SelectItem key={k} value={k}>{v}</SelectItem>
+                      <SelectItem key={k} value={k}>
+                        {v}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -910,7 +1242,12 @@ export default function PodSession() {
                   min="0"
                   step="0.5"
                   value={consumableForm.quantity}
-                  onChange={(e) => setConsumableForm((f) => ({ ...f, quantity: parseFloat(e.target.value) || 0 }))}
+                  onChange={(e) =>
+                    setConsumableForm((f) => ({
+                      ...f,
+                      quantity: parseFloat(e.target.value) || 0,
+                    }))
+                  }
                   className="mt-1"
                 />
               </div>
@@ -921,7 +1258,12 @@ export default function PodSession() {
                   min="0"
                   step="0.01"
                   value={consumableForm.estimatedUnitCost}
-                  onChange={(e) => setConsumableForm((f) => ({ ...f, estimatedUnitCost: parseFloat(e.target.value) || 0 }))}
+                  onChange={(e) =>
+                    setConsumableForm((f) => ({
+                      ...f,
+                      estimatedUnitCost: parseFloat(e.target.value) || 0,
+                    }))
+                  }
                   className="mt-1"
                 />
               </div>
@@ -930,7 +1272,9 @@ export default function PodSession() {
               <Label>Observação</Label>
               <Textarea
                 value={consumableForm.notes}
-                onChange={(e) => setConsumableForm((f) => ({ ...f, notes: e.target.value }))}
+                onChange={(e) =>
+                  setConsumableForm((f) => ({ ...f, notes: e.target.value }))
+                }
                 placeholder="Opcional..."
                 className="mt-1 resize-none"
                 rows={2}
@@ -938,7 +1282,12 @@ export default function PodSession() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddConsumableOpen(false)}>Cancelar</Button>
+            <Button
+              variant="outline"
+              onClick={() => setAddConsumableOpen(false)}
+            >
+              Cancelar
+            </Button>
             <Button
               onClick={() => {
                 if (!consumableForm.name.trim()) {
@@ -947,11 +1296,20 @@ export default function PodSession() {
                 }
                 addConsumableMutation.mutate({
                   procedureId,
+                  inventoryItemId: consumableForm.inventoryItemId
+                    ? Number(consumableForm.inventoryItemId)
+                    : undefined,
+                  materialLotId: consumableForm.materialLotId
+                    ? Number(consumableForm.materialLotId)
+                    : undefined,
                   name: consumableForm.name.trim(),
                   category: consumableForm.category,
                   unit: consumableForm.unit,
                   quantity: consumableForm.quantity,
-                  estimatedUnitCost: consumableForm.estimatedUnitCost > 0 ? consumableForm.estimatedUnitCost : undefined,
+                  estimatedUnitCost:
+                    consumableForm.estimatedUnitCost > 0
+                      ? consumableForm.estimatedUnitCost
+                      : undefined,
                   notes: consumableForm.notes || undefined,
                 });
               }}
@@ -964,9 +1322,12 @@ export default function PodSession() {
       </Dialog>
 
       {/* ── Modal de Finalização ─────────────────────────────────────────────── */}
-      <Dialog open={finalizeOpen} onOpenChange={(open) => {
-        if (!open && !finalizeMutation.isPending) setFinalizeOpen(false);
-      }}>
+      <Dialog
+        open={finalizeOpen}
+        onOpenChange={(open) => {
+          if (!open && !finalizeMutation.isPending) setFinalizeOpen(false);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -980,15 +1341,26 @@ export default function PodSession() {
             <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
               <p className="font-medium">Resumo da sessão</p>
               <p className="text-muted-foreground">
-                Insumos registrados: <span className="font-medium text-foreground">{consumables.length}</span>
+                Insumos registrados:{" "}
+                <span className="font-medium text-foreground">
+                  {consumables.length}
+                </span>
               </p>
               <p className="text-muted-foreground">
-                Duração: <span className="font-medium text-foreground">{formatTime(elapsed)}</span>
+                Duração:{" "}
+                <span className="font-medium text-foreground">
+                  {formatTime(elapsed)}
+                </span>
               </p>
               {linkedAppointment && (
                 <p className="text-muted-foreground">
-                  Agendamento: <span className="font-medium text-foreground">{linkedAppointment.service} — {linkedAppointment.artist}</span>
-                  <span className="ml-1 text-xs text-green-600">✓ será marcado como concluído</span>
+                  Agendamento:{" "}
+                  <span className="font-medium text-foreground">
+                    {linkedAppointment.service} — {linkedAppointment.artist}
+                  </span>
+                  <span className="ml-1 text-xs text-green-600">
+                    ✓ será marcado como concluído
+                  </span>
                 </p>
               )}
             </div>
@@ -1003,10 +1375,17 @@ export default function PodSession() {
                 step="0.01"
                 placeholder="Ex: 350.00"
                 value={finalizeForm.chargedAmount}
-                onChange={(e) => setFinalizeForm((f) => ({ ...f, chargedAmount: e.target.value }))}
+                onChange={(e) =>
+                  setFinalizeForm((f) => ({
+                    ...f,
+                    chargedAmount: e.target.value,
+                  }))
+                }
               />
               {linkedAppointment && finalizeForm.chargedAmount && (
-                <p className="text-xs text-green-600">✓ Será registrado no financeiro do cliente</p>
+                <p className="text-xs text-green-600">
+                  ✓ Será registrado no financeiro do cliente
+                </p>
               )}
             </div>
 
@@ -1015,7 +1394,12 @@ export default function PodSession() {
               <Label>Método de pagamento</Label>
               <Select
                 value={finalizeForm.paymentMethod}
-                onValueChange={(v) => setFinalizeForm((f) => ({ ...f, paymentMethod: v as typeof f.paymentMethod }))}
+                onValueChange={(v) =>
+                  setFinalizeForm((f) => ({
+                    ...f,
+                    paymentMethod: v as typeof f.paymentMethod,
+                  }))
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -1032,13 +1416,17 @@ export default function PodSession() {
 
             {/* Observações finais */}
             <div className="space-y-1.5">
-              <Label htmlFor="finalize-notes">Observações finais (opcional)</Label>
+              <Label htmlFor="finalize-notes">
+                Observações finais (opcional)
+              </Label>
               <Textarea
                 id="finalize-notes"
                 placeholder="Cuidados pós-sessão, próxima etapa..."
                 rows={3}
                 value={finalizeForm.notes}
-                onChange={(e) => setFinalizeForm((f) => ({ ...f, notes: e.target.value }))}
+                onChange={(e) =>
+                  setFinalizeForm((f) => ({ ...f, notes: e.target.value }))
+                }
               />
             </div>
           </div>
@@ -1056,7 +1444,9 @@ export default function PodSession() {
               onClick={handleConfirmFinalize}
               disabled={finalizeMutation.isPending}
             >
-              {finalizeMutation.isPending ? "Finalizando..." : "Confirmar e Finalizar"}
+              {finalizeMutation.isPending
+                ? "Finalizando..."
+                : "Confirmar e Finalizar"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -23,36 +23,155 @@ import { getLoginUrl } from "@/const";
 import LocalLogin from "@/pages/LocalLogin";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
-  LayoutDashboard, LogOut, PanelLeft, Users, Palette, Calendar, BarChart3,
-  Search, Bell, Settings as SettingsIcon, UserCog, FileText, ChevronRight,
-  Home, AlertTriangle, Package, Truck, KeyRound, TrendingUp, Menu, X, ArrowUpDown, Stethoscope, MessageSquare, BriefcaseBusiness
+  LayoutDashboard,
+  LogOut,
+  PanelLeft,
+  Users,
+  Palette,
+  Calendar,
+  BarChart3,
+  Search,
+  Bell,
+  Settings as SettingsIcon,
+  UserCog,
+  FileText,
+  ChevronRight,
+  Home,
+  AlertTriangle,
+  Package,
+  Truck,
+  KeyRound,
+  TrendingUp,
+  Menu,
+  X,
+  ArrowUpDown,
+  Stethoscope,
+  MessageSquare,
+  BriefcaseBusiness,
+  WalletCards,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import ChangePasswordModal from "./ChangePasswordModal";
 import { useLocation } from "wouter";
-import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
+import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 import GlobalSearch from "./GlobalSearch";
 
 const menuItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: BriefcaseBusiness, label: "Operação Comercial", path: "/commercial", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: Users, label: "Clientes", path: "/clients", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: ArrowUpDown, label: "Importar / Exportar", path: "/contacts/import-export", roles: ["superadmin", "admin"] },
-  { icon: Calendar, label: "Agenda", path: "/schedule", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: Palette, label: "Artistas", path: "/artists", roles: ["superadmin", "admin"] },
-  { icon: Calendar, label: "Calendário Visual", path: "/calendar", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: BarChart3, label: "Relatórios", path: "/reports", roles: ["superadmin", "admin"] },
-  { icon: TrendingUp, label: "Colaboradores", path: "/collaborator-reports", roles: ["superadmin", "admin"] },
-  { icon: Bell, label: "Notificações", path: "/notifications", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: MessageSquare, label: "Central de Mensagens", path: "/messaging", roles: ["superadmin", "admin"] },
-  { icon: AlertTriangle, label: "Alertas de Risco", path: "/risk-alerts", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: Stethoscope, label: "POD Session", path: "/procedures", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: Package, label: "Estoque", path: "/stock", roles: ["superadmin", "admin"] },
-  { icon: Truck, label: "Fornecedores", path: "/suppliers", roles: ["superadmin", "admin"] },
-  { icon: UserCog, label: "Usuários", path: "/users", roles: ["superadmin", "admin"] },
-  { icon: FileText, label: "Auditoria", path: "/audit", roles: ["superadmin", "admin"] },
-  { icon: SettingsIcon, label: "Configurações", path: "/settings", roles: ["superadmin", "admin"] },
+  {
+    icon: LayoutDashboard,
+    label: "Dashboard",
+    path: "/",
+    roles: ["superadmin", "admin", "collaborator"],
+  },
+  {
+    icon: BriefcaseBusiness,
+    label: "Operação Comercial",
+    path: "/commercial",
+    roles: ["superadmin", "admin", "collaborator"],
+  },
+  {
+    icon: Users,
+    label: "Clientes",
+    path: "/clients",
+    roles: ["superadmin", "admin", "collaborator"],
+  },
+  {
+    icon: ArrowUpDown,
+    label: "Importar / Exportar",
+    path: "/contacts/import-export",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: Calendar,
+    label: "Agenda",
+    path: "/schedule",
+    roles: ["superadmin", "admin", "collaborator"],
+  },
+  {
+    icon: Palette,
+    label: "Artistas",
+    path: "/artists",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: Calendar,
+    label: "Calendário Visual",
+    path: "/calendar",
+    roles: ["superadmin", "admin", "collaborator"],
+  },
+  {
+    icon: BarChart3,
+    label: "Relatórios",
+    path: "/reports",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: TrendingUp,
+    label: "Colaboradores",
+    path: "/collaborator-reports",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: Bell,
+    label: "Notificações",
+    path: "/notifications",
+    roles: ["superadmin", "admin", "collaborator"],
+  },
+  {
+    icon: MessageSquare,
+    label: "Central de Mensagens",
+    path: "/messaging",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: AlertTriangle,
+    label: "Alertas de Risco",
+    path: "/risk-alerts",
+    roles: ["superadmin", "admin", "collaborator"],
+  },
+  {
+    icon: Stethoscope,
+    label: "POD Session",
+    path: "/procedures",
+    roles: ["superadmin", "admin", "collaborator"],
+  },
+  {
+    icon: Package,
+    label: "Estoque",
+    path: "/stock",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: WalletCards,
+    label: "Custos e Recursos",
+    path: "/costs-resources",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: Truck,
+    label: "Fornecedores",
+    path: "/suppliers",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: UserCog,
+    label: "Usuários",
+    path: "/users",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: FileText,
+    label: "Auditoria",
+    path: "/audit",
+    roles: ["superadmin", "admin"],
+  },
+  {
+    icon: SettingsIcon,
+    label: "Configurações",
+    path: "/settings",
+    roles: ["superadmin", "admin"],
+  },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -93,11 +212,14 @@ export default function DashboardLayout({
               Sign in to continue
             </h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Access to this dashboard requires authentication. Continue to launch the login flow.
+              Access to this dashboard requires authentication. Continue to
+              launch the login flow.
             </p>
           </div>
           <Button
-            onClick={() => { window.location.href = getLoginUrl(); }}
+            onClick={() => {
+              window.location.href = getLoginUrl();
+            }}
             size="lg"
             className="w-full shadow-lg hover:shadow-xl transition-all"
           >
@@ -141,7 +263,7 @@ function DashboardLayoutContent({
   const [searchOpen, setSearchOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const activeMenuItem = menuItems.find(item => item.path === location);
+  const activeMenuItem = menuItems.find((item) => item.path === location);
   const isMobile = useIsMobile();
 
   // Fechar sidebar mobile ao navegar
@@ -239,7 +361,7 @@ function DashboardLayoutContent({
                   <PanelLeft className="h-4 w-4 text-muted-foreground" />
                 </button>
               )}
-              {(!isCollapsed || isMobile) ? (
+              {!isCollapsed || isMobile ? (
                 <div className="flex items-center gap-2 min-w-0">
                   <Palette className="h-5 w-5 text-primary shrink-0" />
                   <span className="font-semibold tracking-tight truncate text-base">
@@ -253,8 +375,8 @@ function DashboardLayoutContent({
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-1">
               {menuItems
-                .filter(item => !user || item.roles.includes(user.role))
-                .map(item => {
+                .filter((item) => !user || item.roles.includes(user.role))
+                .map((item) => {
                   const isActive = location === item.path;
                   return (
                     <SidebarMenuItem key={item.path}>
@@ -280,7 +402,13 @@ function DashboardLayoutContent({
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-3 rounded-lg px-1 py-2 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring touch-manipulation">
                   <Avatar className="h-9 w-9 border shrink-0">
-                    {user?.profilePhotoUrl && <AvatarImage src={user.profilePhotoUrl} alt={`Foto de ${user.name || "usuário"}`} className="object-cover" />}
+                    {user?.profilePhotoUrl && (
+                      <AvatarImage
+                        src={user.profilePhotoUrl}
+                        alt={`Foto de ${user.name || "usuário"}`}
+                        className="object-cover"
+                      />
+                    )}
                     <AvatarFallback className="text-xs font-medium">
                       {user?.name?.charAt(0).toUpperCase()}
                     </AvatarFallback>
@@ -386,7 +514,10 @@ function DashboardLayoutContent({
       </SidebarInset>
 
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
-      <ChangePasswordModal open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
+      <ChangePasswordModal
+        open={changePasswordOpen}
+        onOpenChange={setChangePasswordOpen}
+      />
     </>
   );
 }
