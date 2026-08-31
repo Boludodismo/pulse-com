@@ -26,7 +26,7 @@ const CATALOG_CATEGORIES = [
   "Outros insumos",
 ];
 
-const CARTRIDGE_FORMATS = ["RL", "RS", "Flat", "Magnum", "Soft Edge", "Curved", "Textured", "Whip"];
+const CARTRIDGE_FORMATS = ["RLF", "RL", "RS", "RMG", "Flat", "Magnum", "Soft Edge", "Curved", "Textured", "Whip"];
 
 type CatalogVariant = {
   id: number;
@@ -40,6 +40,14 @@ type CatalogVariant = {
   taper: string | null;
   packageQuantity: number | null;
   packageUnit: string | null;
+  baseUnit: string;
+  purchaseUnit: string;
+  unitsPerPackage: string;
+  volumeMl: string | null;
+  colorName: string | null;
+  anvisaRegistration: string | null;
+  anvisaStatus: "nao_aplicavel" | "regularizado" | "pendente" | "bloqueado";
+  requiresLotControl: number;
   application: string | null;
   evidenceStatus: "fabricante" | "fornecedor" | "pendente" | "bloqueado";
   sourceUrl: string | null;
@@ -92,7 +100,7 @@ export default function TechnicalCatalog() {
   const [selected, setSelected] = useState<CatalogVariant | null>(null);
   const [stockDialogOpen, setStockDialogOpen] = useState(false);
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
-  const [stockForm, setStockForm] = useState({ unit: "cx", currentStock: "", minStock: "", avgPrice: "", supplierId: "", notes: "" });
+  const [stockForm, setStockForm] = useState({ baseUnit: "un", purchaseUnit: "cx", unitsPerPackage: "1", packageQuantity: "", minStock: "", targetStock: "", avgPrice: "", supplierId: "", lotNumber: "", expiresAt: "", notes: "" });
   const [portfolioForm, setPortfolioForm] = useState({ supplierId: "", evidenceStatus: "item" as "item" | "marca" | "pendente", sourceUrl: "", notes: "" });
 
   const linesInput = useMemo(() => ({
@@ -130,7 +138,7 @@ export default function TechnicalCatalog() {
       utils.stock.listMaterials.invalidate();
       utils.stock.getLowStock.invalidate();
       setStockDialogOpen(false);
-      setStockForm({ unit: "cx", currentStock: "", minStock: "", avgPrice: "", supplierId: "", notes: "" });
+      setStockForm({ baseUnit: "un", purchaseUnit: "cx", unitsPerPackage: "1", packageQuantity: "", minStock: "", targetStock: "", avgPrice: "", supplierId: "", lotNumber: "", expiresAt: "", notes: "" });
       toast.success("Variação técnica adicionada ao estoque.");
     },
     onError: (error) => toast.error(error.message),
@@ -138,7 +146,13 @@ export default function TechnicalCatalog() {
 
   const openStock = (variant: CatalogVariant) => {
     setSelected(variant);
-    setStockForm((current) => ({ ...current, supplierId: variant.suppliers[0] ? String(variant.suppliers[0].supplierId) : "" }));
+    setStockForm((current) => ({
+      ...current,
+      baseUnit: variant.baseUnit || "un",
+      purchaseUnit: variant.purchaseUnit || "cx",
+      unitsPerPackage: String(variant.unitsPerPackage || variant.packageQuantity || 1),
+      supplierId: variant.suppliers[0] ? String(variant.suppliers[0].supplierId) : "",
+    }));
     setStockDialogOpen(true);
   };
 
@@ -168,17 +182,22 @@ export default function TechnicalCatalog() {
 
   const submitStock = () => {
     if (!selected) return;
-    if (!stockForm.currentStock || !stockForm.minStock || !stockForm.avgPrice) {
-      toast.error("Informe quantidade inicial, estoque mínimo e preço da compra.");
+    if (!stockForm.packageQuantity || !stockForm.minStock || !stockForm.avgPrice || !stockForm.unitsPerPackage) {
+      toast.error("Informe embalagens, conversão, estoque mínimo e preço.");
       return;
     }
     addToStock.mutate({
       variantId: selected.id,
       supplierId: stockForm.supplierId ? Number(stockForm.supplierId) : undefined,
-      unit: stockForm.unit,
-      currentStock: Number(stockForm.currentStock),
+      baseUnit: stockForm.baseUnit,
+      purchaseUnit: stockForm.purchaseUnit,
+      unitsPerPackage: Number(stockForm.unitsPerPackage),
+      packageQuantity: Number(stockForm.packageQuantity),
       minStock: Number(stockForm.minStock),
+      targetStock: Number(stockForm.targetStock || stockForm.minStock),
       avgPrice: Number(stockForm.avgPrice),
+      lotNumber: stockForm.lotNumber.trim() || undefined,
+      expiresAt: stockForm.expiresAt ? `${stockForm.expiresAt} 00:00:00` : undefined,
       notes: stockForm.notes.trim() || undefined,
     });
   };
@@ -240,10 +259,10 @@ export default function TechnicalCatalog() {
                       <TableCell className="min-w-[150px]"><p className="font-medium text-xs">{variant.brandName}</p><p className="text-[11px] text-muted-foreground">{variant.lineName}</p></TableCell>
                       <TableCell className="min-w-[150px]"><p className="font-mono text-xs">{variant.sku || variant.name}</p>{variant.sku && <p className="max-w-[150px] truncate text-[10px] text-muted-foreground">{variant.name}</p>}</TableCell>
                       <TableCell className="text-xs">{variant.format || "—"}</TableCell><TableCell className="text-right font-mono text-xs">{variant.needleCount ?? "—"}</TableCell><TableCell className="whitespace-nowrap font-mono text-xs">{variant.needleDiameter ? `${variant.needleDiameter} mm` : "—"}</TableCell><TableCell className="min-w-[90px] text-xs">{variant.taper || "—"}</TableCell>
-                      <TableCell className="max-w-[150px] text-xs text-muted-foreground"><span className="line-clamp-2">{variant.packageUnit || (variant.packageQuantity ? `${variant.packageQuantity} un.` : "—")}</span></TableCell>
+                      <TableCell className="max-w-[170px] text-xs text-muted-foreground"><span className="line-clamp-2">{variant.packageUnit || `${variant.purchaseUnit} com ${Number(variant.unitsPerPackage)} ${variant.baseUnit}`}</span></TableCell>
                       <TableCell className="max-w-[170px]"><p className="line-clamp-2 text-xs">{variant.application || "Confirmar aplicação no SKU"}</p><div className="mt-1">{evidenceBadge(variant.evidenceStatus)}</div></TableCell>
                       <TableCell className="min-w-[120px]">{variant.suppliers.length ? <div className="flex flex-col gap-1">{variant.suppliers.slice(0, 2).map((supplier) => <Badge key={supplier.id} variant="outline" className="max-w-[120px] truncate text-[10px]">{supplier.supplierName}</Badge>)}</div> : <span className="text-[11px] text-muted-foreground">Sem vínculo</span>}</TableCell>
-                      <TableCell className="text-right"><Button size="sm" variant="outline" className="h-8 gap-1 whitespace-nowrap text-xs" onClick={(event) => { event.stopPropagation(); openStock(variant); }}><PackagePlus className="h-3.5 w-3.5" /> Estoque</Button></TableCell>
+                      <TableCell className="text-right"><Button size="sm" variant="outline" disabled={variant.evidenceStatus === "bloqueado" || variant.anvisaStatus === "bloqueado"} className="h-8 gap-1 whitespace-nowrap text-xs" onClick={(event) => { event.stopPropagation(); openStock(variant); }}><PackagePlus className="h-3.5 w-3.5" /> {variant.anvisaStatus === "bloqueado" ? "Uso bloqueado" : "Estoque"}</Button></TableCell>
                     </TableRow>;
                   })}
                 </TableBody>
@@ -271,7 +290,7 @@ export default function TechnicalCatalog() {
       </Dialog>
 
       <Dialog open={stockDialogOpen} onOpenChange={setStockDialogOpen}>
-        <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Adicionar variação ao estoque</DialogTitle></DialogHeader>{selected && <div className="space-y-4"><div className="rounded-lg border bg-muted/30 p-3"><p className="font-medium">{presentVariant(selected)}</p><p className="mt-1 text-xs text-muted-foreground">{[selected.format, selected.needleCount && `${selected.needleCount} pontas`, selected.needleDiameter && `${selected.needleDiameter} mm`, selected.taper].filter(Boolean).join(" · ") || "Confirmar configuração no SKU"}</p></div><div className="grid grid-cols-2 gap-3"><div><Label>Quantidade inicial *</Label><Input type="number" min="0" step="0.01" value={stockForm.currentStock} onChange={(event) => setStockForm((current) => ({ ...current, currentStock: event.target.value }))} placeholder="0" /></div><div><Label>Unidade *</Label><Select value={stockForm.unit} onValueChange={(value) => setStockForm((current) => ({ ...current, unit: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="cx">Caixa</SelectItem><SelectItem value="un">Unidade</SelectItem><SelectItem value="pct">Pacote</SelectItem></SelectContent></Select></div><div><Label>Estoque mínimo *</Label><Input type="number" min="0" step="0.01" value={stockForm.minStock} onChange={(event) => setStockForm((current) => ({ ...current, minStock: event.target.value }))} placeholder="0" /></div><div><Label>Preço da compra (R$) *</Label><Input type="number" min="0" step="0.01" value={stockForm.avgPrice} onChange={(event) => setStockForm((current) => ({ ...current, avgPrice: event.target.value }))} placeholder="Informe o preço" /></div></div><div><Label>Fornecedor</Label><Select value={stockForm.supplierId || ALL_VALUE} onValueChange={(value) => setStockForm((current) => ({ ...current, supplierId: value === ALL_VALUE ? "" : value }))}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent><SelectItem value={ALL_VALUE}>Não informado</SelectItem>{suppliers.map((supplier) => <SelectItem key={supplier.id} value={String(supplier.id)}>{supplier.name}</SelectItem>)}</SelectContent></Select></div><div><Label>Observações do recebimento</Label><Input value={stockForm.notes} onChange={(event) => setStockForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Ex.: conferir lote, validade e integridade da embalagem" /></div></div>}<DialogFooter><Button variant="outline" onClick={() => setStockDialogOpen(false)}>Cancelar</Button><Button disabled={addToStock.isPending} onClick={submitStock} className="gap-2"><PackagePlus className="h-4 w-4" /> {addToStock.isPending ? "Adicionando…" : "Adicionar ao estoque"}</Button></DialogFooter></DialogContent>
+        <DialogContent className="max-w-xl"><DialogHeader><DialogTitle>Adicionar variação ao estoque</DialogTitle></DialogHeader>{selected && <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1"><div className="rounded-lg border bg-muted/30 p-3"><p className="font-medium">{presentVariant(selected)}</p><p className="mt-1 text-xs text-muted-foreground">{[selected.format, selected.needleCount && `${selected.needleCount} pontas`, selected.needleDiameter && `${selected.needleDiameter} mm`, selected.taper].filter(Boolean).join(" · ") || "Confirmar configuração no SKU"}</p></div><div className="grid grid-cols-2 gap-3"><div><Label>Quantidade comprada *</Label><Input type="number" min="0" step="0.01" value={stockForm.packageQuantity} onChange={(event) => setStockForm((current) => ({ ...current, packageQuantity: event.target.value }))} placeholder="Ex.: 5" /></div><div><Label>Unidade de compra *</Label><Select value={stockForm.purchaseUnit} onValueChange={(value) => setStockForm((current) => ({ ...current, purchaseUnit: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="cx">Caixa</SelectItem><SelectItem value="frasco">Frasco</SelectItem><SelectItem value="pct">Pacote</SelectItem><SelectItem value="rolo">Rolo</SelectItem><SelectItem value="un">Unidade</SelectItem></SelectContent></Select></div><div><Label>Conteúdo por embalagem *</Label><Input type="number" min="0.001" step="0.001" value={stockForm.unitsPerPackage} onChange={(event) => setStockForm((current) => ({ ...current, unitsPerPackage: event.target.value }))} /></div><div><Label>Unidade de consumo *</Label><Select value={stockForm.baseUnit} onValueChange={(value) => setStockForm((current) => ({ ...current, baseUnit: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="un">Unidade</SelectItem><SelectItem value="par">Par</SelectItem><SelectItem value="ml">ml</SelectItem><SelectItem value="g">g</SelectItem><SelectItem value="m">Metro</SelectItem><SelectItem value="rolo">Rolo</SelectItem></SelectContent></Select></div><div className="col-span-2 rounded-lg border border-orange-500/25 bg-orange-500/[0.06] p-3 text-sm"><span className="font-medium">Entrada calculada:</span> {(Number(stockForm.packageQuantity) * Number(stockForm.unitsPerPackage) || 0).toLocaleString("pt-BR")} {stockForm.baseUnit}</div><div><Label>Estoque mínimo *</Label><Input type="number" min="0" step="0.01" value={stockForm.minStock} onChange={(event) => setStockForm((current) => ({ ...current, minStock: event.target.value }))} /></div><div><Label>Estoque desejado</Label><Input type="number" min="0" step="0.01" value={stockForm.targetStock} onChange={(event) => setStockForm((current) => ({ ...current, targetStock: event.target.value }))} placeholder="Usado no pedido sugerido" /></div><div><Label>Preço por embalagem (R$) *</Label><Input type="number" min="0" step="0.01" value={stockForm.avgPrice} onChange={(event) => setStockForm((current) => ({ ...current, avgPrice: event.target.value }))} /></div><div><Label>Fornecedor</Label><Select value={stockForm.supplierId || ALL_VALUE} onValueChange={(value) => setStockForm((current) => ({ ...current, supplierId: value === ALL_VALUE ? "" : value }))}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent><SelectItem value={ALL_VALUE}>Não informado</SelectItem>{suppliers.map((supplier) => <SelectItem key={supplier.id} value={String(supplier.id)}>{supplier.name}</SelectItem>)}</SelectContent></Select></div>{selected.requiresLotControl === 1 && <><div><Label>Lote</Label><Input value={stockForm.lotNumber} onChange={(event) => setStockForm((current) => ({ ...current, lotNumber: event.target.value }))} /></div><div><Label>Validade</Label><Input type="date" value={stockForm.expiresAt} onChange={(event) => setStockForm((current) => ({ ...current, expiresAt: event.target.value }))} /></div></>}<div className="col-span-2"><Label>Observações do recebimento</Label><Input value={stockForm.notes} onChange={(event) => setStockForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Ex.: conferir integridade da embalagem" /></div></div></div>}<DialogFooter><Button variant="outline" onClick={() => setStockDialogOpen(false)}>Cancelar</Button><Button disabled={addToStock.isPending} onClick={submitStock} className="gap-2"><PackagePlus className="h-4 w-4" /> {addToStock.isPending ? "Adicionando…" : "Adicionar ao estoque"}</Button></DialogFooter></DialogContent>
       </Dialog>
     </div>
   );
