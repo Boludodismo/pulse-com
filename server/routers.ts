@@ -3169,6 +3169,10 @@ export const appRouter = router({
       .input(z.object({ materialId: z.number().optional() }))
       .query(async ({ input }) => db.listMaterialLots(input.materialId)),
 
+    getExpiryAlerts: protectedProcedure
+      .input(z.object({ days: z.number().int().min(1).max(365).default(90) }))
+      .query(async ({ input }) => db.getExpiryAlerts(input.days)),
+
     addMovement: protectedProcedure
       .input(z.object({
         materialId: z.number(),
