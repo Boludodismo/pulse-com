@@ -145,6 +145,10 @@ export default function Stock() {
     { materialId: historyMaterialId ?? undefined, limit: 100 },
     { enabled: showHistory && historyMaterialId !== null }
   );
+  const { data: lots = [] } = trpc.stock.listLots.useQuery(
+    { materialId: historyMaterialId ?? undefined },
+    { enabled: showHistory && historyMaterialId !== null }
+  );
   const { data: kits = [] } = trpc.kits.list.useQuery();
 
   const { notifySync } = useSyncToast();
@@ -192,6 +196,7 @@ export default function Stock() {
       utils.stock.getLowStock.invalidate();
       utils.stock.getReorderSuggestions.invalidate();
       utils.stock.listMovements.invalidate();
+      utils.stock.listLots.invalidate();
       setShowMovement(false);
       setMovForm({ type: "entrada", quantity: "", inputUnit: "base", lotNumber: "", expiresAt: "", reason: "" });
       toast.success(`Movimentação registrada! Estoque: ${result.previousStock} → ${result.newStock}`);
@@ -793,6 +798,7 @@ export default function Stock() {
                 ))}
               </TableBody>
             </Table>
+            {lots.length > 0 && <div className="mt-5 border-t pt-4"><h3 className="mb-2 text-sm font-semibold">Lotes e validades</h3><Table><TableHeader><TableRow><TableHead>Lote</TableHead><TableHead>Validade</TableHead><TableHead className="text-right">Saldo do lote</TableHead></TableRow></TableHeader><TableBody>{lots.map((lot) => <TableRow key={lot.id}><TableCell className="font-mono text-xs">{lot.lotNumber}</TableCell><TableCell className="text-xs">{lot.expiresAt ? new Date(lot.expiresAt).toLocaleDateString("pt-BR") : "Sem validade informada"}</TableCell><TableCell className="text-right font-mono text-xs">{Number(lot.currentQuantity).toLocaleString("pt-BR")}</TableCell></TableRow>)}</TableBody></Table></div>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowHistory(false)}>Fechar</Button>
