@@ -1,12 +1,12 @@
 ALTER TABLE `stock_movements`
-  ADD COLUMN IF NOT EXISTS `alertAt` datetime NULL AFTER `expiresAt`;
+  ADD COLUMN `alertAt` datetime NULL AFTER `expiresAt`;
 --> statement-breakpoint
 
 ALTER TABLE `material_lots`
-  ADD COLUMN IF NOT EXISTS `alertAt` datetime NULL AFTER `expiresAt`;
+  ADD COLUMN `alertAt` datetime NULL AFTER `expiresAt`;
 --> statement-breakpoint
 
 ALTER TABLE `procedure_consumables`
-  ADD COLUMN IF NOT EXISTS `materialLotId` int NULL AFTER `inventoryItemId`,
-  ADD COLUMN IF NOT EXISTS `lotNumber` varchar(100) NULL AFTER `materialLotId`,
-  ADD COLUMN IF NOT EXISTS `expiresAt` datetime NULL AFTER `lotNumber`;
+  ADD COLUMN `materialLotId` int NULL AFTER `inventoryItemId`,
+  ADD COLUMN `lotNumber` varchar(100) NULL AFTER `materialLotId`,
+  ADD COLUMN `expiresAt` datetime NULL AFTER `lotNumber`;
