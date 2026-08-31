@@ -67,6 +67,7 @@ type MaterialForm = {
   unitsPerPackage: string;
   currentStock: string;
   minStock: string;
+  minStockUnit: "base" | "package";
   targetStock: string;
   avgPrice: string;
   supplierId: string;
@@ -110,6 +111,7 @@ const emptyForm = (): MaterialForm => ({
   unitsPerPackage: "1",
   currentStock: "0",
   minStock: "0",
+  minStockUnit: "base",
   targetStock: "0",
   avgPrice: "0",
   supplierId: "",
@@ -230,6 +232,8 @@ export default function Stock() {
       toast.error("Preencha os campos obrigatórios.");
       return;
     }
+    const minimumConversion = form.minStockUnit === "package" ? (parseFloat(form.unitsPerPackage) || 1) : 1;
+    const normalizedMinimum = (parseFloat(form.minStock) || 0) * minimumConversion;
     const payload = {
       name: form.name,
       category: form.category,
@@ -238,8 +242,8 @@ export default function Stock() {
       purchaseUnit: form.purchaseUnit,
       unitsPerPackage: parseFloat(form.unitsPerPackage) || 1,
       currentStock: parseFloat(form.currentStock) || 0,
-      minStock: parseFloat(form.minStock) || 0,
-      targetStock: parseFloat(form.targetStock) || parseFloat(form.minStock) || 0,
+      minStock: normalizedMinimum,
+      targetStock: parseFloat(form.targetStock) || normalizedMinimum,
       avgPrice: parseFloat(form.avgPrice) || 0,
       supplierId: form.supplierId ? parseInt(form.supplierId) : undefined,
       notes: form.notes || undefined,
@@ -261,6 +265,7 @@ export default function Stock() {
       unitsPerPackage: String(mat.unitsPerPackage || 1),
       currentStock: String(mat.currentStock),
       minStock: String(mat.minStock),
+      minStockUnit: "base",
       targetStock: String(mat.targetStock || mat.minStock),
       avgPrice: String(mat.avgPrice),
       supplierId: mat.supplierId ? String(mat.supplierId) : "",
@@ -382,7 +387,7 @@ export default function Stock() {
 
         {/* Alertas de estoque baixo */}
         {lowStock.length > 0 && (
-          <Card className="border-yellow-600/50 bg-yellow-950/20">
+          <Card className="min-w-0 overflow-hidden border-yellow-600/50 bg-yellow-950/20">
             <CardHeader className="pb-2">
               <CardTitle className="text-yellow-400 text-sm flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4" />
@@ -390,9 +395,9 @@ export default function Stock() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
                 {reorderSuggestions.map((m) => (
-                  <Badge key={m.id} variant="outline" className="border-yellow-600 text-yellow-300 text-xs">
+                  <Badge key={m.id} variant="outline" className="h-auto max-w-full justify-start whitespace-normal break-words border-yellow-600 py-1.5 text-left text-xs leading-relaxed text-yellow-300">
                     {m.name} — pedir {m.suggestedPackages} {m.purchaseUnit} ({m.suggestedBaseUnits} {m.baseUnit})
                   </Badge>
                 ))}
@@ -401,7 +406,7 @@ export default function Stock() {
           </Card>
         )}
 
-        {expiryAlerts.length > 0 && <Card className="border-red-600/40 bg-red-950/15"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-red-400"><AlertTriangle className="h-4 w-4" />Lotes vencidos ou próximos do vencimento</CardTitle></CardHeader><CardContent><div className="flex flex-wrap gap-2">{expiryAlerts.map((lot) => <Badge key={lot.id} variant="outline" className={Number(lot.daysRemaining) < 0 ? "border-red-600 text-red-300" : "border-amber-600 text-amber-300"}>{lot.materialName} · lote {lot.lotNumber} — {Number(lot.daysRemaining) < 0 ? `vencido há ${Math.abs(Number(lot.daysRemaining))} dias` : `vence em ${lot.daysRemaining} dias`}</Badge>)}</div></CardContent></Card>}
+        {expiryAlerts.length > 0 && <Card className="min-w-0 overflow-hidden border-red-600/40 bg-red-950/15"><CardHeader className="pb-2"><CardTitle className="flex items-start gap-2 text-sm text-red-400"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span className="min-w-0">Lotes vencidos ou próximos do vencimento</span></CardTitle></CardHeader><CardContent><div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">{expiryAlerts.map((lot) => <Badge key={lot.id} variant="outline" className={`h-auto max-w-full justify-start whitespace-normal break-words py-1.5 text-left text-xs leading-relaxed ${Number(lot.daysRemaining) < 0 ? "border-red-600 text-red-300" : "border-amber-600 text-amber-300"}`}>{lot.materialName} · lote {lot.lotNumber} — {Number(lot.daysRemaining) < 0 ? `vencido há ${Math.abs(Number(lot.daysRemaining))} dias` : `vence em ${lot.daysRemaining} dias`}</Badge>)}</div></CardContent></Card>}
 
         {/* Filtros */}
         <div className="flex gap-2 flex-col sm:flex-row">
@@ -606,8 +611,15 @@ export default function Stock() {
               </div>
               <div>
                 <Label>Estoque Mínimo (alerta)</Label>
-                <Input type="number" min="0" step="0.01" value={form.minStock}
-                  onChange={e => setForm(f => ({ ...f, minStock: e.target.value }))} />
+                <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-2">
+                  <Input type="number" min="0" step="0.01" value={form.minStock}
+                    onChange={e => setForm(f => ({ ...f, minStock: e.target.value }))} />
+                  <Select value={form.minStockUnit} onValueChange={v => setForm(f => ({ ...f, minStockUnit: v as "base" | "package" }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="base">{form.unit === "un" ? "Unidade" : form.unit}</SelectItem><SelectItem value="package">{form.purchaseUnit === "cx" ? "Caixa" : form.purchaseUnit}</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                {form.minStock && <p className="mt-1 text-xs text-muted-foreground">Alerta em {((parseFloat(form.minStock) || 0) * (form.minStockUnit === "package" ? (parseFloat(form.unitsPerPackage) || 1) : 1)).toLocaleString("pt-BR")} {form.unit}</p>}
               </div>
               <div>
                 <Label>Estoque desejado</Label>
