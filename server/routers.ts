@@ -4203,7 +4203,9 @@ export const appRouter = router({
           items: z
             .array(
               z.object({
-                materialId: z.number(),
+                materialId: z.number().int().positive().optional(),
+                materialName: z.string().trim().min(1).max(255),
+                materialUnit: z.string().trim().min(1).max(50),
                 quantity: z.number().positive(),
                 unitPrice: z.number().min(0).optional(),
                 notes: z.string().optional(),
