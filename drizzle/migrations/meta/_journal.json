@@ -71,6 +71,13 @@
       "when": 1788138000000,
       "tag": "0009_tattoo_reference_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1788141600000,
+      "tag": "0010_lot_alerts_client_history",
+      "breakpoints": true
     }
   ]
 }
