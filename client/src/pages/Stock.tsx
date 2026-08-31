@@ -139,6 +139,10 @@ export default function Stock() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [materialToDelete, setMaterialToDelete] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
   const [form, setForm] = useState<MaterialForm>(emptyForm());
 
   const [showMovement, setShowMovement] = useState(false);
@@ -227,6 +231,7 @@ export default function Stock() {
       utils.stock.listMaterials.invalidate();
       utils.stock.getLowStock.invalidate();
       utils.stock.getReorderSuggestions.invalidate();
+      setMaterialToDelete(null);
       toast.success("Material removido.");
     },
     onError: (e) => toast.error(e.message),
@@ -761,18 +766,23 @@ export default function Stock() {
                                 >
                                   <Settings2 className="w-3 h-3 sm:w-4 sm:h-4" />
                                 </Button>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-8 w-8"
-                                  title="Remover"
-                                  onClick={() => {
-                                    if (confirm("Remover este material?"))
-                                      deleteMaterial.mutate({ id: mat.id });
-                                  }}
-                                >
-                                  <Trash2 className="w-3 h-3 sm:w-4 sm:h-4 text-red-400" />
-                                </Button>
+                                {isAdmin && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8"
+                                    title="Remover"
+                                    aria-label={`Remover material ${mat.name}`}
+                                    onClick={() =>
+                                      setMaterialToDelete({
+                                        id: mat.id,
+                                        name: mat.name,
+                                      })
+                                    }
+                                  >
+                                    <Trash2 className="w-3 h-3 sm:w-4 sm:h-4 text-red-400" />
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1578,6 +1588,38 @@ export default function Stock() {
               }}
             >
               {deactivateLot.isPending ? "Desativando..." : "Desativar lote"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={materialToDelete !== null}
+        onOpenChange={(open) => !open && setMaterialToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover material do estoque?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O material {materialToDelete?.name} deixará de aparecer no estoque
+              operacional. O catálogo técnico de presets não será alterado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMaterial.isPending}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!materialToDelete || deleteMaterial.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (materialToDelete) {
+                  deleteMaterial.mutate({ id: materialToDelete.id });
+                }
+              }}
+            >
+              {deleteMaterial.isPending ? "Removendo..." : "Remover material"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
