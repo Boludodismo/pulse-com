@@ -140,6 +140,7 @@ export default function Stock() {
   const { data: materials = [], isLoading } = trpc.stock.listMaterials.useQuery({ activeOnly: true });
   const { data: lowStock = [] } = trpc.stock.getLowStock.useQuery();
   const { data: reorderSuggestions = [] } = trpc.stock.getReorderSuggestions.useQuery();
+  const { data: expiryAlerts = [] } = trpc.stock.getExpiryAlerts.useQuery({ days: 90 });
   const { data: suppliers = [] } = trpc.suppliers.list.useQuery({ activeOnly: true });
   const { data: movements = [] } = trpc.stock.listMovements.useQuery(
     { materialId: historyMaterialId ?? undefined, limit: 100 },
@@ -197,6 +198,7 @@ export default function Stock() {
       utils.stock.getReorderSuggestions.invalidate();
       utils.stock.listMovements.invalidate();
       utils.stock.listLots.invalidate();
+      utils.stock.getExpiryAlerts.invalidate();
       setShowMovement(false);
       setMovForm({ type: "entrada", quantity: "", inputUnit: "base", lotNumber: "", expiresAt: "", reason: "" });
       toast.success(`Movimentação registrada! Estoque: ${result.previousStock} → ${result.newStock}`);
@@ -398,6 +400,8 @@ export default function Stock() {
             </CardContent>
           </Card>
         )}
+
+        {expiryAlerts.length > 0 && <Card className="border-red-600/40 bg-red-950/15"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-red-400"><AlertTriangle className="h-4 w-4" />Lotes vencidos ou próximos do vencimento</CardTitle></CardHeader><CardContent><div className="flex flex-wrap gap-2">{expiryAlerts.map((lot) => <Badge key={lot.id} variant="outline" className={Number(lot.daysRemaining) < 0 ? "border-red-600 text-red-300" : "border-amber-600 text-amber-300"}>{lot.materialName} · lote {lot.lotNumber} — {Number(lot.daysRemaining) < 0 ? `vencido há ${Math.abs(Number(lot.daysRemaining))} dias` : `vence em ${lot.daysRemaining} dias`}</Badge>)}</div></CardContent></Card>}
 
         {/* Filtros */}
         <div className="flex gap-2 flex-col sm:flex-row">
