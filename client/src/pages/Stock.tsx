@@ -153,6 +153,7 @@ export default function Stock() {
     onSuccess: () => {
       utils.stock.listMaterials.invalidate();
       utils.stock.getLowStock.invalidate();
+      utils.stock.getReorderSuggestions.invalidate();
       setShowForm(false);
       setForm(emptyForm());
       toast.success("Material cadastrado com sucesso!");
@@ -165,6 +166,7 @@ export default function Stock() {
     onSuccess: () => {
       utils.stock.listMaterials.invalidate();
       utils.stock.getLowStock.invalidate();
+      utils.stock.getReorderSuggestions.invalidate();
       setShowForm(false);
       setEditingId(null);
       setForm(emptyForm());
@@ -178,6 +180,7 @@ export default function Stock() {
     onSuccess: () => {
       utils.stock.listMaterials.invalidate();
       utils.stock.getLowStock.invalidate();
+      utils.stock.getReorderSuggestions.invalidate();
       toast.success("Material removido.");
     },
     onError: (e) => toast.error(e.message),
@@ -187,6 +190,7 @@ export default function Stock() {
     onSuccess: (result) => {
       utils.stock.listMaterials.invalidate();
       utils.stock.getLowStock.invalidate();
+      utils.stock.getReorderSuggestions.invalidate();
       utils.stock.listMovements.invalidate();
       setShowMovement(false);
       setMovForm({ type: "entrada", quantity: "", inputUnit: "base", lotNumber: "", expiresAt: "", reason: "" });
