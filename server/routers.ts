@@ -2989,27 +2989,56 @@ export const appRouter = router({
       .input(z.object({
         variantId: z.number().int().positive(),
         supplierId: z.number().int().positive().optional(),
-        unit: z.string().trim().min(1).max(50).default('cx'),
-        currentStock: z.number().min(0).default(0),
+        baseUnit: z.string().trim().min(1).max(50).default('un'),
+        purchaseUnit: z.string().trim().min(1).max(50).default('cx'),
+        unitsPerPackage: z.number().positive().default(1),
+        packageQuantity: z.number().min(0).default(0),
         minStock: z.number().min(0).default(0),
+        targetStock: z.number().min(0).default(0),
         avgPrice: z.number().min(0).default(0),
+        lotNumber: z.string().trim().max(100).optional(),
+        expiresAt: z.string().trim().optional(),
         notes: z.string().max(2000).optional(),
       }))
       .mutation(async ({ input }) => {
         const variant = await db.getCatalogVariantById(input.variantId);
         if (!variant) throw new TRPCError({ code: 'NOT_FOUND', message: 'Variação técnica não encontrada.' });
+        if (variant.evidenceStatus === 'bloqueado' || variant.anvisaStatus === 'bloqueado') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Este produto está bloqueado e não pode ser adicionado ao estoque.' });
+        }
         const label = [variant.brandName, variant.lineName, variant.name, variant.sku].filter(Boolean).join(' · ');
+        const normalizedStock = input.packageQuantity * input.unitsPerPackage;
         const id = await db.createMaterial({
           name: label,
           category: variant.category,
-          unit: input.unit,
-          currentStock: String(input.currentStock),
+          unit: input.baseUnit,
+          baseUnit: input.baseUnit,
+          purchaseUnit: input.purchaseUnit,
+          unitsPerPackage: String(input.unitsPerPackage),
+          currentStock: '0',
           minStock: String(input.minStock),
+          targetStock: String(input.targetStock || input.minStock),
           avgPrice: String(input.avgPrice),
           supplierId: input.supplierId,
           catalogVariantId: input.variantId,
+          requiresLotControl: variant.requiresLotControl,
+          anvisaStatus: variant.anvisaStatus,
           notes: input.notes,
         });
+        if (normalizedStock > 0) {
+          await db.addStockMovement({
+            materialId: id,
+            type: 'entrada',
+            quantity: normalizedStock,
+            inputQuantity: input.packageQuantity,
+            inputUnit: input.purchaseUnit,
+            conversionFactor: input.unitsPerPackage,
+            reason: 'Estoque inicial pelo catálogo técnico',
+            lotNumber: input.lotNumber,
+            expiresAt: input.expiresAt,
+            source: 'compra',
+          });
+        }
         return { id };
       }),
   }),
@@ -3026,6 +3055,10 @@ export const appRouter = router({
       return await db.getLowStockMaterials();
     }),
 
+    getReorderSuggestions: protectedProcedure.query(async () => {
+      return await db.getReorderSuggestions();
+    }),
+
     getMaterial: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => {
@@ -3039,8 +3072,12 @@ export const appRouter = router({
         name: z.string().min(1),
         category: z.string().min(1),
         unit: z.string().min(1),
+        baseUnit: z.string().min(1).optional(),
+        purchaseUnit: z.string().min(1).optional(),
+        unitsPerPackage: z.number().positive().optional(),
         currentStock: z.number().min(0).default(0),
         minStock: z.number().min(0).default(0),
+        targetStock: z.number().min(0).optional(),
         avgPrice: z.number().min(0).default(0),
         supplierId: z.number().optional(),
 	    catalogVariantId: z.number().int().positive().optional(),
@@ -3049,8 +3086,12 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const id = await db.createMaterial({
           ...input,
+          baseUnit: input.baseUnit || input.unit,
+          purchaseUnit: input.purchaseUnit || input.unit,
+          unitsPerPackage: String(input.unitsPerPackage || 1),
           currentStock: String(input.currentStock),
           minStock: String(input.minStock),
+          targetStock: String(input.targetStock ?? input.minStock),
           avgPrice: String(input.avgPrice),
         });
 
@@ -3074,18 +3115,24 @@ export const appRouter = router({
         name: z.string().min(1).optional(),
         category: z.string().optional(),
         unit: z.string().optional(),
+        baseUnit: z.string().optional(),
+        purchaseUnit: z.string().optional(),
+        unitsPerPackage: z.number().positive().optional(),
         minStock: z.number().min(0).optional(),
+        targetStock: z.number().min(0).optional(),
         avgPrice: z.number().min(0).optional(),
         supplierId: z.number().optional().nullable(),
 	    catalogVariantId: z.number().int().positive().optional().nullable(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const { id, minStock, avgPrice, ...rest } = input;
+        const { id, minStock, targetStock, avgPrice, unitsPerPackage, ...rest } = input;
         await db.updateMaterial(id, {
           ...rest,
           ...(minStock !== undefined ? { minStock: String(minStock) } : {}),
+          ...(targetStock !== undefined ? { targetStock: String(targetStock) } : {}),
           ...(avgPrice !== undefined ? { avgPrice: String(avgPrice) } : {}),
+          ...(unitsPerPackage !== undefined ? { unitsPerPackage: String(unitsPerPackage) } : {}),
         });
 
         // Sincronizar com Google Sheets
@@ -3118,13 +3165,23 @@ export const appRouter = router({
         return await db.listStockMovements(input.materialId, input.limit);
       }),
 
+    listLots: protectedProcedure
+      .input(z.object({ materialId: z.number().optional() }))
+      .query(async ({ input }) => db.listMaterialLots(input.materialId)),
+
     addMovement: protectedProcedure
       .input(z.object({
         materialId: z.number(),
         type: z.enum(['entrada', 'saida', 'ajuste']),
         quantity: z.number().positive(),
+        inputQuantity: z.number().positive().optional(),
+        inputUnit: z.string().trim().min(1).max(50).optional(),
+        conversionFactor: z.number().positive().optional(),
         reason: z.string().optional(),
         reference: z.string().optional(),
+        lotNumber: z.string().trim().max(100).optional(),
+        expiresAt: z.string().trim().optional(),
+        source: z.enum(['manual','procedimento','compra','ajuste']).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         const movResult = await db.addStockMovement({ ...input, createdBy: ctx.user.id });
