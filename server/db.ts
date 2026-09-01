@@ -77,6 +77,7 @@ import {
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { POST_SALE_STAGES, type PostSaleStage } from "../shared/postSale";
+export { buildWhatsAppOrderMessage } from "./purchaseOrderMessage";
 
 // ============ DATE HELPERS ============
 /** Converte Date | string | null para string ISO (YYYY-MM-DD HH:MM:SS) compatível com MySQL mode:'string' */
@@ -4749,39 +4750,6 @@ export async function deletePurchaseOrder(id: number) {
   if (!db) throw new Error("Database not available");
   await db.delete(purchaseOrderItems).where(eq(purchaseOrderItems.orderId, id));
   await db.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
-}
-
-/** Gera a mensagem formatada para WhatsApp de um pedido de orçamento */
-export function buildWhatsAppOrderMessage(order: {
-  supplierName: string | null;
-  notes?: string | null;
-  items: {
-    materialName: string | null;
-    quantity: string;
-    materialUnit: string | null;
-    unitPrice: string;
-    notes?: string | null;
-  }[];
-}): string {
-  const lines: string[] = [];
-  lines.push("🛒 *PEDIDO DE ORÇAMENTO*");
-  lines.push(`📋 Fornecedor: ${order.supplierName ?? "N/A"}`);
-  lines.push("");
-  lines.push("*Itens solicitados:*");
-  order.items.forEach((item, i) => {
-    const qty = parseFloat(item.quantity);
-    const price = parseFloat(item.unitPrice);
-    const line = `${i + 1}. ${item.materialName ?? "Item"} — ${qty} ${item.materialUnit ?? "un"}`;
-    lines.push(line + (price > 0 ? ` (R$ ${price.toFixed(2)}/un)` : ""));
-    if (item.notes) lines.push(`   _${item.notes}_`);
-  });
-  if (order.notes) {
-    lines.push("");
-    lines.push(`📝 Observações: ${order.notes}`);
-  }
-  lines.push("");
-  lines.push("Por favor, envie o orçamento com prazo de entrega. Obrigado! 🙏");
-  return lines.join("\n");
 }
 
 // ============ ANAMNESE - EDIÇÃO E EXCLUSÃO ============
