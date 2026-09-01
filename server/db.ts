@@ -4386,6 +4386,8 @@ export async function listPurchaseOrders() {
       status: purchaseOrders.status,
       notes: purchaseOrders.notes,
       sentAt: purchaseOrders.sentAt,
+      receivedAt: purchaseOrders.receivedAt,
+      receivedBy: purchaseOrders.receivedBy,
       createdAt: purchaseOrders.createdAt,
     })
     .from(purchaseOrders)
@@ -4407,6 +4409,8 @@ export async function getPurchaseOrderById(id: number) {
       status: purchaseOrders.status,
       notes: purchaseOrders.notes,
       sentAt: purchaseOrders.sentAt,
+      receivedAt: purchaseOrders.receivedAt,
+      receivedBy: purchaseOrders.receivedBy,
       createdAt: purchaseOrders.createdAt,
     })
     .from(purchaseOrders)
@@ -4419,14 +4423,34 @@ export async function getPurchaseOrderById(id: number) {
     .select({
       id: purchaseOrderItems.id,
       materialId: purchaseOrderItems.materialId,
+      catalogVariantId: sql<
+        number | null
+      >`COALESCE(${purchaseOrderItems.catalogVariantId}, ${materials.catalogVariantId})`,
       materialName: sql<string>`COALESCE(${purchaseOrderItems.materialName}, ${materials.name})`,
       materialUnit: sql<string>`COALESCE(${purchaseOrderItems.materialUnit}, ${materials.purchaseUnit}, ${materials.unit})`,
+      materialCategory: sql<string>`COALESCE(${materials.category}, ${catalogVariants.category}, 'Outros')`,
+      baseUnit: sql<string>`COALESCE(${materials.baseUnit}, ${catalogVariants.baseUnit}, ${purchaseOrderItems.materialUnit}, 'un')`,
+      purchaseUnit: sql<string>`COALESCE(${materials.purchaseUnit}, ${catalogVariants.purchaseUnit}, ${purchaseOrderItems.materialUnit}, 'un')`,
+      unitsPerPackage: sql<string>`COALESCE(${materials.unitsPerPackage}, ${catalogVariants.unitsPerPackage}, 1)`,
+      requiresLotControl: sql<number>`COALESCE(${materials.requiresLotControl}, ${catalogVariants.requiresLotControl}, 0)`,
       quantity: purchaseOrderItems.quantity,
       unitPrice: purchaseOrderItems.unitPrice,
       notes: purchaseOrderItems.notes,
+      receivedQuantity: purchaseOrderItems.receivedQuantity,
+      receivedBaseQuantity: purchaseOrderItems.receivedBaseQuantity,
+      receivedLotNumber: purchaseOrderItems.receivedLotNumber,
+      receivedExpiresAt: purchaseOrderItems.receivedExpiresAt,
+      receivedAlertAt: purchaseOrderItems.receivedAlertAt,
+      qualityStatus: purchaseOrderItems.qualityStatus,
+      qualityNotes: purchaseOrderItems.qualityNotes,
+      receivedAt: purchaseOrderItems.receivedAt,
     })
     .from(purchaseOrderItems)
     .leftJoin(materials, eq(materials.id, purchaseOrderItems.materialId))
+    .leftJoin(
+      catalogVariants,
+      sql`${catalogVariants.id} = COALESCE(${purchaseOrderItems.catalogVariantId}, ${materials.catalogVariantId})`,
+    )
     .where(eq(purchaseOrderItems.orderId, id));
 
   return { ...order[0], items };
@@ -4438,6 +4462,7 @@ export async function createPurchaseOrder(data: {
   createdBy?: number;
   items: {
     materialId?: number;
+    catalogVariantId?: number;
     materialName: string;
     materialUnit: string;
     quantity: number;
@@ -4461,6 +4486,7 @@ export async function createPurchaseOrder(data: {
       data.items.map((item) => ({
         orderId,
         materialId: item.materialId,
+        catalogVariantId: item.catalogVariantId,
         materialName: item.materialName,
         materialUnit: item.materialUnit,
         quantity: String(item.quantity),
@@ -4471,6 +4497,234 @@ export async function createPurchaseOrder(data: {
   }
 
   return orderId;
+}
+
+export type ReceivePurchaseOrderItem = {
+  orderItemId: number;
+  materialId?: number;
+  receivedQuantity: number;
+  baseUnit: string;
+  purchaseUnit: string;
+  unitsPerPackage: number;
+  unitPrice?: number;
+  lotNumber?: string;
+  expiresAt?: string;
+  alertAt?: string;
+  qualityStatus: "nao_verificada" | "aprovado" | "ressalva" | "recusado";
+  qualityNotes?: string;
+};
+
+export async function receivePurchaseOrder(data: {
+  orderId: number;
+  receivedBy: number;
+  items: ReceivePurchaseOrderItem[];
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.transaction(async (tx) => {
+    const [order] = await tx
+      .select()
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, data.orderId))
+      .limit(1);
+    if (!order) throw new Error("Pedido não encontrado");
+    if (order.status === "recebido")
+      throw new Error("Este pedido já foi recebido e lançado no estoque");
+    if (order.status === "cancelado")
+      throw new Error("Um pedido cancelado não pode ser recebido");
+
+    const orderItems = await tx
+      .select()
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.orderId, data.orderId));
+    const receivedByItemId = new Map(
+      data.items.map((item) => [item.orderItemId, item]),
+    );
+    if (
+      orderItems.length === 0 ||
+      orderItems.length !== receivedByItemId.size ||
+      orderItems.some((item) => !receivedByItemId.has(item.id))
+    ) {
+      throw new Error("Confira o recebimento de todos os itens do pedido");
+    }
+
+    const now = Date.now();
+    const movements: Array<{
+      id: number;
+      materialId: number;
+      quantity: number;
+      previousStock: number;
+      newStock: number;
+    }> = [];
+
+    for (const orderItem of orderItems) {
+      const input = receivedByItemId.get(orderItem.id)!;
+      if (input.qualityStatus !== "recusado" && input.receivedQuantity <= 0)
+        throw new Error(
+          `Informe a quantidade recebida de ${orderItem.materialName || "um item"}`,
+        );
+      if ((input.expiresAt || input.alertAt) && !input.lotNumber)
+        throw new Error(
+          `Informe o lote de ${orderItem.materialName || "um item"}`,
+        );
+      if (input.alertAt && !input.expiresAt)
+        throw new Error(
+          `Informe a validade antes da data de aviso de ${orderItem.materialName || "um item"}`,
+        );
+      if (
+        input.alertAt &&
+        input.expiresAt &&
+        new Date(input.alertAt) > new Date(input.expiresAt)
+      )
+        throw new Error(
+          `A data de aviso deve ser anterior ou igual à validade de ${orderItem.materialName || "um item"}`,
+        );
+
+      let materialId = input.materialId || orderItem.materialId || undefined;
+      let catalogVariant: typeof catalogVariants.$inferSelect | undefined;
+      if (!materialId && orderItem.catalogVariantId) {
+        [catalogVariant] = await tx
+          .select()
+          .from(catalogVariants)
+          .where(eq(catalogVariants.id, orderItem.catalogVariantId))
+          .limit(1);
+      }
+
+      if (!materialId) {
+        const [created] = await tx.insert(materials).values({
+          name: orderItem.materialName || "Material recebido",
+          category: catalogVariant?.category || "Outros",
+          unit: input.baseUnit,
+          baseUnit: input.baseUnit,
+          purchaseUnit: input.purchaseUnit,
+          unitsPerPackage: String(input.unitsPerPackage),
+          currentStock: "0",
+          minStock: "0",
+          targetStock: "0",
+          avgPrice: String(input.unitPrice || orderItem.unitPrice || 0),
+          supplierId: order.supplierId,
+          catalogVariantId: orderItem.catalogVariantId,
+          requiresLotControl: catalogVariant?.requiresLotControl || 0,
+          anvisaStatus: catalogVariant?.anvisaStatus || "nao_aplicavel",
+          notes: `Cadastro criado no recebimento do pedido #${data.orderId}`,
+          createdAt: now,
+          updatedAt: now,
+        });
+        materialId = Number(created.insertId);
+      }
+
+      const [material] = await tx
+        .select()
+        .from(materials)
+        .where(eq(materials.id, materialId))
+        .limit(1);
+      if (!material) throw new Error("Material de destino não encontrado");
+
+      const receivedQuantity =
+        input.qualityStatus === "recusado" ? 0 : input.receivedQuantity;
+      const normalizedQuantity = receivedQuantity * input.unitsPerPackage;
+      const previousStock = Number(material.currentStock) || 0;
+      const newStock = previousStock + normalizedQuantity;
+
+      if (normalizedQuantity > 0) {
+        const [movement] = await tx.insert(stockMovements).values({
+          materialId,
+          type: "entrada",
+          quantity: String(normalizedQuantity),
+          inputQuantity: String(receivedQuantity),
+          inputUnit: input.purchaseUnit,
+          conversionFactor: String(input.unitsPerPackage),
+          previousStock: String(previousStock),
+          newStock: String(newStock),
+          reason: `Recebimento do pedido #${data.orderId}`,
+          notes: input.qualityNotes,
+          lotNumber: input.lotNumber,
+          expiresAt: input.expiresAt,
+          alertAt: input.alertAt,
+          source: "compra",
+          createdBy: data.receivedBy,
+          createdAt: now,
+        });
+        await tx
+          .update(materials)
+          .set({
+            currentStock: String(newStock),
+            supplierId: material.supplierId || order.supplierId,
+            avgPrice:
+              input.unitPrice && input.unitPrice > 0
+                ? String(input.unitPrice)
+                : material.avgPrice,
+            updatedAt: now,
+          })
+          .where(eq(materials.id, materialId));
+
+        if (input.lotNumber) {
+          await tx
+            .insert(materialLots)
+            .values({
+              materialId,
+              lotNumber: input.lotNumber,
+              expiresAt: input.expiresAt,
+              alertAt: input.alertAt,
+              currentQuantity: String(normalizedQuantity),
+              supplierId: order.supplierId,
+              purchasePrice: input.unitPrice
+                ? String(input.unitPrice)
+                : undefined,
+              receivedAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                currentQuantity: sql`${materialLots.currentQuantity} + ${normalizedQuantity}`,
+                expiresAt: input.expiresAt,
+                alertAt: input.alertAt,
+                purchasePrice: input.unitPrice
+                  ? String(input.unitPrice)
+                  : undefined,
+                updatedAt: now,
+              },
+            });
+        }
+        movements.push({
+          id: Number(movement.insertId),
+          materialId,
+          quantity: normalizedQuantity,
+          previousStock,
+          newStock,
+        });
+      }
+
+      await tx
+        .update(purchaseOrderItems)
+        .set({
+          materialId,
+          receivedQuantity: String(receivedQuantity),
+          receivedBaseQuantity: String(normalizedQuantity),
+          receivedLotNumber: input.lotNumber,
+          receivedExpiresAt: input.expiresAt,
+          receivedAlertAt: input.alertAt,
+          qualityStatus: input.qualityStatus,
+          qualityNotes: input.qualityNotes,
+          receivedAt: now,
+        })
+        .where(eq(purchaseOrderItems.id, orderItem.id));
+    }
+
+    await tx
+      .update(purchaseOrders)
+      .set({
+        status: "recebido",
+        receivedAt: now,
+        receivedBy: data.receivedBy,
+        updatedAt: now,
+      })
+      .where(eq(purchaseOrders.id, data.orderId));
+
+    return { success: true as const, movements };
+  });
 }
 
 export async function updatePurchaseOrderStatus(
