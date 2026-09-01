@@ -4751,38 +4751,7 @@ export async function deletePurchaseOrder(id: number) {
   await db.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
 }
 
-/** Gera a mensagem formatada para WhatsApp de um pedido de orçamento */
-export function buildWhatsAppOrderMessage(order: {
-  supplierName: string | null;
-  notes?: string | null;
-  items: {
-    materialName: string | null;
-    quantity: string;
-    materialUnit: string | null;
-    unitPrice: string;
-    notes?: string | null;
-  }[];
-}): string {
-  const lines: string[] = [];
-  lines.push("🛒 *PEDIDO DE ORÇAMENTO*");
-  lines.push(`📋 Fornecedor: ${order.supplierName ?? "N/A"}`);
-  lines.push("");
-  lines.push("*Itens solicitados:*");
-  order.items.forEach((item, i) => {
-    const qty = parseFloat(item.quantity);
-    const price = parseFloat(item.unitPrice);
-    const line = `${i + 1}. ${item.materialName ?? "Item"} — ${qty} ${item.materialUnit ?? "un"}`;
-    lines.push(line + (price > 0 ? ` (R$ ${price.toFixed(2)}/un)` : ""));
-    if (item.notes) lines.push(`   _${item.notes}_`);
-  });
-  if (order.notes) {
-    lines.push("");
-    lines.push(`📝 Observações: ${order.notes}`);
-  }
-  lines.push("");
-  lines.push("Por favor, envie o orçamento com prazo de entrega. Obrigado! 🙏");
-  return lines.join("\n");
-}
+export { buildWhatsAppOrderMessage } from "./purchaseOrderMessage";
 
 // ============ ANAMNESE - EDIÇÃO E EXCLUSÃO ============
 
