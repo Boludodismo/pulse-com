@@ -1413,7 +1413,7 @@ export default function Suppliers() {
                   <div className="bg-card rounded p-3 text-xs font-mono whitespace-pre-wrap text-muted-foreground max-h-40 overflow-y-auto">
                     {waLink.message}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <Button
                       size="sm"
                       variant="outline"
@@ -1438,11 +1438,11 @@ export default function Suppliers() {
                         });
                       }}
                     >
-                      <MessageCircle className="w-3 h-3 mr-1" /> Abrir WhatsApp
+                      <MessageCircle className="w-3 h-3 mr-1" /> Enviar WhatsApp
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Ao clicar em "Abrir WhatsApp", o status do pedido será
+                    Ao clicar em "Enviar WhatsApp", o status do pedido será
                     atualizado para <strong>Enviado</strong>.
                   </p>
                 </div>
