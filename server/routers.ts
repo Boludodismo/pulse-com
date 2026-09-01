@@ -4204,6 +4204,7 @@ export const appRouter = router({
             .array(
               z.object({
                 materialId: z.number().int().positive().optional(),
+                catalogVariantId: z.number().int().positive().optional(),
                 materialName: z.string().trim().min(1).max(255),
                 materialUnit: z.string().trim().min(1).max(50),
                 quantity: z.number().positive(),
@@ -4236,8 +4237,90 @@ export const appRouter = router({
         }),
       )
       .mutation(async ({ input }) => {
+        if (input.status === "recebido") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Use a função Receber pedido para lançar os itens no estoque.",
+          });
+        }
         await db.updatePurchaseOrderStatus(input.id, input.status);
         return { success: true };
+      }),
+
+    receiveOrder: protectedProcedure
+      .input(
+        z.object({
+          orderId: z.number().int().positive(),
+          items: z
+            .array(
+              z.object({
+                orderItemId: z.number().int().positive(),
+                materialId: z.number().int().positive().optional(),
+                receivedQuantity: z.number().min(0).max(1_000_000),
+                baseUnit: z.string().trim().min(1).max(50),
+                purchaseUnit: z.string().trim().min(1).max(50),
+                unitsPerPackage: z.number().positive().max(1_000_000),
+                unitPrice: z.number().min(0).max(100_000_000).optional(),
+                lotNumber: z.string().trim().max(100).optional(),
+                expiresAt: z.string().trim().optional(),
+                alertAt: z.string().trim().optional(),
+                qualityStatus: z.enum([
+                  "nao_verificada",
+                  "aprovado",
+                  "ressalva",
+                  "recusado",
+                ]),
+                qualityNotes: z.string().trim().max(2000).optional(),
+              }),
+            )
+            .min(1),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await db.receivePurchaseOrder({
+            ...input,
+            receivedBy: ctx.user.id,
+          });
+
+          for (const movement of result.movements) {
+            syncStockMovementToSheets({
+              id: movement.id,
+              materialId: movement.materialId,
+              movementType: "entrada",
+              quantity: movement.quantity,
+              reason: `Recebimento do pedido #${input.orderId}`,
+              responsible: ctx.user.name || ctx.user.email || "Sistema",
+              createdAt: new Date(),
+            });
+          }
+
+          await db.createAuditLog({
+            userId: ctx.user.id,
+            userName: ctx.user.name || "Usuário sem nome",
+            action: "update",
+            entity: "settings",
+            entityId: input.orderId,
+            entityName: `Pedido #${input.orderId}`,
+            details: {
+              operation: "receive_purchase_order",
+              stockMovements: result.movements,
+            },
+            ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
+            userAgent: ctx.req.headers?.["user-agent"],
+          });
+
+          return result;
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Não foi possível receber o pedido.",
+          });
+        }
       }),
 
     deleteOrder: protectedProcedure
