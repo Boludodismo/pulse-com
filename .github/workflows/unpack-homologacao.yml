@@ -6,6 +6,7 @@ on:
       - homologacao-2026-09-06
     paths:
       - '.upload/**'
+      - '.upload-bin/**'
       - '.github/workflows/unpack-homologacao.yml'
   workflow_dispatch:
 
@@ -25,11 +26,22 @@ jobs:
           ref: homologacao-2026-09-06
           fetch-depth: 0
 
-      - name: Reconstruir pacote e substituir staging pelo projeto real
+      - name: Validar pacote binario
         shell: bash
         run: |
           set -euo pipefail
-          cat .upload/tatuei_archive.part* | tr -d '\r\n' | base64 --decode > /tmp/tatuei.tar.xz
+          echo "Partes binarias:"
+          wc -c .upload-bin/tatuei_archive.part* || true
+          sha256sum .upload-bin/tatuei_archive.part* || true
+          cat .upload-bin/tatuei_archive.part* > /tmp/tatuei.tar.xz
+          echo "Pacote reconstruido: $(wc -c < /tmp/tatuei.tar.xz) bytes"
+          sha256sum /tmp/tatuei.tar.xz
+          xz -t /tmp/tatuei.tar.xz
+
+      - name: Extrair e substituir staging pelo projeto real
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p /tmp/tatuei
           tar -xJf /tmp/tatuei.tar.xz -C /tmp/tatuei
           test -f /tmp/tatuei/package.json
@@ -38,7 +50,7 @@ jobs:
           test -d /tmp/tatuei/drizzle
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
           cp -a /tmp/tatuei/. .
-          rm -rf .upload
+          rm -rf .upload .upload-bin
           echo "Arquivos reconstruidos: $(find . -type f -not -path './.git/*' | wc -l)"
 
       - name: Configurar pnpm
@@ -62,11 +74,12 @@ jobs:
       - name: Validar build de producao
         run: pnpm build
 
-      - name: Confirmar ausencia de staging e artefatos sensiveis
+      - name: Confirmar integridade para deploy
         shell: bash
         run: |
           set -euo pipefail
           test ! -d .upload
+          test ! -d .upload-bin
           test ! -d .manus
           test ! -f .env
           test -f package.json
