@@ -1,22 +1,6 @@
 ALTER TABLE `anamnese_requests` DROP INDEX `anamnese_requests_token_unique`;--> statement-breakpoint
 ALTER TABLE `studios` DROP INDEX `studios_masterKey_unique`;--> statement-breakpoint
 ALTER TABLE `users` DROP INDEX `users_openId_unique`;--> statement-breakpoint
-ALTER TABLE `anamnese_requests` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `anamnese_submissions` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `anamnesisRecords` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `appointments` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `artists` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `auditLogs` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `calendars` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `clientNotes` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `clients` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `galleryImages` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `notificationLogs` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `reportTemplates` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `studioSettings` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `studios` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `transactions` DROP PRIMARY KEY;--> statement-breakpoint
-ALTER TABLE `users` DROP PRIMARY KEY;--> statement-breakpoint
 ALTER TABLE `anamnese_requests` MODIFY COLUMN `createdAt` timestamp NOT NULL DEFAULT 'CURRENT_TIMESTAMP';--> statement-breakpoint
 ALTER TABLE `anamnese_submissions` MODIFY COLUMN `createdAt` timestamp NOT NULL DEFAULT 'CURRENT_TIMESTAMP';--> statement-breakpoint
 ALTER TABLE `anamnesisRecords` MODIFY COLUMN `hasAllergies` tinyint NOT NULL;--> statement-breakpoint
