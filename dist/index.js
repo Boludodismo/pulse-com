@@ -904,6 +904,8 @@ var init_env = __esm({
       localAdminEmail: process.env.LOCAL_ADMIN_EMAIL ?? "admin@podcrm.local",
       localAdminPassword: process.env.LOCAL_ADMIN_PASSWORD ?? "admin123",
       localAdminName: process.env.LOCAL_ADMIN_NAME ?? "Admin",
+      localStudioName: process.env.LOCAL_STUDIO_NAME ?? "Meu Est\xFAdio",
+      schedulerMode: (process.env.SCHEDULER_MODE ?? (process.env.AUTH_MODE === "local" ? "local" : "heartbeat")).toLowerCase(),
       // Storage provider: "manus", "s3" or "disabled"
       storageProvider: detectedStorageProvider,
       // S3-compatible storage (Railway Buckets, R2, AWS S3, etc.)
@@ -3302,6 +3304,7 @@ __export(localAuth_exports, {
   verifyPassword: () => verifyPassword
 });
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
 function registerLocalAuthRoutes(app) {
   app.post("/api/auth/local/login", async (req, res) => {
     const { email, password } = req.body;
@@ -3344,22 +3347,43 @@ function registerLocalAuthRoutes(app) {
 }
 async function ensureLocalAdmin(env) {
   try {
-    const existing = await getUserByEmail(env.email.trim().toLowerCase());
+    const normalizedEmail = env.email.trim().toLowerCase();
+    const existing = await getUserByEmail(normalizedEmail);
     const passwordHash = await bcrypt.hash(env.password, SALT_ROUNDS);
+    const studio = await getFirstStudio();
+    let studioId = existing?.studioId ?? studio?.id ?? null;
+    if (!studioId) {
+      const database = await getDb();
+      if (!database) throw new Error("Banco de dados indispon\xEDvel ao criar o est\xFAdio inicial.");
+      const result = await database.insert(studios).values({
+        name: env.studioName.trim() || "Meu Est\xFAdio",
+        email: normalizedEmail,
+        masterKey: randomBytes(32).toString("hex"),
+        isActive: 1
+      });
+      studioId = Number(result[0].insertId);
+      console.log(`[LocalAuth] Bootstrap studio created: ${env.studioName} (#${studioId})`);
+    }
     if (!existing) {
       await createUser({
         openId: env.ownerOpenId || `local-admin-${Date.now()}`,
         name: env.name,
-        email: env.email.trim().toLowerCase(),
+        email: normalizedEmail,
         role: "superadmin",
+        studioId,
         passwordHash
       });
       console.log(`[LocalAuth] Admin user created: ${env.email}`);
-    } else if (!existing.passwordHash) {
-      await updateUser(existing.id, { passwordHash });
-      console.log(`[LocalAuth] Password set for existing admin: ${env.email}`);
     } else {
-      console.log(`[LocalAuth] Admin already configured: ${env.email}`);
+      const updates = {};
+      if (!existing.passwordHash) updates.passwordHash = passwordHash;
+      if (!existing.studioId) updates.studioId = studioId;
+      if (Object.keys(updates).length > 0) {
+        await updateUser(existing.id, updates);
+        console.log(`[LocalAuth] Existing admin bootstrap completed: ${env.email}`);
+      } else {
+        console.log(`[LocalAuth] Admin already configured: ${env.email}`);
+      }
     }
   } catch (err) {
     console.error("[LocalAuth] Failed to ensure admin user:", err);
@@ -3375,6 +3399,7 @@ var SALT_ROUNDS;
 var init_localAuth = __esm({
   "server/_core/localAuth.ts"() {
     "use strict";
+    init_schema();
     init_db();
     init_cookies();
     init_sdk();
@@ -3384,7 +3409,7 @@ var init_localAuth = __esm({
 });
 
 // server/messaging/crypto.ts
-import { createCipheriv, createDecipheriv, createHash as createHash2, randomBytes as randomBytes2, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash as createHash2, randomBytes as randomBytes3, timingSafeEqual } from "node:crypto";
 function getEncryptionKey() {
   const value = process.env.BOTCONVERSA_ENCRYPTION_KEY;
   if (!value) throw new Error("A chave de criptografia BotConversa n\xE3o est\xE1 configurada.");
@@ -3394,7 +3419,7 @@ function getEncryptionKey() {
 }
 function encryptIntegrationSecret(value) {
   if (!value) throw new Error("N\xE3o \xE9 poss\xEDvel criptografar um valor vazio.");
-  const iv = randomBytes2(IV_LENGTH);
+  const iv = randomBytes3(IV_LENGTH);
   const cipher = createCipheriv("aes-256-gcm", getEncryptionKey(), iv, { authTagLength: AUTH_TAG_LENGTH });
   const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -3414,7 +3439,7 @@ function decryptIntegrationSecret(ciphertext) {
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
 }
 function createConnectionKey() {
-  return randomBytes2(32).toString("base64url");
+  return randomBytes3(32).toString("base64url");
 }
 function hashIntegrationPayload(payload) {
   return createHash2("sha256").update(payload).digest("hex");
@@ -5361,7 +5386,7 @@ import superjson from "superjson";
 // server/saas.ts
 init_db();
 init_schema();
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes as randomBytes2 } from "node:crypto";
 import { and as and2, desc as desc2, eq as eq2, gt } from "drizzle-orm";
 var SAAS_MODULES = ["clients", "appointments", "stock", "finance", "anamnesis", "pod", "reports"];
 var hashToken = (token) => createHash("sha256").update(token).digest("hex");
@@ -5372,7 +5397,7 @@ function invitationExpiresAt(days = 7) {
 async function createStudioInvitation(input) {
   const database = await getDb();
   if (!database) throw new Error("Banco de dados indispon\xEDvel");
-  const token = randomBytes(32).toString("hex");
+  const token = randomBytes2(32).toString("hex");
   const expiresAt = invitationExpiresAt(7);
   await database.insert(studioInvitations).values({
     studioId: input.studioId,
@@ -6115,6 +6140,7 @@ ${formatAppointmentActionLinks(actionLinks)}`,
 }
 
 // server/scheduler.ts
+init_service();
 var whatsAppSchedulerStatus = {
   enabled: false,
   daysBefore: 1,
@@ -6131,6 +6157,27 @@ async function runLegacyNotificationCycle() {
   const individual = await enqueueDueIndividualReminders();
   console.log("[Scheduler] Ciclo autom\xE1tico BotConversa", { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped });
   return { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped };
+}
+var standaloneSchedulerStarted = false;
+var standaloneSchedulerRunning = false;
+async function runStandaloneSchedulerCycle() {
+  if (standaloneSchedulerRunning) return;
+  standaloneSchedulerRunning = true;
+  try {
+    await runLegacyNotificationCycle();
+    await processPendingIntegrationJobs(20);
+  } catch (error) {
+    console.error("[Scheduler] Falha no ciclo standalone:", error);
+  } finally {
+    standaloneSchedulerRunning = false;
+  }
+}
+function startScheduler() {
+  if (standaloneSchedulerStarted) return;
+  standaloneSchedulerStarted = true;
+  console.log("[Scheduler] Iniciando processamento standalone a cada 60 segundos.");
+  setTimeout(() => void runStandaloneSchedulerCycle(), 1e4);
+  setInterval(() => void runStandaloneSchedulerCycle(), 6e4);
 }
 
 // server/routers/contacts.ts
@@ -10866,17 +10913,45 @@ async function receiveBotConversaWebhook(input) {
 }
 
 // server/_core/migrations.ts
-init_db();
-import { migrate } from "drizzle-orm/mysql2/migrator";
+import "dotenv/config";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import mysql from "mysql2/promise";
+var DEFAULT_BASELINE_INDEX = 14;
+function splitStatements(sqlText) {
+  const withoutLineComments = sqlText.split("\n").filter((line) => !line.trimStart().startsWith("--")).join("\n");
+  return withoutLineComments.split("--> statement-breakpoint").flatMap((chunk) => chunk.split(";")).map((statement) => statement.trim()).filter((statement) => statement.length > 0);
+}
 async function runStartupMigrations() {
   if (process.env.RUN_DB_MIGRATIONS !== "true") return;
-  const database = await getDb();
-  if (!database) {
-    throw new Error("RUN_DB_MIGRATIONS=true but DATABASE_URL is not configured or the database is unavailable.");
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) throw new Error("RUN_DB_MIGRATIONS=true but DATABASE_URL is not configured.");
+  const baselineIndex = Number.parseInt(process.env.MIGRATION_BASELINE_INDEX ?? String(DEFAULT_BASELINE_INDEX), 10);
+  const connection = await mysql.createConnection(databaseUrl);
+  try {
+    await connection.execute(`CREATE TABLE IF NOT EXISTS podcrm_migrations (tag varchar(255) NOT NULL, appliedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (tag))`);
+    const [appliedRows] = await connection.query("SELECT tag FROM podcrm_migrations");
+    const applied = new Set(appliedRows.map((row) => String(row.tag)));
+    const [schemaRows] = await connection.query("SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'users'");
+    const existingSchema = Number(schemaRows[0]?.count ?? 0) > 0;
+    if (applied.size === 0 && existingSchema) {
+      console.log("[Database] Existing schema detected without POD CRM migration tracking; startup replay skipped for safety.");
+      return;
+    }
+    const journal = JSON.parse(await readFile(resolve(process.cwd(), "drizzle/meta/_journal.json"), "utf8"));
+    const entries = journal.entries.filter((entry) => entry.idx >= baselineIndex).sort((a, b) => a.idx - b.idx);
+    console.log(`[Database] Applying POD CRM migrations from baseline index ${baselineIndex}...`);
+    for (const entry of entries) {
+      if (applied.has(entry.tag)) continue;
+      const sqlText = await readFile(resolve(process.cwd(), `drizzle/${entry.tag}.sql`), "utf8");
+      for (const statement of splitStatements(sqlText)) await connection.query(statement);
+      await connection.execute("INSERT INTO podcrm_migrations (tag) VALUES (?)", [entry.tag]);
+      console.log(`[Database] Applied migration ${entry.tag}`);
+    }
+    console.log("[Database] POD CRM schema is up to date.");
+  } finally {
+    await connection.end();
   }
-  console.log("[Database] Applying committed Drizzle migrations...");
-  await migrate(database, { migrationsFolder: "./drizzle" });
-  console.log("[Database] Migrations are up to date.");
 }
 
 // server/_core/index.ts
@@ -10917,7 +10992,8 @@ async function startServer() {
       email: ENV.localAdminEmail,
       password: ENV.localAdminPassword,
       name: ENV.localAdminName,
-      ownerOpenId: ENV.ownerOpenId
+      ownerOpenId: ENV.ownerOpenId,
+      studioName: ENV.localStudioName
     });
   } else {
     console.log("[Auth] Using OAuth authentication mode");
@@ -10954,7 +11030,7 @@ async function startServer() {
       const studioSettings2 = await getStudioSettings();
       const anamnesisRecords2 = await getAnamnesisByClientId(appointment.clientId);
       const latestAnamnesis = anamnesisRecords2.length > 0 ? anamnesisRecords2[0] : null;
-      const baseUrl = process.env.APP_BASE_URL || (process.env.NODE_ENV === "production" ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}` : "http://localhost:3000");
+      const baseUrl = ENV.appBaseUrl || (process.env.NODE_ENV === "production" ? "https://crm.tatuei.com" : "http://localhost:3000");
       const { createHash: createHash3 } = await import("crypto");
       const secret = process.env.JWT_SECRET || "secret";
       const token = createHash3("sha256").update(`${appointment.id}:${appointment.date}:${secret}`).digest("hex").slice(0, 16);
@@ -11075,7 +11151,11 @@ async function startServer() {
   const port = Number(process.env.PORT || 8080);
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${port}`);
-    console.log("[Scheduler] Processamento peri\xF3dico dispon\xEDvel via Heartbeat.");
+    if (ENV.schedulerMode === "local") {
+      startScheduler();
+    } else {
+      console.log("[Scheduler] Processamento peri\xF3dico configurado para Heartbeat externo.");
+    }
   });
 }
 startServer().catch(console.error);

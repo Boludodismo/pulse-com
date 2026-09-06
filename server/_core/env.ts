@@ -24,6 +24,8 @@ export const ENV = {
   localAdminEmail: process.env.LOCAL_ADMIN_EMAIL ?? "admin@podcrm.local",
   localAdminPassword: process.env.LOCAL_ADMIN_PASSWORD ?? "admin123",
   localAdminName: process.env.LOCAL_ADMIN_NAME ?? "Admin",
+  localStudioName: process.env.LOCAL_STUDIO_NAME ?? "Meu Estúdio",
+  schedulerMode: (process.env.SCHEDULER_MODE ?? (process.env.AUTH_MODE === "local" ? "local" : "heartbeat")).toLowerCase(),
   // Storage provider: "manus", "s3" or "disabled"
   storageProvider: detectedStorageProvider,
   // S3-compatible storage (Railway Buckets, R2, AWS S3, etc.)

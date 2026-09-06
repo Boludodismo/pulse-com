@@ -115,6 +115,13 @@
       "breakpoints": true
     },
     {
+      "idx": 16,
+      "version": "5",
+      "when": 1768304500000,
+      "tag": "0016_bootstrap_studios",
+      "breakpoints": true
+    },
+    {
       "idx": 17,
       "version": "5",
       "when": 1768306466627,

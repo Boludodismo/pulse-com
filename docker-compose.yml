@@ -15,7 +15,6 @@ services:
       - "${DB_PORT:-3306}:3306"
     volumes:
       - db_data:/var/lib/mysql
-      - ./drizzle:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
@@ -34,12 +33,16 @@ services:
     environment:
       # Database
       DATABASE_URL: mysql://${DB_USER:-podcrm}:${DB_PASS:-podcrm123}@db:3306/${DB_NAME:-podcrm}
+      RUN_DB_MIGRATIONS: ${RUN_DB_MIGRATIONS:-true}
+      MIGRATION_BASELINE_INDEX: ${MIGRATION_BASELINE_INDEX:-14}
       
       # Auth mode
       AUTH_MODE: ${AUTH_MODE:-local}
       LOCAL_ADMIN_EMAIL: ${LOCAL_ADMIN_EMAIL:-admin@podcrm.local}
       LOCAL_ADMIN_PASSWORD: ${LOCAL_ADMIN_PASSWORD:-admin123}
       LOCAL_ADMIN_NAME: ${LOCAL_ADMIN_NAME:-Admin}
+      LOCAL_STUDIO_NAME: ${LOCAL_STUDIO_NAME:-Meu Estúdio}
+      SCHEDULER_MODE: ${SCHEDULER_MODE:-local}
       
       # JWT
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
@@ -61,6 +64,8 @@ services:
       PORT: 8080
       VITE_APP_TITLE: ${VITE_APP_TITLE:-POD CRM}
       VITE_APP_LOGO: ${VITE_APP_LOGO:-}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
     depends_on:
       db:
         condition: service_healthy

@@ -1,5 +1,7 @@
 import type { Express, Request, Response } from "express";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
+import { studios } from "../../drizzle/schema";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
@@ -76,28 +78,48 @@ export async function ensureLocalAdmin(env: {
   password: string;
   name: string;
   ownerOpenId: string;
+  studioName: string;
 }): Promise<void> {
   try {
-    const existing = await db.getUserByEmail(env.email.trim().toLowerCase());
+    const normalizedEmail = env.email.trim().toLowerCase();
+    const existing = await db.getUserByEmail(normalizedEmail);
     const passwordHash = await bcrypt.hash(env.password, SALT_ROUNDS);
 
+    const studio = await db.getFirstStudio();
+    let studioId = existing?.studioId ?? studio?.id ?? null;
+    if (!studioId) {
+      const database = await db.getDb();
+      if (!database) throw new Error("Banco de dados indisponível ao criar o estúdio inicial.");
+      const result = await database.insert(studios).values({
+        name: env.studioName.trim() || "Meu Estúdio",
+        email: normalizedEmail,
+        masterKey: randomBytes(32).toString("hex"),
+        isActive: 1,
+      });
+      studioId = Number(result[0].insertId);
+      console.log(`[LocalAuth] Bootstrap studio created: ${env.studioName} (#${studioId})`);
+    }
+
     if (!existing) {
-      // Create fresh admin
       await db.createUser({
         openId: env.ownerOpenId || `local-admin-${Date.now()}`,
         name: env.name,
-        email: env.email.trim().toLowerCase(),
+        email: normalizedEmail,
         role: "superadmin",
+        studioId,
         passwordHash,
       });
       console.log(`[LocalAuth] Admin user created: ${env.email}`);
-    } else if (!existing.passwordHash) {
-      // Existing user without password — set it (preserve existing role)
-      await db.updateUser(existing.id, { passwordHash });
-      console.log(`[LocalAuth] Password set for existing admin: ${env.email}`);
     } else {
-      // Admin already exists with password — do NOT overwrite
-      console.log(`[LocalAuth] Admin already configured: ${env.email}`);
+      const updates: { passwordHash?: string; studioId?: number } = {};
+      if (!existing.passwordHash) updates.passwordHash = passwordHash;
+      if (!existing.studioId) updates.studioId = studioId;
+      if (Object.keys(updates).length > 0) {
+        await db.updateUser(existing.id, updates);
+        console.log(`[LocalAuth] Existing admin bootstrap completed: ${env.email}`);
+      } else {
+        console.log(`[LocalAuth] Admin already configured: ${env.email}`);
+      }
     }
   } catch (err) {
     console.error("[LocalAuth] Failed to ensure admin user:", err);

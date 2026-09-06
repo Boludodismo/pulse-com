@@ -8,7 +8,7 @@ import { ENV } from "./env";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { runLegacyNotificationCycle } from "../scheduler";
+import { runLegacyNotificationCycle, startScheduler } from "../scheduler";
 import { sdk } from "./sdk";
 import * as db from "../db";
 import { processPendingIntegrationJobs } from "../messaging/service";
@@ -65,6 +65,7 @@ async function startServer() {
       password: ENV.localAdminPassword,
       name: ENV.localAdminName,
       ownerOpenId: ENV.ownerOpenId,
+      studioName: ENV.localStudioName,
     });
   } else {
     console.log("[Auth] Using OAuth authentication mode");
@@ -114,10 +115,8 @@ async function startServer() {
       const latestAnamnesis = anamnesisRecords.length > 0 ? anamnesisRecords[0] : null;
 
       // Construir URL base
-      const baseUrl = process.env.APP_BASE_URL ||
-        (process.env.NODE_ENV === "production"
-          ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}`
-          : "http://localhost:3000");
+      const baseUrl = ENV.appBaseUrl ||
+        (process.env.NODE_ENV === "production" ? "https://crm.tatuei.com" : "http://localhost:3000");
 
       // Gerar token de confirmação
       const { createHash } = await import("crypto");
@@ -274,7 +273,11 @@ async function startServer() {
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${port}`);
-    console.log("[Scheduler] Processamento periódico disponível via Heartbeat.");
+    if (ENV.schedulerMode === "local") {
+      startScheduler();
+    } else {
+      console.log("[Scheduler] Processamento periódico configurado para Heartbeat externo.");
+    }
   });
 }
 

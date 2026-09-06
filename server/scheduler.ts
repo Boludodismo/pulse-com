@@ -9,6 +9,7 @@ import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
 import { normalizeWhatsAppNumber } from "../shared/const";
 import { enqueueDueIndividualReminders, runAutomaticMessageCycle } from "./messaging/automaticReminders";
+import { processPendingIntegrationJobs } from "./messaging/service";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 interface WhatsAppSchedulerStatus {
@@ -90,7 +91,8 @@ function buildWhatsAppMessage(
 function getBaseUrl(): string {
   // Em produção o servidor conhece seu próprio domínio pelo header Host
   // Como fallback usamos o domínio público do projeto
-  return process.env.PUBLIC_URL || "https://tatuei.com";
+  return process.env.PUBLIC_URL || process.env.APP_BASE_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "https://crm.tatuei.com");
 }
 
 // ── Lembrete WhatsApp Automático ──────────────────────────────────────────────
@@ -357,7 +359,26 @@ export async function runLegacyNotificationCycle() {
   return { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped };
 }
 
-/** Mantida como API compatível para chamadas legadas; não inicia timers locais. */
+let standaloneSchedulerStarted = false;
+let standaloneSchedulerRunning = false;
+
+async function runStandaloneSchedulerCycle() {
+  if (standaloneSchedulerRunning) return;
+  standaloneSchedulerRunning = true;
+  try {
+    await runLegacyNotificationCycle();
+    await processPendingIntegrationJobs(20);
+  } catch (error) {
+    console.error("[Scheduler] Falha no ciclo standalone:", error);
+  } finally {
+    standaloneSchedulerRunning = false;
+  }
+}
+
 export function startScheduler() {
-  console.log("[Scheduler] Rotinas locais desativadas; use Heartbeat para processar notificações.");
+  if (standaloneSchedulerStarted) return;
+  standaloneSchedulerStarted = true;
+  console.log("[Scheduler] Iniciando processamento standalone a cada 60 segundos.");
+  setTimeout(() => void runStandaloneSchedulerCycle(), 10_000);
+  setInterval(() => void runStandaloneSchedulerCycle(), 60_000);
 }
