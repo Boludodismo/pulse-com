@@ -1,0 +1,59 @@
+name: Validate fresh Railway database
+
+on:
+  push:
+    branches: [homologacao-final-2026-09-06]
+
+jobs:
+  fresh-db:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: podcrm
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: mysql://root:rootpass@127.0.0.1:3306/podcrm
+      RUN_DB_MIGRATIONS: "true"
+      MIGRATION_BASELINE_INDEX: "14"
+      AUTH_MODE: local
+      VITE_AUTH_MODE: local
+      JWT_SECRET: ci-only-secret-at-least-32-characters-long
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply fresh database migrations twice
+        run: |
+          pnpm tsx -e 'import { runStartupMigrations } from "./server/_core/migrations.ts"; await runStartupMigrations(); await runStartupMigrations();'
+
+      - name: Bootstrap local administrator and validate tenant
+        run: |
+          pnpm tsx -e 'import mysql from "mysql2/promise"; import { ensureLocalAdmin } from "./server/_core/localAuth.ts"; await ensureLocalAdmin({email:"admin@test.local",password:"StrongTestPassword123!",name:"Administrador",ownerOpenId:"ci-admin",studioName:"Estudio Teste"}); const c=await mysql.createConnection(process.env.DATABASE_URL!); const [u]:any=await c.query("SELECT studioId, role FROM users WHERE email = ?", ["admin@test.local"]); const [s]:any=await c.query("SELECT COUNT(*) AS n FROM studios"); const [t]:any=await c.query("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (\"users\",\"studios\",\"clients\",\"appointments\",\"materials\",\"suppliers\")"); console.log({user:u[0], studios:s[0], coreTables:t[0]}); if(!u[0] || !u[0].studioId || u[0].role !== "superadmin") throw new Error("Bootstrap admin sem tenant"); if(Number(s[0].n) < 1) throw new Error("Studio inicial ausente"); if(Number(t[0].n) < 6) throw new Error("Tabelas principais ausentes"); await c.end();'
+
+      - name: Type check
+        run: pnpm check
+
+      - name: Build
+        run: pnpm build
