@@ -5,7 +5,7 @@ import mysql, { type RowDataPacket } from "mysql2/promise";
 
 type JournalEntry = { idx: number; tag: string };
 type MigrationJournal = { entries: JournalEntry[] };
-const DEFAULT_BASELINE_INDEX = 14;
+const DEFAULT_BASELINE_INDEX = 0;
 
 function splitStatements(sqlText: string): string[] {
   const withoutLineComments = sqlText
@@ -17,6 +17,43 @@ function splitStatements(sqlText: string): string[] {
     .flatMap(chunk => chunk.split(";"))
     .map(statement => statement.trim())
     .filter(statement => statement.length > 0);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeMysqlStatement(statement: string): string {
+  let normalized = statement.replace(/DEFAULT\s+'CURRENT_TIMESTAMP'/gi, "DEFAULT CURRENT_TIMESTAMP");
+
+  if (!/^CREATE\s+TABLE\b/i.test(normalized) || !/\bAUTO_INCREMENT\b/i.test(normalized)) {
+    return normalized;
+  }
+
+  const autoColumnMatch = normalized.match(/^\s*`([^`]+)`\s+[^,\n]*\bAUTO_INCREMENT\b[^,\n]*/im);
+  if (!autoColumnMatch) return normalized;
+
+  const columnName = autoColumnMatch[1];
+  const columnDefinition = autoColumnMatch[0];
+  if (/\bPRIMARY\s+KEY\b/i.test(columnDefinition) || /\bUNIQUE\b/i.test(columnDefinition)) {
+    return normalized;
+  }
+
+  const escapedColumn = escapeRegExp(columnName);
+  const indexedColumnPattern = new RegExp(
+    `(?:PRIMARY\\s+KEY|UNIQUE(?:\\s+(?:KEY|INDEX))?|KEY|INDEX)(?:\\s+\\`[^\\`]+\\`)?\\s*\\(\\s*\\`${escapedColumn}\\``,
+    "i",
+  );
+
+  if (indexedColumnPattern.test(normalized)) {
+    return normalized;
+  }
+
+  const replacement = /\bPRIMARY\s+KEY\b/i.test(normalized)
+    ? `${columnDefinition} UNIQUE`
+    : `${columnDefinition} PRIMARY KEY`;
+
+  return normalized.replace(columnDefinition, replacement);
 }
 
 export async function runStartupMigrations(): Promise<void> {
@@ -41,7 +78,9 @@ export async function runStartupMigrations(): Promise<void> {
     for (const entry of entries) {
       if (applied.has(entry.tag)) continue;
       const sqlText = await readFile(resolve(process.cwd(), `drizzle/${entry.tag}.sql`), "utf8");
-      for (const statement of splitStatements(sqlText)) await connection.query(statement);
+      for (const statement of splitStatements(sqlText)) {
+        await connection.query(normalizeMysqlStatement(statement));
+      }
       await connection.execute("INSERT INTO podcrm_migrations (tag) VALUES (?)", [entry.tag]);
       console.log(`[Database] Applied migration ${entry.tag}`);
     }
