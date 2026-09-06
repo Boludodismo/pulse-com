@@ -4,9 +4,22 @@ const detectedAppBaseUrl =
   process.env.PUBLIC_URL?.trim() ||
   (railwayPublicDomain ? `https://${railwayPublicDomain}` : "");
 
-const detectedStorageProvider =
-  process.env.STORAGE_PROVIDER?.trim() ||
-  (process.env.BUILT_IN_FORGE_API_KEY ? "manus" : "disabled");
+const detectedS3Endpoint = process.env.AWS_ENDPOINT_URL ?? process.env.ENDPOINT ?? "";
+const detectedS3AccessKeyId = process.env.AWS_ACCESS_KEY_ID ?? process.env.ACCESS_KEY_ID ?? "";
+const detectedS3SecretAccessKey = process.env.AWS_SECRET_ACCESS_KEY ?? process.env.SECRET_ACCESS_KEY ?? "";
+const detectedS3Bucket = process.env.AWS_S3_BUCKET_NAME ?? process.env.BUCKET ?? "";
+const hasCompleteS3Config = Boolean(
+  detectedS3Endpoint &&
+  detectedS3AccessKeyId &&
+  detectedS3SecretAccessKey &&
+  detectedS3Bucket
+);
+
+const requestedStorageProvider = process.env.STORAGE_PROVIDER?.trim().toLowerCase();
+const detectedStorageProvider = hasCompleteS3Config
+  ? "s3"
+  : requestedStorageProvider ||
+    (process.env.BUILT_IN_FORGE_API_KEY ? "manus" : "disabled");
 
 export const ENV = {
   appId: process.env.VITE_APP_ID ?? "",
@@ -26,13 +39,13 @@ export const ENV = {
   localAdminName: process.env.LOCAL_ADMIN_NAME ?? "Admin",
   localStudioName: process.env.LOCAL_STUDIO_NAME ?? "Meu Estúdio",
   schedulerMode: (process.env.SCHEDULER_MODE ?? (process.env.AUTH_MODE === "local" ? "local" : "heartbeat")).toLowerCase(),
-  // Storage provider: "manus", "s3" or "disabled"
+  // Storage provider: "manus", "s3" or "disabled". If complete S3 credentials exist, prefer S3.
   storageProvider: detectedStorageProvider,
   // S3-compatible storage (Railway Buckets, R2, AWS S3, etc.)
-  s3Endpoint: process.env.AWS_ENDPOINT_URL ?? process.env.ENDPOINT ?? "",
-  s3AccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? process.env.ACCESS_KEY_ID ?? "",
-  s3SecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? process.env.SECRET_ACCESS_KEY ?? "",
-  s3Bucket: process.env.AWS_S3_BUCKET_NAME ?? process.env.BUCKET ?? "",
+  s3Endpoint: detectedS3Endpoint,
+  s3AccessKeyId: detectedS3AccessKeyId,
+  s3SecretAccessKey: detectedS3SecretAccessKey,
+  s3Bucket: detectedS3Bucket,
   s3Region: process.env.AWS_DEFAULT_REGION ?? process.env.AWS_REGION ?? process.env.REGION ?? "auto",
   s3UrlStyle: (process.env.AWS_S3_URL_STYLE ?? "virtual").toLowerCase(),
 };
