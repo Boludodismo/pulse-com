@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Eye, EyeOff, Lock, Mail, CheckCircle } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, CheckCircle, Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 
 interface LocalLoginProps {
@@ -70,7 +70,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-background to-muted/30 p-4">
       <div className="w-full max-w-sm px-4">
         {/* Logo / título */}
         <div className="flex flex-col items-center gap-2 mb-8">
@@ -83,7 +83,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
           </p>
         </div>
 
-        <Card className="border border-border shadow-lg">
+        <Card className="border border-border shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2">
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">Entrar no sistema</CardTitle>
             <CardDescription>
@@ -93,7 +93,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
-                <Alert variant="destructive">
+                <Alert variant="destructive" role="alert" aria-live="assertive">
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
@@ -158,7 +158,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
               </div>
 
               <Button type="submit" className="w-full" disabled={loading || !email || !password}>
-                {loading ? "Entrando..." : "Entrar"}
+                {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Entrando...</> : "Entrar"}
               </Button>
             </form>
           </CardContent>

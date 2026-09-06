@@ -37,8 +37,9 @@ COPY vite.config.ts ./
 COPY vitest.config.ts ./
 COPY components.json ./
 COPY drizzle.config.ts ./
+COPY patches ./patches
 
-# Frontend authentication mode is embedded by Vite at build time.
+# Client-side auth mode must be available while Vite builds the bundle.
 ARG VITE_AUTH_MODE=local
 ENV VITE_AUTH_MODE=${VITE_AUTH_MODE}
 
@@ -62,7 +63,9 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
 
-# Copy migrations used by the production startup command
+# Copy server source (needed for runtime)
+COPY server ./server
+COPY shared ./shared
 COPY drizzle ./drizzle
 
 # Set environment
@@ -74,7 +77,7 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8080/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  CMD node -e "require('http').get('http://localhost:8080/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Apply pending migrations and start the server
-CMD ["pnpm", "start"]
+# Start server
+CMD ["node", "dist/index.js"]

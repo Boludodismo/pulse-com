@@ -10,7 +10,8 @@ import { Textarea } from "./ui/textarea";
 import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
 import { useSyncToast } from "../hooks/useSyncToast";
-import { Bell, Plus, Trash2, Send, Clock, CheckCircle, XCircle, MessageSquare, ExternalLink, Loader2, Share2, Copy, CheckCheck, CalendarPlus, Download, TriangleAlert } from "lucide-react";
+import { shouldShowClientLoadError } from "../lib/appointmentClients";
+import { Bell, Plus, Trash2, Send, Clock, CheckCircle, XCircle, MessageSquare, ExternalLink, Loader2, Share2, Copy, CheckCheck, CalendarPlus, Download } from "lucide-react";
 import { buildWhatsAppLink } from "../../../shared/const";
 
 interface EventModalProps {
@@ -35,6 +36,17 @@ export function EventModal({
   onSuccess,
 }: EventModalProps) {
   const { notifySync } = useSyncToast();
+  const { data: currentUser } = trpc.auth.me.useQuery();
+  const requiresStudioSelection = currentUser?.role === "superadmin" && !currentUser.studioId;
+  const [selectedStudioId, setSelectedStudioId] = useState<string>("");
+  const utils = trpc.useUtils();
+  const persistActiveStudio = trpc.auth.setActiveStudio.useMutation({
+    onSuccess: () => void utils.auth.me.invalidate(),
+    onError: (error) => toast.error(`Não foi possível salvar a empresa ativa: ${error.message}`),
+  });
+  const { data: availableStudios = [] } = trpc.saas.studios.useQuery(undefined, {
+    enabled: requiresStudioSelection,
+  });
   const [clientId, setClientId] = useState<string>("");
   const [calendarId, setCalendarId] = useState<string>("");
   const [date, setDate] = useState<string>("");
@@ -43,6 +55,7 @@ export function EventModal({
   const [sessionDuration, setSessionDuration] = useState<number>(60); // minutos
   const [service, setService] = useState<string>("");
   const [artist, setArtist] = useState<string>("");
+  const [artistId, setArtistId] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -66,7 +79,7 @@ export function EventModal({
   const [procedureTypeOther, setProcedureTypeOther] = useState<string>("");
 
   // Estado da aba de lembretes
-  const [activeTab, setActiveTab] = useState<"info" | "reminders" | "export">("info");
+  const [activeTab, setActiveTab] = useState<"info" | "pod" | "reminders" | "export">("info");
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [newReminderDate, setNewReminderDate] = useState<string>("");
   const [newReminderTime, setNewReminderTime] = useState<string>("09:00");
@@ -77,9 +90,23 @@ export function EventModal({
   const [editMessage, setEditMessage] = useState<string>("");
   // Bug 1: lembretes pendentes para salvar após criar o agendamento
   const [pendingReminders, setPendingReminders] = useState<Array<{date: string; time: string; message: string}>>([]);
+  const [automaticReminderTiming, setAutomaticReminderTiming] = useState<"day_before" | "same_day" | "none">("day_before");
+  const [automaticReminderTime, setAutomaticReminderTime] = useState<string>("09:00");
+  const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(true);
+  const [plannedTenantMaterialId, setPlannedTenantMaterialId] = useState<string | undefined>();
+  const [plannedQuantity, setPlannedQuantity] = useState("1");
+  const [pendingPlannedMaterials, setPendingPlannedMaterials] = useState<Array<{ tenantMaterialId: number; name: string; unit: string; quantity: string }>>([]);
 
-  // Buscar dados
-  const { data: clientsData, isLoading: clientsLoading, error: clientsError } = trpc.clients.list.useQuery();
+  const clientListInput = useMemo(
+    () => requiresStudioSelection && selectedStudioId ? { studioId: Number(selectedStudioId) } : undefined,
+    [requiresStudioSelection, selectedStudioId],
+  );
+  const canLoadClients = !requiresStudioSelection || Boolean(selectedStudioId);
+  // Buscar dados apenas dentro do escopo de empresa explicitamente definido.
+  const { data: clientsData, isLoading: clientsLoading, error: clientsError, refetch: refetchClients } = trpc.clients.list.useQuery(
+    clientListInput,
+    { enabled: isOpen && canLoadClients },
+  );
   const clients = Array.isArray(clientsData)
     ? clientsData
     : Array.isArray((clientsData as any)?.clients)
@@ -130,9 +157,11 @@ export function EventModal({
     { appointmentId: eventId! },
     { enabled: !!eventId && isOpen }
   );
-
-  // Utils para invalidar cache
-  const utils = trpc.useUtils();
+  const { data: tenantMaterials = [] } = trpc.pod.inventory.list.useQuery(undefined, { enabled: isOpen });
+  const { data: existingPlannedMaterials = [], refetch: refetchPlannedMaterials } = trpc.pod.planning.listByAppointment.useQuery(
+    { appointmentId: eventId ?? 0 },
+    { enabled: Boolean(eventId) && isOpen },
+  );
 
   // Mutations de lembretes
   const createReminderMutation = trpc.appointments.reminders.create.useMutation({
@@ -161,6 +190,24 @@ export function EventModal({
       refetchReminders();
     },
     onError: (e) => toast.error(`Erro: ${e.message}`),
+  });
+
+  const addPlannedMaterialMutation = trpc.pod.planning.add.useMutation({
+    onSuccess: () => {
+      setPlannedTenantMaterialId(undefined);
+      setPlannedQuantity("1");
+      void refetchPlannedMaterials();
+      toast.success("Material previsto salvo. Nenhum saldo foi baixado.");
+    },
+    onError: (error) => toast.error(`Não foi possível salvar o material previsto: ${error.message}`),
+  });
+
+  const markPlannedMaterialUnusedMutation = trpc.pod.planning.markUnused.useMutation({
+    onSuccess: () => {
+      void refetchPlannedMaterials();
+      toast.success("Material marcado como não utilizado. Nenhum saldo foi alterado.");
+    },
+    onError: (error) => toast.error(`Não foi possível atualizar o material previsto: ${error.message}`),
   });
 
   // Atalho de teclado para deletar (Bug 7: ignorar quando foco em input/textarea)
@@ -204,8 +251,9 @@ export function EventModal({
 
   // Mutation de cadastro rápido de cliente
   const createClientMutation = trpc.clients.create.useMutation({
-    onSuccess: (newClient: any) => {
-      utils.clients.list.invalidate();
+    onSuccess: async (newClient: any) => {
+      await utils.clients.list.invalidate();
+      await refetchClients();
       if (newClient?.id) {
         setClientId(String(newClient.id));
       }
@@ -225,10 +273,15 @@ export function EventModal({
       toast.error("Nome do cliente é obrigatório");
       return;
     }
+    if (requiresStudioSelection && !selectedStudioId) {
+      toast.error("Selecione a empresa antes de cadastrar o cliente.");
+      return;
+    }
     createClientMutation.mutate({
       name: quickClientName.trim(),
       phone: quickClientPhone.trim() || undefined,
       email: quickClientEmail.trim() || undefined,
+      studioId: requiresStudioSelection ? Number(selectedStudioId) : undefined,
     });
   };
 
@@ -249,7 +302,28 @@ export function EventModal({
           }
         }
       }
-      toast.success("Evento criado com sucesso!");
+      if (pendingPlannedMaterials.length > 0 && result?.id) {
+        const planningResults = await Promise.allSettled(pendingPlannedMaterials.map((material) => addPlannedMaterialMutation.mutateAsync({
+          appointmentId: result.id,
+          tenantMaterialId: material.tenantMaterialId,
+          quantityPlanned: material.quantity,
+        })));
+        const failures = planningResults.filter((result) => result.status === "rejected").length;
+        if (failures === 0) {
+          setPendingPlannedMaterials([]);
+          toast.success("Materiais previstos salvos sem movimentar o estoque.");
+        } else {
+          toast.warning(`${failures} material(is) previsto(s) não foram salvos. O agendamento foi criado sem baixa de estoque.`);
+        }
+      }
+      if (result?.automaticReminder?.scheduled) {
+        const scheduledAt = result.automaticReminder.scheduledAt?.slice(0, 16).replace(" ", " às ");
+        toast.success(`Agendamento criado e lembrete automático programado para ${scheduledAt}.`);
+      } else if (result?.automaticReminder?.reason === "client_without_phone") {
+        toast.warning("Agendamento criado, mas o lembrete automático não foi programado porque o cliente não possui telefone.");
+      } else {
+        toast.success("Evento criado com sucesso!");
+      }
       notifySync("agendamento");
       // Invalidar cache para sincronização imediata
       utils.appointments.list.invalidate();
@@ -277,60 +351,6 @@ export function EventModal({
     },
   });
 
-  const resolveAttentionMutation = trpc.appointments.resolveConfirmationAttention.useMutation({
-    onSuccess: (_result, variables) => {
-      if (variables.decision === 'resolved') toast.success("Alerta do agendamento atualizado!");
-      utils.appointments.list.invalidate();
-      onSuccess?.();
-    },
-    onError: (error) => toast.error(`Erro ao atualizar alerta: ${error.message}`),
-  });
-
-  const handleAttentionDecision = async (decision: 'accept_delay' | 'reschedule') => {
-    if (!eventId || !existingEvent) return;
-
-    const client = clients.find((c: any) => c.id === existingEvent.clientId);
-    const whatsappWindow = client?.phone ? window.open('', '_blank') : null;
-
-    try {
-      await resolveAttentionMutation.mutateAsync({ id: eventId, decision });
-
-      if (!client?.phone) {
-        whatsappWindow?.close();
-        toast.warning('Decisão salva, mas o cliente não possui telefone cadastrado.');
-        return;
-      }
-
-      const firstName = String(client.name || 'Cliente').trim().split(/\s+/)[0];
-      const [datePart, timePart = '00:00:00'] = existingEvent.date.split(' ');
-      const appointmentDate = new Date(`${datePart}T12:00:00`);
-      const formattedDate = appointmentDate.toLocaleDateString('pt-BR', {
-        weekday: 'long', day: '2-digit', month: 'long',
-      });
-      const originalTime = timePart.slice(0, 5);
-      const delayMinutes = Number((existingEvent as any).confirmationDelayMinutes || 0);
-      const [hour, minute] = originalTime.split(':').map(Number);
-      const adjustedTotal = hour * 60 + minute + delayMinutes;
-      const adjustedTime = `${String(Math.floor(adjustedTotal / 60) % 24).padStart(2, '0')}:${String(adjustedTotal % 60).padStart(2, '0')}`;
-
-      const message = decision === 'accept_delay'
-        ? `Olá, ${firstName}! Tudo bem? 👋\n\nRecebemos seu aviso de que terá um atraso de aproximadamente ${delayMinutes} minutos.\n\nConseguimos manter seu atendimento de ${formattedDate}, com ${existingEvent.artist}. Considerando o tempo informado, esperamos você por volta das ${adjustedTime}.\n\nSe houver qualquer outra mudança, por favor, avise-nos por aqui. Até breve!`
-        : (existingEvent as any).confirmationStatus === 'atraso'
-          ? `Olá, ${firstName}! Tudo bem? 👋\n\nRecebemos seu aviso de atraso de aproximadamente ${delayMinutes} minutos. Para preservar a qualidade do seu atendimento e não comprometer os horários seguintes, precisaremos reagendar seu atendimento de ${formattedDate}, às ${originalTime}.\n\nPor favor, responda esta mensagem para combinarmos uma nova data e horário. Agradecemos a compreensão!`
-          : `Olá, ${firstName}! Tudo bem? 👋\n\nRecebemos sua solicitação de reagendamento do atendimento marcado para ${formattedDate}, às ${originalTime}, com ${existingEvent.artist}.\n\nPor favor, responda esta mensagem para combinarmos uma nova data e horário que seja adequada para você. Agradecemos por nos avisar!`;
-
-      const link = buildWhatsAppLink(client.phone, message);
-      if (whatsappWindow) {
-        whatsappWindow.location.href = link;
-      } else {
-        window.open(link, '_blank');
-      }
-      toast.success('Decisão salva e mensagem do WhatsApp preparada!');
-    } catch {
-      whatsappWindow?.close();
-    }
-  };
-
   // Preencher formulário ao editar
   useEffect(() => {
     if (existingEvent) {
@@ -353,6 +373,8 @@ export function EventModal({
       
       setService(existingEvent.service);
       setArtist(existingEvent.artist);
+      const resolvedArtistId = (existingEvent as any).artistId ?? artists.find((item) => item.name === existingEvent.artist)?.id;
+      setArtistId(resolvedArtistId ? String(resolvedArtistId) : "");
       setNotes(existingEvent.notes || "");
       setImagePreview(existingEvent.referenceImageUrl || null);
       // Propriedades financeiras (Bug 6: banco armazena em centavos → dividir por 100 ao exibir)
@@ -375,9 +397,10 @@ export function EventModal({
         setClientId(initialClientId.toString());
       }
     }
-  }, [existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId]);
+  }, [existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, artists]);
 
   const resetForm = () => {
+    setSelectedStudioId("");
     setClientId("");
     setCalendarId("");
     setDate("");
@@ -385,6 +408,7 @@ export function EventModal({
     setEndTime("");
     setService("");
     setArtist("");
+    setArtistId("");
     setNotes("");
     setImageFile(null);
     setImagePreview(null);
@@ -405,6 +429,12 @@ export function EventModal({
     setEditingReminderId(null);
     setWhatsAppLink(null);
     setPendingReminders([]);
+    setAutomaticReminderTiming("day_before");
+    setAutomaticReminderTime("09:00");
+    setRecordWhatsAppConsent(true);
+    setPlannedTenantMaterialId(undefined);
+    setPlannedQuantity("1");
+    setPendingPlannedMaterials([]);
   };
 
   // Gerar e abrir link WhatsApp imediato
@@ -427,8 +457,11 @@ export function EventModal({
         `Lembramos que você tem um agendamento:\n` +
         `📅 ${dateStr} às ${startTime}\n` +
         `✏️ ${service} com ${artist}\n\n` +
-        `Responda sobre seu horário de forma rápida:\n${confirmUrl}\n\n` +
-        `Opções disponíveis: confirmar, avisar atraso, informar que não poderá comparecer ou solicitar reagendamento.`;
+        `Por favor, confirme sua presença:\n` +
+        `✅ Confirmado: ${confirmUrl}&status=confirmado\n` +
+        `❌ Não confirmado: ${confirmUrl}&status=nao_confirmado\n` +
+        `⏰ Atraso: ${confirmUrl}&status=atraso\n` +
+        `🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada`;
       const link = buildWhatsAppLink(client.phone, msg);
       setWhatsAppLink(link);
       window.open(link, "_blank");
@@ -571,10 +604,12 @@ export function EventModal({
 
     const eventData: any = {
       clientId: parseInt(clientId),
+      studioId: requiresStudioSelection ? Number(selectedStudioId) : undefined,
       calendarId: calendarId ? parseInt(calendarId) : undefined,
       date: eventDateTime,  // String local: YYYY-MM-DD HH:mm:ss
       service,
       artist,
+      artistId: artistId ? Number(artistId) : undefined,
       duration,
       notes: notes || undefined,
       status: "agendado" as const,
@@ -588,6 +623,10 @@ export function EventModal({
       paymentMethod: paymentMethod || undefined,
       procedureType: procedureType || undefined,
       procedureTypeOther: procedureType === "outro" ? procedureTypeOther || undefined : undefined,
+      recordWhatsAppConsent,
+      ...(automaticReminderTiming !== "none" ? {
+        autoReminder: { timing: automaticReminderTiming, sendTime: automaticReminderTime },
+      } : {}),
     };
     
     if (imageUrl && imageKey) {
@@ -601,6 +640,7 @@ export function EventModal({
         date: eventDateTime,  // String local: YYYY-MM-DD HH:mm:ss
         service,
         artist,
+        artistId: artistId ? Number(artistId) : undefined,
         duration,
         notes: notes || undefined,
         depositPaid,
@@ -613,6 +653,7 @@ export function EventModal({
         paymentMethod: paymentMethod || undefined,
         procedureType: procedureType || undefined,
         procedureTypeOther: procedureType === "outro" ? procedureTypeOther || undefined : undefined,
+        recordWhatsAppConsent,
       };
       
       // Adicionar calendarId se foi definido
@@ -655,9 +696,10 @@ export function EventModal({
           </DialogTitle>
         </DialogHeader>
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "info" | "reminders" | "export")} className="flex-1 flex flex-col min-h-0">
-          <TabsList className="grid w-full grid-cols-3 gap-0">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "info" | "pod" | "reminders" | "export")} className="flex-1 flex flex-col min-h-0">
+          <TabsList className="grid w-full grid-cols-4 gap-0">
             <TabsTrigger value="info" className="text-xs sm:text-sm">Informações</TabsTrigger>
+            <TabsTrigger value="pod" className="text-xs sm:text-sm">POD</TabsTrigger>
             <TabsTrigger value="reminders" className="text-xs sm:text-sm flex items-center justify-center gap-1">
               <Bell className="h-3 w-3 flex-shrink-0" />
               <span className="hidden sm:inline">Lembretes</span>
@@ -676,6 +718,26 @@ export function EventModal({
         <div className="space-y-4 pr-2">
           {/* Cliente */}
           <div>
+            {requiresStudioSelection && (
+              <div className="mb-3 space-y-1.5">
+                <Label htmlFor="appointment-studio">Empresa *</Label>
+                <Select
+                  value={selectedStudioId}
+                  onValueChange={(value) => {
+                    setSelectedStudioId(value);
+                    setClientId("");
+                    setClientSearch("");
+                    persistActiveStudio.mutate({ studioId: Number(value) });
+                  }}
+                >
+                  <SelectTrigger id="appointment-studio"><SelectValue placeholder="Selecione a empresa" /></SelectTrigger>
+                  <SelectContent>
+                    {availableStudios.map((studio: any) => <SelectItem key={studio.id} value={String(studio.id)}>{studio.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">A lista e o novo cadastro ficam restritos à empresa selecionada.</p>
+              </div>
+            )}
             <div className="flex items-center justify-between mb-1">
               <Label htmlFor="client">Cliente *</Label>
               <Button
@@ -756,17 +818,24 @@ export function EventModal({
                 {/* Campo de busca */}
                 <div className="p-2 pb-1">
                   <Input
-                    placeholder="Buscar cliente por nome..."
+                    placeholder="Buscar por nome ou telefone..."
                     value={clientSearch}
                     onChange={(e) => setClientSearch(e.target.value)}
                     onKeyDown={(e) => e.stopPropagation()}
                     className="h-8 text-sm"
                   />
                 </div>
-                {clientsLoading ? (
+                {requiresStudioSelection && !selectedStudioId ? (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">Selecione a empresa para carregar os clientes.</div>
+                ) : clientsLoading ? (
                   <div className="px-3 py-2 text-sm text-muted-foreground">Carregando clientes...</div>
-                ) : clientsError ? (
-                  <div className="px-3 py-2 text-sm text-red-500">Erro ao carregar clientes</div>
+                ) : shouldShowClientLoadError(Boolean(clientsError), clients.length) ? (
+                  <div className="px-3 py-2 text-sm text-red-500 space-y-1">
+                    <p>Erro ao carregar clientes</p>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 px-0 text-xs text-primary" onClick={() => void refetchClients()}>
+                      Tentar novamente
+                    </Button>
+                  </div>
                 ) : filteredClients.length === 0 ? (
                   <div className="px-3 py-2 text-sm text-muted-foreground">Nenhum cliente encontrado</div>
                 ) : (
@@ -957,39 +1026,81 @@ export function EventModal({
           <div>
             <Label htmlFor="artist">Artista *</Label>
             {artists.length > 0 ? (
-              <Select value={artist} onValueChange={setArtist}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o artista" />
-                </SelectTrigger>
-                <SelectContent>
-                  {artists
-                    .filter((a) => a.active === 1)
-                    .map((a) => (
-                      <SelectItem key={a.id} value={a.name}>
-                        <div className="flex items-center gap-2">
-                          <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
-                            {a.name.charAt(0).toUpperCase()}
+              <>
+                <Select value={artistId} onValueChange={(value) => {
+                  const selected = artists.find((item) => String(item.id) === value);
+                  setArtistId(value);
+                  setArtist(selected?.name ?? "");
+                }}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o artista" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {artists
+                      .filter((a) => a.active === 1)
+                      .map((a) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          <div className="flex items-center gap-2">
+                            <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
+                              {a.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <span>{a.name}</span>
+                              {a.specialty && (
+                                <span className="ml-1 text-xs text-muted-foreground">({a.specialty})</span>
+                              )}
+                            </div>
                           </div>
-                          <div>
-                            <span>{a.name}</span>
-                            {a.specialty && (
-                              <span className="ml-1 text-xs text-muted-foreground">({a.specialty})</span>
-                            )}
-                          </div>
-                        </div>
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">O artista atribuído recebe o aviso automático uma hora antes, quando tiver telefone cadastrado.</p>
+              </>
             ) : (
               <Input
                 id="artist"
                 value={artist}
-                onChange={(e) => setArtist(e.target.value)}
+                onChange={(e) => { setArtist(e.target.value); setArtistId(""); }}
                 placeholder="Nome do artista"
               />
             )}
           </div>
+
+          {!eventId && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3">
+              <div className="flex items-start gap-2">
+                <Bell className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold">Lembrete automático via WhatsApp</p>
+                  <p className="text-xs text-muted-foreground">A confirmação será programada para o cliente selecionado e enviada pelo BotConversa no horário escolhido.</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Quando enviar</Label>
+                  <Select value={automaticReminderTiming} onValueChange={(value) => setAutomaticReminderTiming(value as "day_before" | "same_day" | "none")}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="day_before">Um dia antes</SelectItem>
+                      <SelectItem value="same_day">No mesmo dia</SelectItem>
+                      <SelectItem value="none">Não programar agora</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {automaticReminderTiming !== "none" && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="automatic-reminder-time" className="text-xs">Horário do envio</Label>
+                    <Input id="automatic-reminder-time" type="time" step="60" value={automaticReminderTime} onChange={(event) => setAutomaticReminderTime(event.target.value)} />
+                  </div>
+                )}
+              </div>
+              <label className={`flex items-start gap-2 text-xs text-muted-foreground ${clientId ? "cursor-pointer" : "opacity-60"}`}>
+                <input type="checkbox" checked={recordWhatsAppConsent} disabled={!clientId} onChange={(event) => setRecordWhatsAppConsent(event.target.checked)} className="mt-0.5 rounded" />
+                <span>Autorização do cliente para WhatsApp: ao marcar, registro o opt-in deste cliente neste estúdio para lembretes e confirmações. {clientId ? "" : "Selecione o cliente para autorizar."}</span>
+              </label>
+            </div>
+          )}
 
           {/* Observações */}
           <div>
@@ -1153,37 +1264,14 @@ export function EventModal({
 
           {/* Resposta de Confirmação do Cliente */}
           {eventId && existingEvent && (existingEvent as any).confirmationStatus && (existingEvent as any).confirmationStatus !== 'pendente' && (
-            <div className={`rounded-lg border p-3 space-y-3 ${(existingEvent as any).confirmationAttention === 'pending' ? 'border-amber-500 bg-amber-500/10' : 'bg-muted/30'}`}>
+            <div className="rounded-lg border p-3 bg-muted/30">
               <p className="text-xs text-muted-foreground mb-1">Resposta do cliente</p>
               <div className="flex items-center gap-2">
-                {(existingEvent as any).confirmationAttention === 'pending' && <TriangleAlert className="h-5 w-5 text-amber-500 shrink-0" />}
                 {(existingEvent as any).confirmationStatus === 'confirmado' && <span className="text-green-600 font-semibold">✅ Confirmado</span>}
                 {(existingEvent as any).confirmationStatus === 'nao_confirmado' && <span className="text-red-600 font-semibold">❌ Não confirmado</span>}
-                {(existingEvent as any).confirmationStatus === 'atraso' && <span className="text-yellow-600 font-semibold">⏰ Atraso de aproximadamente {(existingEvent as any).confirmationDelayMinutes || '?'} minutos</span>}
+                {(existingEvent as any).confirmationStatus === 'atraso' && <span className="text-yellow-600 font-semibold">⏰ Atraso</span>}
                 {(existingEvent as any).confirmationStatus === 'chegada_antecipada' && <span className="text-blue-600 font-semibold">🏃 Chegada antecipada</span>}
-                {(existingEvent as any).confirmationStatus === 'reagendar' && <span className="text-blue-600 font-semibold">🔄 Solicitou reagendamento</span>}
               </div>
-              {(existingEvent as any).confirmationAttention === 'pending' && (
-                <div className="space-y-2">
-                  <p className="text-xs text-amber-700 dark:text-amber-300">Este agendamento precisa da atenção do artista.</p>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    {(existingEvent as any).confirmationStatus === 'atraso' && (
-                      <Button type="button" size="sm" variant="outline" disabled={resolveAttentionMutation.isPending}
-                        onClick={() => handleAttentionDecision('accept_delay')}>
-                        <CheckCircle className="h-4 w-4 mr-1" /> Ainda consigo atender
-                      </Button>
-                    )}
-                    <Button type="button" size="sm" variant="outline" disabled={resolveAttentionMutation.isPending}
-                      onClick={() => handleAttentionDecision('reschedule')}>
-                      <CalendarPlus className="h-4 w-4 mr-1" /> Marcar para reagendamento
-                    </Button>
-                    <Button type="button" size="sm" variant="ghost" disabled={resolveAttentionMutation.isPending}
-                      onClick={() => resolveAttentionMutation.mutate({ id: eventId!, decision: 'resolved' })}>
-                      Alerta revisado
-                    </Button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -1302,6 +1390,82 @@ export function EventModal({
         </div>
           </TabsContent>  {/* fim TabsContent info */}
 
+          {/* ABA: POD / MATERIAIS PREVISTOS */}
+          <TabsContent value="pod" className="flex-1 overflow-y-auto">
+            <div className="space-y-4 py-2 pr-2">
+              <div className="rounded-lg border border-primary/25 bg-primary/[0.04] p-3">
+                <p className="text-sm font-semibold text-primary">Preparação da sessão POD</p>
+                <p className="mt-1 text-xs text-muted-foreground">Planeje os materiais desta agenda. A seleção não reduz saldo; a baixa só acontece quando o consumo for confirmado na sessão POD.</p>
+              </div>
+
+              {tenantMaterials.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  Ainda não há materiais cadastrados no estoque isolado desta empresa. Os materiais legados não são associados automaticamente.
+                </div>
+              ) : (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <Label className="text-sm">Adicionar material previsto</Label>
+                  <div className="grid grid-cols-[minmax(0,1fr)_82px] gap-2">
+                    <Select value={plannedTenantMaterialId} onValueChange={setPlannedTenantMaterialId}>
+                      <SelectTrigger className="min-w-0"><SelectValue placeholder="Selecionar material" /></SelectTrigger>
+                      <SelectContent>
+                        {tenantMaterials.map((material) => (
+                          <SelectItem key={material.id} value={String(material.id)}>{material.name} · saldo {material.currentQuantity} {material.unit}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input inputMode="decimal" value={plannedQuantity} onChange={(event) => setPlannedQuantity(event.target.value.replace(",", "."))} aria-label="Quantidade prevista" />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="w-full"
+                    disabled={!plannedTenantMaterialId || addPlannedMaterialMutation.isPending}
+                    onClick={() => {
+                      const material = tenantMaterials.find((item) => item.id === Number(plannedTenantMaterialId));
+                      if (!material) return;
+                      if (eventId) {
+                        addPlannedMaterialMutation.mutate({ appointmentId: eventId, tenantMaterialId: material.id, quantityPlanned: plannedQuantity });
+                      } else {
+                        setPendingPlannedMaterials((current) => [...current, { tenantMaterialId: material.id, name: material.name, unit: material.unit, quantity: plannedQuantity }]);
+                        setPlannedTenantMaterialId(undefined);
+                        setPlannedQuantity("1");
+                      }
+                    }}
+                  >
+                    <Plus className="mr-1.5 h-4 w-4" />Adicionar à preparação
+                  </Button>
+                </div>
+              )}
+
+              {eventId && existingPlannedMaterials.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Materiais planejados</p>
+                  {existingPlannedMaterials.map((material) => (
+                    <div key={material.id} className="flex items-center gap-2 rounded-lg border bg-muted/20 p-2.5 text-sm">
+                      <div className="min-w-0 flex-1"><p className="truncate font-medium">{material.nameSnapshot}</p><p className="text-xs text-muted-foreground">{material.quantityPlanned} {material.unitSnapshot} · {material.status}</p></div>
+                      {material.status === "planejado" && (
+                        <Button type="button" size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground" disabled={markPlannedMaterialUnusedMutation.isPending} onClick={() => markPlannedMaterialUnusedMutation.mutate({ plannedMaterialId: material.id })}>Não usar</Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!eventId && pendingPlannedMaterials.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Materiais que serão salvos ao criar ({pendingPlannedMaterials.length})</p>
+                  {pendingPlannedMaterials.map((material, index) => (
+                    <div key={`${material.tenantMaterialId}-${index}`} className="flex items-center gap-2 rounded-lg border bg-muted/20 p-2.5 text-sm">
+                      <span className="min-w-0 flex-1 truncate">{material.name} · {material.quantity} {material.unit}</span>
+                      <Button type="button" size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setPendingPlannedMaterials((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remover ${material.name}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
           {/* ABA: LEMBRETES */}
           <TabsContent value="reminders" className="flex-1 overflow-y-auto">
             <div className="space-y-4 pr-2 py-2">
@@ -1325,8 +1489,9 @@ export function EventModal({
                     <Label className="text-xs">Horário do envio</Label>
                     <Input
                       type="time"
+                      step="60"
                       value={newReminderTime}
-                      onChange={(e) => setNewReminderTime(e.target.value)}
+                      onChange={(event) => setNewReminderTime(event.target.value)}
                       className="h-8 text-sm"
                     />
                   </div>
@@ -1430,7 +1595,13 @@ export function EventModal({
                             </div>
                             <div>
                               <Label className="text-xs">Horário</Label>
-                              <Input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} className="h-7 text-xs" />
+                              <Input
+                                type="time"
+                                step="60"
+                                value={editTime}
+                                onChange={(event) => setEditTime(event.target.value)}
+                                className="h-7 text-xs"
+                              />
                             </div>
                           </div>
                           <Textarea value={editMessage} onChange={(e) => setEditMessage(e.target.value)} rows={3} className="text-xs" />
@@ -1511,6 +1682,56 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
     { id: eventId },
     { enabled: !!eventId }
   );
+  const [isOpeningAppleCalendar, setIsOpeningAppleCalendar] = useState(false);
+
+  const openAppleCalendar = async () => {
+    if (!links || isOpeningAppleCalendar) return;
+    setIsOpeningAppleCalendar(true);
+
+    try {
+      const response = await fetch(links.icsUrl, {
+        credentials: "same-origin",
+        headers: { Accept: "text/calendar" },
+      });
+      if (!response.ok) throw new Error("Não foi possível preparar o calendário.");
+
+      const calendarFile = new File(
+        [await response.blob()],
+        `agendamento-${eventId}.ics`,
+        { type: "text/calendar" }
+      );
+
+      const canShareCalendar = typeof navigator.share === "function"
+        && typeof navigator.canShare === "function"
+        && navigator.canShare({ files: [calendarFile] });
+
+      if (canShareCalendar) {
+        await navigator.share({
+          title: "Adicionar agendamento ao calendário",
+          text: "Adicionar este agendamento ao Calendário Apple/iCloud.",
+          files: [calendarFile],
+        });
+        toast.success("Escolha ‘Adicionar ao Calendário’ para salvar no iCloud.");
+        return;
+      }
+
+      const objectUrl = URL.createObjectURL(calendarFile);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = calendarFile.name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+      toast.info("Arquivo de calendário preparado para importação no Apple/iCloud.");
+    } catch (error) {
+      if ((error as DOMException)?.name !== "AbortError") {
+        toast.error(error instanceof Error ? error.message : "Não foi possível abrir o Calendário Apple/iCloud.");
+      }
+    } finally {
+      setIsOpeningAppleCalendar(false);
+    }
+  };
 
   const copyToClipboard = async (text: string, key: string) => {
     try {
@@ -1550,11 +1771,12 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
           Adicionar ao Calendário
         </p>
         <div className="grid grid-cols-1 gap-2">
-          {/* iCloud */}
-          <a
-            href={links.icsUrl}
-            download
-            className="flex items-center gap-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+          {/* Apple/iCloud */}
+          <button
+            type="button"
+            onClick={openAppleCalendar}
+            disabled={isOpeningAppleCalendar}
+            className="flex w-full items-center gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors disabled:cursor-wait disabled:opacity-70"
           >
             <div className="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0">
               <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
@@ -1562,11 +1784,13 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
               </svg>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium">iCloud Calendar</p>
-              <p className="text-xs text-muted-foreground">Baixar arquivo .ics para importar</p>
+              <p className="text-sm font-medium">Apple/iCloud Calendar</p>
+              <p className="text-xs text-muted-foreground">Abrir o compartilhamento para adicionar ao calendário</p>
             </div>
-            <Download className="h-4 w-4 text-muted-foreground shrink-0" />
-          </a>
+            {isOpeningAppleCalendar
+              ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+              : <Share2 className="h-4 w-4 shrink-0 text-muted-foreground" />}
+          </button>
 
           {/* Google Calendar */}
           <a

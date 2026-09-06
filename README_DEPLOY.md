@@ -1,3 +1,5 @@
+> **Deploy de teste GitHub + Railway:** use primeiro o guia [`DEPLOY_RAILWAY_GITHUB.md`](./DEPLOY_RAILWAY_GITHUB.md). Este documento abaixo permanece como referência para Google Cloud Run.
+
 # POD CRM - Guia de Deploy para Google Cloud Run
 
 Este guia descreve como fazer deploy do POD CRM no Google Cloud Run.

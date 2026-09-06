@@ -11,10 +11,9 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
   ChevronLeft, ChevronRight, Plus, Edit2, Trash2,
-  Calendar as CalendarIcon, Check, Clock, User, Phone, FileText, Pencil, ExternalLink, Stethoscope, Users, TriangleAlert,
+  Calendar as CalendarIcon, Check, Clock, User, FileText, Pencil, ExternalLink, Stethoscope, Users, AlertCircle, BellRing,
 } from "lucide-react";
 import { EventModal } from "@/components/EventModal";
-import { PostSaleFollowupsBar } from "@/components/PostSaleFollowupsBar";
 
 // Paleta de cores estilo Apple Calendar
 const COLOR_PALETTE = [
@@ -23,7 +22,7 @@ const COLOR_PALETTE = [
   "#FF2D55", "#A2845E", "#8E8E93", "#636366", "#1C1C1E",
 ];
 
-const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00 → 22:00
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour); // 00:00 → 23:00
 const SLOT_HEIGHT = 64; // px por hora
 const MINUTES_PER_SLOT = 60;
 
@@ -64,6 +63,12 @@ const STATUS_COLORS: Record<string, string> = {
   cancelado: "bg-red-500/20 text-red-300 border-red-500/30",
   reagendado: "bg-orange-500/20 text-orange-300 border-orange-500/30",
 };
+const ACTION_ALERT_LABELS: Record<string, string> = {
+  confirmed: "Cliente confirmou presença",
+  early: "Cliente informou adiantamento",
+  late: "Cliente avisou atraso",
+  reschedule_requested: "Cliente solicitou remarcação",
+};
 
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -72,7 +77,9 @@ export default function CalendarPage() {
   const [showAgenda, setShowAgenda] = useState(true); // controla visibilidade do calendário virtual "Agendamentos"
   // Filtro por artista: null = todos visíveis; Set de nomes = apenas esses
   const [hiddenArtists, setHiddenArtists] = useState<Set<string>>(new Set());
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth >= 1024
+  );
   const weekScrollRef = useRef<HTMLDivElement>(null);
   const [nowTop, setNowTop] = useState(0);
   const [, navigate] = useLocation();
@@ -97,16 +104,30 @@ export default function CalendarPage() {
   const [draggedApt, setDraggedApt] = useState<any>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ date: Date; hour: number; minute: number } | null>(null);
   const dragOffsetMinutes = useRef<number>(0);
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStart = useRef<{ x: number; y: number } | null>(null);
+  const longPressHandled = useRef(false);
 
   // Queries
   const { data: calendars = [], refetch: refetchCalendars } = trpc.calendars.list.useQuery();
   const { data: appointments = [], refetch: refetchAppointments } = trpc.appointments.list.useQuery();
   const { data: artistsList = [] } = trpc.artists.list.useQuery();
   const { data: podLinkedMap } = trpc.procedures.listLinkedAppointmentIds.useQuery(undefined, { staleTime: 60_000 });
+  const { data: actionAlerts = [], refetch: refetchActionAlerts } = trpc.appointments.listActionAlerts.useQuery({ limit: 5 });
+  const appointmentIds = useMemo(() => (appointments as any[]).map((appointment) => appointment.id).filter(Number.isInteger), [appointments]);
+  const reminderIndicatorInput = useMemo(() => ({ appointmentIds }), [appointmentIds]);
+  const { data: reminderIndicators = {} } = trpc.messaging.getReminderIndicators.useQuery(
+    reminderIndicatorInput,
+    { enabled: appointmentIds.length > 0, staleTime: 30_000 },
+  );
+  const utils = trpc.useUtils();
 
   const invalidateAll = useCallback(() => {
-    refetchAppointments();
-  }, [refetchAppointments]);
+    void utils.appointments.list.invalidate();
+    void utils.messaging.getReminderIndicators.invalidate();
+    void refetchAppointments();
+  }, [utils, refetchAppointments]);
 
   // Mutations
   const createCalendar = trpc.calendars.create.useMutation({
@@ -139,6 +160,10 @@ export default function CalendarPage() {
       setDraggedApt(null);
       setDragOverSlot(null);
     },
+  });
+  const markActionAlertViewed = trpc.appointments.markActionAlertViewed.useMutation({
+    onSuccess: () => refetchActionAlerts(),
+    onError: (error) => toast.error(error.message),
   });
 
   // Handlers de Drag & Drop
@@ -215,7 +240,7 @@ export default function CalendarPage() {
   // Semana atual
   const weekDays = useMemo(() => {
     const d = new Date(currentDate);
-    d.setDate(d.getDate() - d.getDay());
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     d.setHours(0, 0, 0, 0);
     return Array.from({ length: 7 }, (_, i) => {
       const day = new Date(d);
@@ -292,23 +317,109 @@ export default function CalendarPage() {
     });
   }, [appointments, visibleCalendars, showAgenda, hiddenArtists]);
 
-  // Cor do agendamento: cor do artista (personalizada ou automática) > calendário > status
+  // Cor do agendamento: calendário > status > artista. A situação operacional
+  // é exibida por um indicador secundário para preservar a leitura por calendário.
   const getAppointmentColor = (apt: any) => {
-    // Prioridade 1: cor personalizada do artista cadastrado
-    if (apt.artist && artistColorMap[apt.artist]) return artistColorMap[apt.artist];
-    // Prioridade 2: cor do calendário vinculado
+    const colors: Record<string, string> = {
+      confirmado: "#22C55E",
+      pendente: "#F59E0B",
+      agendado: "#F59E0B",
+      concluido: "#8E8E93",
+      cancelado: "#EF4444",
+      reagendado: "#F97316",
+      atraso: "#EAB308",
+      nao_confirmado: "#EF4444",
+    };
+    const statusKey = apt.status === "cancelado"
+      ? "cancelado"
+      : apt.confirmationStatus === "atraso"
+        ? "atraso"
+        : apt.confirmationStatus === "nao_confirmado"
+          ? "nao_confirmado"
+          : apt.confirmationStatus === "confirmado" || apt.status === "confirmado"
+            ? "confirmado"
+            : apt.status || "pendente";
     if (apt.calendarId) {
       const cal = (calendars as any[]).find((c) => c.id === apt.calendarId);
       if (cal) return cal.color;
     }
-    // Prioridade 3: cor por artista (paleta automática) se o nome estiver nos agendamentos
+    if (colors[statusKey]) return colors[statusKey];
     if (apt.artist) return getArtistColor(apt.artist);
-    // Fallback: cor por status
-    const colors: Record<string, string> = {
-      agendado: "#007AFF", confirmado: "#34C759", concluido: "#8E8E93",
-      cancelado: "#FF3B30", reagendado: "#FF9500",
-    };
-    return colors[apt.status] || AGENDA_VIRTUAL_COLOR;
+    return AGENDA_VIRTUAL_COLOR;
+  };
+
+  const getStatusIndicator = (apt: any) => {
+    if (apt.status === "cancelado") return { label: "Cancelado", color: "#EF4444" };
+    if (apt.confirmationStatus === "chegada_antecipada") return { label: "Cliente informou adiantamento", color: "#3B82F6" };
+    if (apt.confirmationStatus === "atraso") return { label: "Cliente informou atraso", color: "#EAB308" };
+    if (apt.confirmationStatus === "nao_confirmado") return { label: "Não confirmado", color: "#EF4444" };
+    if (apt.confirmationStatus === "confirmado" || apt.status === "confirmado") return { label: "Confirmado", color: "#22C55E" };
+    if (apt.status === "reagendado") return { label: "Reagendado", color: "#F97316" };
+    if (apt.status === "concluido") return { label: "Concluído", color: "#8E8E93" };
+    return { label: "Agendado", color: "#F59E0B" };
+  };
+
+  const requiresAttention = (apt: any) => (
+    apt.status === "reagendado"
+    || apt.status === "cancelado"
+    || apt.confirmationStatus === "chegada_antecipada"
+    || apt.confirmationStatus === "nao_confirmado"
+    || apt.confirmationStatus === "atraso"
+  );
+
+  const handleSwipeStart = (event: React.TouchEvent) => {
+    if (viewMode !== "week") return;
+    const touch = event.touches[0];
+    swipeStart.current = { x: touch.clientX, y: touch.clientY };
+  };
+
+  const handleSwipeEnd = (event: React.TouchEvent) => {
+    if (longPressHandled.current) {
+      longPressHandled.current = false;
+      swipeStart.current = null;
+      return;
+    }
+    if (viewMode !== "week" || !swipeStart.current) return;
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - swipeStart.current.x;
+    const deltaY = touch.clientY - swipeStart.current.y;
+    swipeStart.current = null;
+    if (Math.abs(deltaX) < 40 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.15) return;
+    nav(deltaX < 0 ? 1 : -1);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    longPressStart.current = null;
+  };
+
+  const handleSlotLongPressStart = (date: Date, hour: number, event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 1 || draggedApt) return;
+    cancelLongPress();
+    longPressHandled.current = false;
+    const touch = event.touches[0];
+    longPressStart.current = { x: touch.clientX, y: touch.clientY };
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const offsetY = Math.max(0, Math.min(bounds.height - 1, touch.clientY - bounds.top));
+    const minute = Math.floor((offsetY / bounds.height) * 4) * 15;
+    longPressTimer.current = setTimeout(() => {
+      longPressHandled.current = true;
+      openNewApt(date, hour, minute);
+      if (navigator.vibrate) navigator.vibrate(10);
+    }, 550);
+  };
+
+  const handleSlotLongPressMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = longPressStart.current;
+    const touch = event.touches[0];
+    if (!start || !touch) {
+      cancelLongPress();
+      return;
+    }
+    if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 12) cancelLongPress();
   };
 
   const getAptsByDay = (day: Date) =>
@@ -327,14 +438,17 @@ export default function CalendarPage() {
     }
   }, [currentDate, viewMode, weekDays]);
 
-  const postSalePeriod = useMemo(() => {
-    if (viewMode === "day") return { start: currentDate, end: currentDate };
-    if (viewMode === "week") return { start: weekDays[0], end: weekDays[6] };
-    return {
-      start: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
-      end: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0),
-    };
-  }, [viewMode, currentDate, weekDays]);
+  const compactHeaderTitle = useMemo(() => {
+    if (viewMode === "month") {
+      return currentDate.toLocaleDateString("pt-BR", { month: "short", year: "numeric" });
+    }
+    if (viewMode === "week") {
+      const start = weekDays[0].toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+      const end = weekDays[6].toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+      return `${start} – ${end}`;
+    }
+    return currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+  }, [currentDate, viewMode, weekDays]);
 
   const handleToggleCalendar = (id: number) => {
     setVisibleCalendars((prev) =>
@@ -400,12 +514,17 @@ export default function CalendarPage() {
 
   // ── Visão Semanal ─────────────────────────────────────────────────────────
   const renderWeekView = () => (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      <div className="grid grid-cols-[56px_repeat(7,1fr)] border-b border-white/10 bg-[#1c1c1e] sticky top-0 z-10">
+    <div
+      className="flex flex-col flex-1 overflow-hidden"
+      style={{ touchAction: "pan-y" }}
+      onTouchStartCapture={handleSwipeStart}
+      onTouchEndCapture={handleSwipeEnd}
+    >
+      <div className="grid border-b border-white/10 bg-[#1c1c1e] sticky top-0 z-10" style={{ gridTemplateColumns: "38px repeat(7, minmax(0, 1fr))" }}>
         <div className="p-2" />
         {weekDays.map((day, i) => (
-          <div key={i} className={`text-center py-2 border-l border-white/10 ${isToday(day) ? "bg-blue-600/10" : ""}`}>
-            <div className="text-[11px] text-gray-400 uppercase tracking-wide">
+          <div key={i} className={`min-w-0 text-center py-2 border-l border-white/10 ${isToday(day) ? "bg-blue-600/10" : ""}`}>
+            <div className="truncate text-[10px] text-gray-400 uppercase tracking-wide sm:text-[11px]">
               {day.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "")}
             </div>
             <div className={`text-lg font-semibold mx-auto w-8 h-8 flex items-center justify-center rounded-full mt-0.5
@@ -416,7 +535,11 @@ export default function CalendarPage() {
         ))}
       </div>
       <div ref={weekScrollRef} className="flex-1 overflow-y-auto">
-        <div className="relative grid grid-cols-[56px_repeat(7,1fr)]" style={{ height: `${HOURS.length * SLOT_HEIGHT}px` }}>
+        <div
+          className="relative grid select-none"
+          style={{ gridTemplateColumns: "38px repeat(7, minmax(0, 1fr))", height: `${HOURS.length * SLOT_HEIGHT}px`, WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
           <div className="relative">
             {HOURS.map((hour) => (
               <div key={hour} className="absolute w-full border-t border-white/10 text-[11px] text-gray-500 pr-2 text-right"
@@ -433,7 +556,11 @@ export default function CalendarPage() {
                   <div key={hour}
                     className="absolute w-full border-t border-white/10 hover:bg-white/5 cursor-pointer transition-colors"
                     style={{ top: `${(hour - HOURS[0]) * SLOT_HEIGHT}px`, height: `${SLOT_HEIGHT}px` }}
-                    onDoubleClick={(e) => handleSlotDblClick(day, hour, e)}>
+                    onDoubleClick={(e) => handleSlotDblClick(day, hour, e)}
+                    onTouchStart={(event) => handleSlotLongPressStart(day, hour, event)}
+                    onTouchMove={handleSlotLongPressMove}
+                    onTouchEnd={cancelLongPress}
+                    onTouchCancel={cancelLongPress}>
                     {/* Drop targets: hora cheia e meia hora */}
                     <div className="absolute inset-x-0 top-0 h-1/2 z-5"
                       onDragOver={(e) => handleDragOver(e, day, hour, 0)}
@@ -460,6 +587,9 @@ export default function CalendarPage() {
                   const height = Math.max(20, (durationMinutes / 60) * SLOT_HEIGHT - 2);
                   const color = getAppointmentColor(apt);
                   const hasPod = podLinkedMap && podLinkedMap[apt.id];
+                  const reminder = (reminderIndicators as Record<number, { sentAt: string | null; types: string[] }>)[apt.id];
+                  const attention = requiresAttention(apt);
+                  const statusIndicator = getStatusIndicator(apt);
                   return (
                     <div key={apt.id}
                       draggable
@@ -470,12 +600,13 @@ export default function CalendarPage() {
                       className={`absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 overflow-hidden cursor-grab active:cursor-grabbing z-10 transition-opacity hover:opacity-90 ${draggedApt?.id === apt.id ? "opacity-40" : ""}`}
                       style={{ top: `${top}px`, height: `${height}px`, backgroundColor: color + "cc", borderLeft: `3px solid ${color}` }}>
                       <div className="text-white text-[11px] font-semibold truncate leading-tight flex items-center gap-1">
-                        {apt.confirmationAttention === 'pending' && <TriangleAlert className="h-3 w-3 shrink-0 text-yellow-200 fill-amber-500/50" />}
+                        <span className="h-1.5 w-1.5 rounded-full shrink-0 border border-white/80" style={{ backgroundColor: statusIndicator.color }} title={statusIndicator.label} aria-label={statusIndicator.label} />
                         {hasPod && <Stethoscope className="h-2.5 w-2.5 shrink-0" />}
+                        {reminder && <BellRing className="h-2.5 w-2.5 shrink-0 text-white" aria-label="Lembrete enviado" />}
+                        {attention && <AlertCircle className="h-2.5 w-2.5 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
                         {apt.clientName || "Cliente"}
                       </div>
-                      {height > 30 && <div className="text-white/85 text-[10px] truncate">{apt.clientPhone || "Sem telefone"}</div>}
-                      {height > 46 && <div className="text-white/70 text-[10px] truncate">{apt.service || ""}</div>}
+                      {height > 30 && <div className="text-white/80 text-[10px] truncate">{apt.service || ""}</div>}
                     </div>
                   );
                 })}
@@ -515,15 +646,20 @@ export default function CalendarPage() {
                       {dayApts.slice(0, 3).map((apt: any) => {
                         const color = getAppointmentColor(apt);
                         const hasPod = podLinkedMap && podLinkedMap[apt.id];
+                        const reminder = (reminderIndicators as Record<number, { sentAt: string | null; types: string[] }>)[apt.id];
+                        const attention = requiresAttention(apt);
+                        const statusIndicator = getStatusIndicator(apt);
                         return (
                           <div key={apt.id}
                             onClick={(e) => { e.stopPropagation(); openDetails(apt); }}
                             onDoubleClick={(e) => { e.stopPropagation(); openEditApt(apt); }}
                             className="text-[10px] text-white px-1 py-0.5 rounded truncate flex items-center gap-1 cursor-pointer hover:opacity-80"
                             style={{ backgroundColor: color + "cc" }}>
-                            {apt.confirmationAttention === 'pending' && <TriangleAlert className="h-2.5 w-2.5 shrink-0 text-yellow-200 fill-amber-500/50" />}
+                            <span className="h-1.5 w-1.5 rounded-full shrink-0 border border-white/80" style={{ backgroundColor: statusIndicator.color }} title={statusIndicator.label} aria-label={statusIndicator.label} />
                             {hasPod && <Stethoscope className="h-2 w-2 shrink-0" />}
-                            {apt.clientName || "Cliente"} · {apt.clientPhone || "Sem telefone"}
+                            {reminder && <BellRing className="h-2 w-2 shrink-0" aria-label="Lembrete enviado" />}
+                            {attention && <AlertCircle className="h-2 w-2 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
+                            {apt.clientName || "Cliente"}
                           </div>
                         );
                       })}
@@ -556,7 +692,11 @@ export default function CalendarPage() {
           </div>
         </div>
         <div ref={weekScrollRef} className="flex-1 overflow-y-auto">
-          <div className="relative grid grid-cols-[56px_1fr]" style={{ height: `${HOURS.length * SLOT_HEIGHT}px` }}>
+          <div
+            className="relative grid grid-cols-[56px_1fr] select-none"
+            style={{ height: `${HOURS.length * SLOT_HEIGHT}px`, WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+            onContextMenu={(event) => event.preventDefault()}
+          >
             <div className="relative">
               {HOURS.map((hour) => (
                 <div key={hour} className="absolute w-full border-t border-white/10 text-[11px] text-gray-500 pr-2 text-right"
@@ -570,7 +710,11 @@ export default function CalendarPage() {
                 <div key={hour}
                   className="absolute w-full border-t border-white/10 hover:bg-white/5 cursor-pointer"
                   style={{ top: `${(hour - HOURS[0]) * SLOT_HEIGHT}px`, height: `${SLOT_HEIGHT}px` }}
-                  onDoubleClick={(e) => handleSlotDblClick(currentDate, hour, e)}>
+                  onDoubleClick={(e) => handleSlotDblClick(currentDate, hour, e)}
+                  onTouchStart={(event) => handleSlotLongPressStart(currentDate, hour, event)}
+                  onTouchMove={handleSlotLongPressMove}
+                  onTouchEnd={cancelLongPress}
+                  onTouchCancel={cancelLongPress}>
                   <div className="absolute inset-x-0 top-0 h-1/2 z-5"
                     onDragOver={(e) => handleDragOver(e, currentDate, hour, 0)}
                     onDrop={(e) => handleDrop(e, currentDate, hour, 0)} />
@@ -594,6 +738,9 @@ export default function CalendarPage() {
                 const height = Math.max(24, ((apt.duration || 60) / 60) * SLOT_HEIGHT - 2);
                 const color = getAppointmentColor(apt);
                 const hasPod = podLinkedMap && podLinkedMap[apt.id];
+                const reminder = (reminderIndicators as Record<number, { sentAt: string | null; types: string[] }>)[apt.id];
+                const attention = requiresAttention(apt);
+                const statusIndicator = getStatusIndicator(apt);
                 return (
                   <div key={apt.id}
                     draggable
@@ -604,12 +751,14 @@ export default function CalendarPage() {
                     className={`absolute left-1 right-1 rounded-lg px-2 py-1.5 overflow-hidden cursor-grab active:cursor-grabbing z-10 hover:opacity-90 transition-opacity ${draggedApt?.id === apt.id ? "opacity-40" : ""}`}
                     style={{ top: `${top}px`, height: `${height}px`, backgroundColor: color + "cc", borderLeft: `4px solid ${color}` }}>
                     <div className="text-white text-xs font-semibold truncate flex items-center gap-1">
-                      {apt.confirmationAttention === 'pending' && <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-yellow-200 fill-amber-500/50" />}
+                      <span className="h-1.5 w-1.5 rounded-full shrink-0 border border-white/80" style={{ backgroundColor: statusIndicator.color }} title={statusIndicator.label} aria-label={statusIndicator.label} />
                       {hasPod && <Stethoscope className="h-3 w-3 shrink-0" />}
+                      {reminder && <BellRing className="h-3 w-3 shrink-0 text-white" aria-label="Lembrete enviado" />}
+                      {attention && <AlertCircle className="h-3 w-3 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
                       {apt.clientName || "Cliente"}
                     </div>
-                    {height > 36 && <div className="text-white/85 text-[11px] truncate">{apt.clientPhone || "Sem telefone"}</div>}
-                    {height > 52 && <div className="text-white/70 text-[10px] truncate">{aptDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} · {apt.service || ""}</div>}
+                    {height > 36 && <div className="text-white/80 text-[11px] truncate">{apt.service || ""}</div>}
+                    {height > 52 && <div className="text-white/70 text-[10px]">{aptDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</div>}
                   </div>
                 );
               })}
@@ -720,20 +869,6 @@ export default function CalendarPage() {
                 <p className="font-semibold text-gray-100">{selectedApt.clientName || "—"}</p>
               </div>
             </div>
-            {/* Telefone */}
-            <div className="flex items-start gap-3">
-              <Phone className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-xs text-gray-400">Telefone</p>
-                {selectedApt.clientPhone ? (
-                  <a className="font-semibold text-blue-300 hover:underline" href={`tel:${selectedApt.clientPhone}`}>
-                    {selectedApt.clientPhone}
-                  </a>
-                ) : (
-                  <p className="font-semibold text-gray-100">Sem telefone cadastrado</p>
-                )}
-              </div>
-            </div>
             {/* Data/hora */}
             <div className="flex items-start gap-3">
               <Clock className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
@@ -775,21 +910,6 @@ export default function CalendarPage() {
                 </span>
               )}
             </div>
-            {selectedApt.confirmationAttention === 'pending' && (
-              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 flex items-start gap-2">
-                <TriangleAlert className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-semibold text-amber-300">Resposta do cliente exige atenção</p>
-                  <p className="text-xs text-gray-300 mt-1">
-                    {selectedApt.confirmationStatus === 'atraso'
-                      ? `Atraso aproximado de ${selectedApt.confirmationDelayMinutes || '?'} minutos. Abra o agendamento para decidir se ainda será possível atender.`
-                      : selectedApt.confirmationStatus === 'reagendar'
-                        ? 'O cliente solicitou reagendamento.'
-                        : 'O cliente informou que não conseguirá comparecer.'}
-                  </p>
-                </div>
-              </div>
-            )}
             {/* Observações */}
             {selectedApt.notes && (
               <div className="bg-white/5 rounded-lg p-3 text-sm text-gray-300">{selectedApt.notes}</div>
@@ -799,7 +919,7 @@ export default function CalendarPage() {
             {hasPod && (
               <Button size="sm" variant="outline"
                 className="border-violet-500/50 text-violet-300 hover:bg-violet-500/10 text-xs"
-                onClick={() => { setDetailsOpen(false); navigate(`/pod/session/${podLinkedMap![selectedApt.id]}`); }}>
+                onClick={() => { setDetailsOpen(false); navigate(`/procedures/${podLinkedMap![selectedApt.id]}`); }}>
                 <Stethoscope className="h-3.5 w-3.5 mr-1" />
                 Abrir POD
               </Button>
@@ -830,12 +950,12 @@ export default function CalendarPage() {
     <div className="flex bg-[#1c1c1e] text-gray-100 overflow-hidden" style={{ height: "calc(100dvh - 56px)" }}>
       {/* Overlay mobile para sidebar */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-30 bg-black/60 sm:hidden" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+        <div className="fixed inset-0 z-30 bg-black/60 lg:hidden" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
       )}
 
       {/* Sidebar */}
       {sidebarOpen && (
-        <div className="fixed sm:relative inset-y-0 left-0 z-40 sm:z-auto w-56 flex-shrink-0 bg-[#161618] border-r border-white/10 flex flex-col shadow-xl sm:shadow-none" style={{ top: 0, height: "100%" }}>
+        <div className="fixed lg:relative inset-y-0 left-0 z-40 lg:z-auto w-56 flex-shrink-0 bg-[#161618] border-r border-white/10 flex flex-col shadow-xl lg:shadow-none" style={{ top: 0, height: "100%" }}>
           {renderMiniCalendar()}
           <div className="flex-1 overflow-y-auto p-3">
 
@@ -876,6 +996,7 @@ export default function CalendarPage() {
                     const visible = !hiddenArtists.has(name);
                     // Cor personalizada do artista (ou automática por índice)
                     const color = getArtistColor(name);
+                    const artist = (artistsList as any[]).find((item) => item.name === name);
                     const count = (appointments as any[]).filter((a: any) => a.artist === name).length;
                     return (
                       <div
@@ -883,13 +1004,23 @@ export default function CalendarPage() {
                         className="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-white/5 cursor-pointer"
                         onClick={() => handleToggleArtist(name)}
                       >
-                        <div
-                          className="w-3 h-3 rounded-full flex-shrink-0"
-                          style={{
-                            backgroundColor: visible ? color : "transparent",
-                            border: `2px solid ${color}`,
-                          }}
-                        />
+                        {artist?.photoUrl ? (
+                          <img
+                            src={artist.photoUrl}
+                            alt={`Avatar de ${name}`}
+                            className={`h-5 w-5 rounded-full object-cover ring-1 ring-white/20 ${visible ? "" : "opacity-30"}`}
+                          />
+                        ) : (
+                          <div
+                            className="w-5 h-5 rounded-full flex shrink-0 items-center justify-center text-[9px] font-semibold text-white"
+                            style={{
+                              backgroundColor: visible ? color : "transparent",
+                              border: `2px solid ${color}`,
+                            }}
+                          >
+                            {name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
                         <span className={`flex-1 text-xs truncate ${visible ? "text-gray-200" : "text-gray-500"}`}>
                           {name}
                         </span>
@@ -947,7 +1078,7 @@ export default function CalendarPage() {
       {/* Área principal */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10 bg-[#1c1c1e] flex-shrink-0">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-white/10 bg-[#1c1c1e] flex-shrink-0 sm:px-4">
           <Button variant="ghost" size="sm" className="text-gray-400 hover:text-white h-7 w-7 p-0"
             onClick={() => setSidebarOpen(!sidebarOpen)}>
             <CalendarIcon className="h-4 w-4" />
@@ -965,7 +1096,13 @@ export default function CalendarPage() {
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-          <h2 className="text-sm font-semibold text-gray-100 flex-1 capitalize">{headerTitle}</h2>
+          <h2
+            className="order-first basis-full text-center text-xs font-semibold text-gray-100 capitalize sm:order-none sm:basis-auto sm:flex-1 sm:text-left sm:text-sm"
+            title={headerTitle}
+          >
+            <span className="sm:hidden">{compactHeaderTitle}</span>
+            <span className="hidden sm:inline">{headerTitle}</span>
+          </h2>
           <div className="flex items-center bg-white/5 rounded-lg p-0.5 gap-0.5">
             {(["day", "week", "month"] as const).map((mode) => (
               <button key={mode} onClick={() => setViewMode(mode)}
@@ -987,7 +1124,30 @@ export default function CalendarPage() {
           </Button>
         </div>
 
-        <PostSaleFollowupsBar visibleStart={postSalePeriod.start} visibleEnd={postSalePeriod.end} />
+        {actionAlerts.length > 0 && (
+          <div className="border-b border-amber-400/20 bg-amber-400/10 px-3 py-2 sm:px-5">
+            <div className="mx-auto flex max-w-6xl flex-col gap-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-200"><AlertCircle className="h-3.5 w-3.5" /> Ações recentes de clientes</span>
+              <div className="flex gap-2 overflow-x-auto pb-0.5">
+                {actionAlerts.map((alert: any) => (
+                  <button
+                    key={alert.id}
+                    type="button"
+                    onClick={() => {
+                      markActionAlertViewed.mutate({ alertId: alert.id });
+                      const appointment = (appointments as any[]).find((item) => item.id === alert.appointmentId);
+                      if (appointment) { setSelectedApt(appointment); setDetailsOpen(true); }
+                    }}
+                    className="shrink-0 rounded-md border border-amber-300/30 bg-black/20 px-2.5 py-1.5 text-left text-xs text-amber-100 transition-colors hover:bg-black/35"
+                    title="Abrir agendamento e marcar alerta como visualizado"
+                  >
+                    {ACTION_ALERT_LABELS[alert.action] ?? "Nova ação do cliente"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Conteúdo */}
         <div className="flex-1 overflow-hidden flex flex-col">

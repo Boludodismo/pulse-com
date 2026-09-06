@@ -37,6 +37,7 @@ interface ArtistForm {
   instagram: string;
   specialty: string;
   bio: string;
+  photoUrl: string;
   color: string;
   active: number;
 }
@@ -48,6 +49,7 @@ const emptyForm: ArtistForm = {
   instagram: "",
   specialty: "",
   bio: "",
+  photoUrl: "",
   color: "",
   active: 1,
 };
@@ -56,6 +58,7 @@ export default function Artists() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ArtistForm>(emptyForm);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
   const { data: artists = [] } = trpc.artists.list.useQuery();
   const utils = trpc.useUtils();
@@ -86,6 +89,16 @@ export default function Artists() {
     onError: (e) => toast.error(`Erro: ${e.message}`),
   });
 
+  const uploadAvatarMutation = trpc.artists.uploadAvatar.useMutation({
+    onSuccess: (result) => {
+      setForm((previous) => ({ ...previous, photoUrl: result.photoUrl }));
+      utils.artists.list.invalidate();
+      toast.success("Foto de perfil atualizada.");
+    },
+    onError: (error) => toast.error(error.message || "Não foi possível enviar a foto."),
+    onSettled: () => setIsUploadingAvatar(false),
+  });
+
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm);
@@ -101,6 +114,7 @@ export default function Artists() {
       instagram: artist.instagram || "",
       specialty: artist.specialty || "",
       bio: artist.bio || "",
+      photoUrl: artist.photoUrl || "",
       color: (artist as any).color || "",
       active: artist.active,
     });
@@ -138,6 +152,34 @@ export default function Artists() {
 
   const toggleActive = (artist: typeof artists[0]) => {
     updateMutation.mutate({ id: artist.id, active: artist.active === 1 ? 0 : 1 });
+  };
+
+  const handleAvatarFile = (file?: File) => {
+    if (!file) return;
+    if (!editingId) {
+      toast.error("Salve o artista antes de enviar a foto de perfil.");
+      return;
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      toast.error("Envie uma imagem JPG, PNG ou WebP.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("A imagem deve ter no máximo 5 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return;
+      setIsUploadingAvatar(true);
+      uploadAvatarMutation.mutate({
+        artistId: editingId,
+        fileName: file.name,
+        imageBase64: reader.result,
+        mimeType: file.type as "image/jpeg" | "image/png" | "image/webp",
+      });
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -192,20 +234,21 @@ export default function Artists() {
                   >
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <div
-                          className="h-9 w-9 rounded-full flex items-center justify-center flex-shrink-0"
-                          style={{
-                            backgroundColor: artistColor ? `${artistColor}22` : undefined,
-                            border: artistColor ? `2px solid ${artistColor}` : undefined,
-                          }}
-                        >
-                          <span
-                            className="text-sm font-semibold"
-                            style={{ color: artistColor || undefined }}
+                        {artist.photoUrl ? (
+                          <img src={artist.photoUrl} alt={`Avatar de ${artist.name}`} className="h-9 w-9 rounded-full object-cover flex-shrink-0 ring-2 ring-border" />
+                        ) : (
+                          <div
+                            className="h-9 w-9 rounded-full flex items-center justify-center flex-shrink-0"
+                            style={{
+                              backgroundColor: artistColor ? `${artistColor}22` : undefined,
+                              border: artistColor ? `2px solid ${artistColor}` : undefined,
+                            }}
                           >
-                            {artist.name.charAt(0).toUpperCase()}
-                          </span>
-                        </div>
+                            <span className="text-sm font-semibold" style={{ color: artistColor || undefined }}>
+                              {artist.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                        )}
                         <div>
                           <p className="font-medium">{artist.name}</p>
                           {artist.email && (
@@ -292,7 +335,7 @@ export default function Artists() {
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="col-span-2 space-y-1.5">
                 <Label htmlFor="name">Nome *</Label>
                 <Input
@@ -343,6 +386,37 @@ export default function Artists() {
                     onChange={(e) => setForm({ ...form, instagram: e.target.value })}
                   />
                 </div>
+              </div>
+
+              <div className="col-span-2 space-y-2">
+                <Label htmlFor="photoUrl">Avatar / Foto de Perfil</Label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  {form.photoUrl ? (
+                    <img src={form.photoUrl} alt="Prévia do avatar" className="h-12 w-12 rounded-full object-cover ring-2 ring-border" />
+                  ) : (
+                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center text-sm font-semibold text-muted-foreground">
+                      {form.name.charAt(0).toUpperCase() || "A"}
+                    </div>
+                  )}
+                  <Input
+                    id="photoUrl"
+                    type="url"
+                    placeholder="https://… (opcional)"
+                    value={form.photoUrl}
+                    onChange={(event) => setForm({ ...form, photoUrl: event.target.value })}
+                  />
+                  <label className="inline-flex cursor-pointer items-center justify-center rounded-md border border-input px-3 py-2 text-sm font-medium hover:bg-accent whitespace-nowrap">
+                    {isUploadingAvatar ? "Enviando…" : "Enviar foto"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      disabled={!editingId || isUploadingAvatar}
+                      onChange={(event) => handleAvatarFile(event.target.files?.[0])}
+                    />
+                  </label>
+                </div>
+                {!editingId && <p className="text-xs text-muted-foreground">Crie o artista primeiro para enviar a foto; a URL pode ser definida agora.</p>}
               </div>
 
               {/* Seletor de cor personalizada */}

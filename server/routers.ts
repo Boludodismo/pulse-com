@@ -1,10 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import {
-  COOKIE_NAME,
-  normalizePublicBaseUrl,
-  normalizeWhatsAppNumber,
-} from "@shared/const";
+import { COOKIE_NAME, normalizeWhatsAppNumber } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import {
@@ -14,177 +10,204 @@ import {
   syncMaterialToSheets,
   syncStockMovementToSheets,
 } from "./googleSheetsSync";
-import {
-  publicProcedure,
-  protectedProcedure,
-  artistProcedure,
-  router,
-} from "./_core/trpc";
+import { publicProcedure, protectedProcedure, artistProcedure, router, superAdminProcedure, adminProcedure, tenantProcedure } from "./_core/trpc";
+import { SAAS_MODULES, createStudioInvitation, listStudioInvitations, revokeStudioInvitation, claimStudioInvitation, listUserPermissions, replaceUserPermissions, summarizeSaasMetrics, hasModulePermission } from "./saas";
 import * as db from "./db";
-import { calendars } from "../drizzle/schema";
+import { calendars, integrationContacts, whatsappIntegrations } from "../drizzle/schema";
+import { and, eq, isNull } from "drizzle-orm";
 import { whatsAppSchedulerStatus } from "./scheduler";
 import { contactsRouter } from "./routers/contacts";
 import { proceduresRouter } from "./routers/procedures";
+import { podSaasRouter } from "./routers/podSaas";
 import { messagingRouter } from "./routers/messaging";
-import { legacyAnamnesisRouter } from "./routers/legacyAnamnesis";
-import {
-  procedureKitFormSchema,
-  procedureKitItemsSchema,
-  normalizeProcedureKitItems,
-} from "./procedureKitValidation";
+import { consumeAppointmentActionLink, issueAppointmentActionLinks, listAppointmentActionAlerts, markAppointmentActionAlertViewed } from "./appointmentActions";
+import { normalizeBrazilianPhone } from "./messaging/phone";
+import { buildAutomaticAppointmentReminderMessage, scheduleAutomaticAppointmentReminder } from "./messaging/appointmentReminderSchedule";
+import { firstName, formatStudioAddress } from "./messaging/messagePresentation";
+import { buildLegacyAnamneseReviewPayload } from "./anamneseReview";
+
+async function recordAppointmentWhatsappConsent(input: { studioId: number; clientId: number }) {
+  const connection = await db.getDb();
+  if (!connection) return false;
+
+  const client = await db.getClientById(input.clientId);
+  if (!client?.phone || client.studioId !== input.studioId) return false;
+
+  const integration = (await connection.select({ id: whatsappIntegrations.id }).from(whatsappIntegrations)
+    .where(and(
+      eq(whatsappIntegrations.studioId, input.studioId),
+      eq(whatsappIntegrations.status, "ativo"),
+      eq(whatsappIntegrations.isEnabled, 1),
+    )).limit(1))[0];
+  if (!integration) return false;
+
+  const timestamp = new Date().toISOString().slice(0, 19).replace("T", " ");
+  await connection.insert(integrationContacts).values({
+    studioId: input.studioId,
+    integrationId: integration.id,
+    clientId: client.id,
+    normalizedPhone: normalizeBrazilianPhone(client.phone),
+    hasWhatsappOptIn: 1,
+    optInAt: timestamp,
+    optInSource: "agendamento_confirmado",
+    optedOutAt: null,
+  }).onDuplicateKeyUpdate({ set: {
+    normalizedPhone: normalizeBrazilianPhone(client.phone),
+    hasWhatsappOptIn: 1,
+    optInAt: timestamp,
+    optInSource: "agendamento_confirmado",
+    optedOutAt: null,
+  }});
+  return true;
+}
 
 export const appRouter = router({
   system: systemRouter,
-
+  
   // Quick consume endpoint para registrar insumos rapidamente
-  quickConsume: protectedProcedure
-    .input(
-      z.object({
-        inventoryItemId: z.number(),
-        procedureId: z.number(),
-        category: z.enum([
-          "ink",
-          "cartridge",
-          "disposable",
-          "liquid",
-          "protection",
-          "stencil",
-          "aftercare",
-          "other",
-        ]),
-        name: z.string(),
-        quantity: z.string().or(z.number()),
-        estimatedUnitCost: z.string().or(z.number()),
-      }),
-    )
+  quickConsume: tenantProcedure
+    .input(z.object({
+      inventoryItemId: z.number(),
+      procedureId: z.number(),
+      category: z.enum(['ink','cartridge','disposable','liquid','protection','stencil','aftercare','other']),
+      name: z.string(),
+      quantity: z.string().or(z.number()),
+      estimatedUnitCost: z.string().or(z.number()),
+    }))
     .mutation(async ({ input, ctx }) => {
       try {
         const dbConn = await db.getDb();
-        const { procedureConsumables } = await import("../drizzle/schema");
-        const totalCost =
-          (typeof input.quantity === "string"
-            ? parseFloat(input.quantity)
-            : input.quantity) *
-          (typeof input.estimatedUnitCost === "string"
-            ? parseFloat(input.estimatedUnitCost)
-            : input.estimatedUnitCost);
-        const quantityDecimal =
-          typeof input.quantity === "string"
-            ? input.quantity
-            : String(input.quantity);
-        const unitCostDecimal =
-          typeof input.estimatedUnitCost === "string"
-            ? input.estimatedUnitCost
-            : String(input.estimatedUnitCost);
+        if (!dbConn) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Banco de dados indisponível." });
+        const { procedureConsumables, technicalProcedures } = await import("../drizzle/schema");
+        const procedure = (await dbConn.select({ id: technicalProcedures.id }).from(technicalProcedures).where(and(
+          eq(technicalProcedures.id, input.procedureId),
+          eq(technicalProcedures.studioId, ctx.studioId),
+        )).limit(1))[0];
+        if (!procedure) throw new TRPCError({ code: "NOT_FOUND", message: "Sessão POD não encontrada nesta empresa." });
+        const totalCost = (typeof input.quantity === 'string' ? parseFloat(input.quantity) : input.quantity) * 
+                         (typeof input.estimatedUnitCost === 'string' ? parseFloat(input.estimatedUnitCost) : input.estimatedUnitCost);
+        const quantityDecimal = typeof input.quantity === 'string' ? input.quantity : String(input.quantity);
+        const unitCostDecimal = typeof input.estimatedUnitCost === 'string' ? input.estimatedUnitCost : String(input.estimatedUnitCost);
         const totalCostDecimal = String(totalCost);
-
-        await dbConn!.insert(procedureConsumables).values({
+        
+        await dbConn.insert(procedureConsumables).values({
           procedureId: input.procedureId,
           inventoryItemId: input.inventoryItemId,
           category: input.category,
           name: input.name,
-          unit: "unit",
+          unit: 'unit',
           quantity: quantityDecimal,
           estimatedUnitCost: unitCostDecimal,
           estimatedTotalCost: totalCostDecimal,
         });
         return { success: true, totalCost };
       } catch (error) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Erro ao registrar consumo",
-        });
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Erro ao registrar consumo' });
       }
     }),
+  
+  saas: router({
+    studios: superAdminProcedure.query(async () => db.listStudios()),
 
-  // Kits de procedimento: camada adicional, sem alterar quickConsume individual
-  kits: router({
-    list: protectedProcedure.query(async ({ ctx }) => {
-      return db.listProcedureKits(ctx.user.studioId ?? 1);
+    metrics: superAdminProcedure.query(async () => {
+      const [studios, users, invitations] = await Promise.all([
+        db.listStudios(),
+        db.listAllUsers(),
+        listStudioInvitations(),
+      ]);
+      return summarizeSaasMetrics({ studios, users, invitations });
     }),
 
-    get: protectedProcedure
+    listInvitations: superAdminProcedure.query(async () => listStudioInvitations()),
+
+    listStudioInvitations: tenantProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (ctx.user.role === "superadmin") return listStudioInvitations();
+      return listStudioInvitations(ctx.user.studioId!);
+    }),
+
+    createInvitation: protectedProcedure
+      .input(z.object({ studioId: z.number().int().positive().optional(), email: z.string().email(), role: z.enum(["admin", "collaborator"]) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== "superadmin" && ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+        if (ctx.user.role === "admin" && input.role !== "collaborator") throw new TRPCError({ code: "FORBIDDEN", message: "Administradores podem convidar apenas colaboradores." });
+        const studioId = ctx.user.role === "superadmin" ? input.studioId : ctx.user.studioId;
+        if (!studioId) throw new TRPCError({ code: "BAD_REQUEST", message: "Empresa obrigatória." });
+        return createStudioInvitation({ studioId, email: input.email, role: input.role, invitedByUserId: ctx.user.id });
+      }),
+
+    revokeInvitation: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== "superadmin" && ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+        return revokeStudioInvitation(input.id, ctx.user.role === "admin" ? ctx.user.studioId ?? undefined : undefined);
+      }),
+
+    claimInvitation: protectedProcedure
+      .input(z.object({ token: z.string().length(64) }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await claimStudioInvitation(input.token, ctx.user.id);
+        if (!result.ok) throw new TRPCError({ code: result.reason === "email_mismatch" ? "FORBIDDEN" : "BAD_REQUEST", message: "Convite inválido, expirado, revogado ou não compatível com o e-mail autenticado." });
+        return result;
+      }),
+
+    permissions: protectedProcedure
+      .input(z.object({ userId: z.number().int().positive() }))
       .query(async ({ ctx, input }) => {
-        const kit = await db.getProcedureKitById(
-          input.id,
-          ctx.user.studioId ?? 1,
-        );
-        if (!kit)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Kit não encontrado",
-          });
-        return kit;
+        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN" });
+        const target = await db.getUserById(input.userId);
+        if (!target || (ctx.user.role !== "superadmin" && target.studioId !== ctx.user.studioId)) throw new TRPCError({ code: "FORBIDDEN" });
+        return listUserPermissions(input.userId, target.studioId!);
       }),
 
-    create: protectedProcedure
-      .input(procedureKitFormSchema)
-      .mutation(async ({ ctx, input }) => {
-        const id = await db.createProcedureKit({
-          studioId: ctx.user.studioId ?? 1,
-          name: input.name,
-          description: input.description,
-          category: input.category,
-          items: normalizeProcedureKitItems(input.items),
-        });
-        return { id };
-      }),
+    teamAccess: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN" });
+      const allUsers = await db.listAllUsers();
+      const team = ctx.user.role === "superadmin" ? allUsers : allUsers.filter((member) => member.studioId === ctx.user.studioId);
+      return Promise.all(team.filter((member) => member.role !== "superadmin").map(async (member) => ({
+        id: member.id,
+        name: member.name,
+        email: member.email,
+        role: member.role,
+        studioId: member.studioId,
+        accessStatus: member.accessStatus,
+        accessExpiresAt: member.accessExpiresAt,
+        permissions: member.studioId ? await listUserPermissions(member.id, member.studioId) : [],
+      })));
+    }),
 
-    update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number().int().positive(),
-          name: z.string().trim().min(1).max(255),
-          description: z.string().max(2000).optional(),
-          category: z.string().trim().min(1).max(100).default("Geral"),
-          items: procedureKitItemsSchema,
-        }),
-      )
+    setPermissions: protectedProcedure
+      .input(z.object({ userId: z.number().int().positive(), permissions: z.array(z.object({ module: z.enum(SAAS_MODULES), canRead: z.boolean(), canWrite: z.boolean() })) }))
       .mutation(async ({ ctx, input }) => {
-        await db.updateProcedureKit(input.id, ctx.user.studioId ?? 1, {
-          name: input.name,
-          description: input.description,
-          category: input.category,
-          items: normalizeProcedureKitItems(input.items),
-        });
+        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN" });
+        const target = await db.getUserById(input.userId);
+        if (!target || !target.studioId || (ctx.user.role !== "superadmin" && target.studioId !== ctx.user.studioId)) throw new TRPCError({ code: "FORBIDDEN" });
+        await replaceUserPermissions({ userId: input.userId, studioId: target.studioId, permissions: input.permissions });
         return { success: true };
-      }),
-
-    delete: protectedProcedure
-      .input(z.object({ id: z.number().int().positive() }))
-      .mutation(async ({ ctx, input }) => {
-        await db.deleteProcedureKit(input.id, ctx.user.studioId ?? 1);
-        return { success: true };
-      }),
-
-    applyToProcedure: protectedProcedure
-      .input(
-        z.object({
-          kitId: z.number().int().positive(),
-          procedureId: z.number().int().positive(),
-        }),
-      )
-      .mutation(async ({ ctx, input }) => {
-        try {
-          return await db.applyProcedureKitToProcedure({
-            kitId: input.kitId,
-            procedureId: input.procedureId,
-            studioId: ctx.user.studioId ?? 1,
-            createdBy: ctx.user.id,
-          });
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Não foi possível aplicar o kit";
-          throw new TRPCError({ code: "BAD_REQUEST", message });
-        }
       }),
   }),
 
   auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
+    me: publicProcedure.query(opts => opts.ctx.user),
+    setActiveStudio: protectedProcedure
+      .input(z.object({ studioId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        if (ctx.user.role !== "superadmin") {
+          if (ctx.user.studioId !== input.studioId) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Usuários SaaS só podem usar a empresa vinculada ao próprio login." });
+          }
+          return { studioId: ctx.user.studioId };
+        }
+
+        const studio = await db.getStudioById(input.studioId);
+        if (!studio || studio.isActive !== 1) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Empresa selecionada não está disponível." });
+        }
+        await db.updateUser(ctx.user.id, { studioId: studio.id });
+        return { studioId: studio.id };
+      }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -204,10 +227,7 @@ export const appRouter = router({
         const crypto = await import("crypto");
         const token = crypto.randomBytes(32).toString("hex");
         const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
-        const expiresAtStr = expiresAt
-          .toISOString()
-          .slice(0, 19)
-          .replace("T", " ");
+        const expiresAtStr = expiresAt.toISOString().slice(0, 19).replace("T", " ");
         // Salvar token no banco
         const dbConn = await db.getDb();
         const { passwordResetTokens } = await import("../drizzle/schema");
@@ -217,10 +237,7 @@ export const appRouter = router({
           expiresAt: expiresAtStr,
         });
         // Enviar notificação ao owner com o link
-        const resetBaseUrl = normalizePublicBaseUrl(
-          process.env.APP_BASE_URL || "https://tatuei.com",
-        );
-        const resetLink = `${resetBaseUrl}/reset-password?token=${token}`;
+        const resetLink = `${process.env.APP_BASE_URL || "https://tatuei.com"}/reset-password?token=${token}`;
         const { notifyOwner } = await import("./_core/notification");
         await notifyOwner({
           title: `Recuperação de senha solicitada`,
@@ -231,40 +248,27 @@ export const appRouter = router({
 
     // Redefinir senha via token
     resetPassword: publicProcedure
-      .input(
-        z.object({
-          token: z.string().min(1),
-          newPassword: z
-            .string()
-            .min(6, "Senha deve ter no mínimo 6 caracteres"),
-        }),
-      )
+      .input(z.object({
+        token: z.string().min(1),
+        newPassword: z.string().min(6, "Senha deve ter no mínimo 6 caracteres"),
+      }))
       .mutation(async ({ input }) => {
         const dbConn = await db.getDb();
         const { passwordResetTokens } = await import("../drizzle/schema");
         const { eq, and, isNull } = await import("drizzle-orm");
         // Buscar token válido e não usado
-        const [resetToken] = await dbConn!
-          .select()
+        const [resetToken] = await dbConn!.select()
           .from(passwordResetTokens)
-          .where(
-            and(
-              eq(passwordResetTokens.token, input.token),
-              isNull(passwordResetTokens.usedAt),
-            ),
-          )
+          .where(and(
+            eq(passwordResetTokens.token, input.token),
+            isNull(passwordResetTokens.usedAt)
+          ))
           .limit(1);
         if (!resetToken) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Token inválido ou já utilizado",
-          });
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Token inválido ou já utilizado" });
         }
         if (new Date(resetToken.expiresAt) < new Date()) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Token expirado. Solicite um novo link.",
-          });
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Token expirado. Solicite um novo link." });
         }
         // Hash da nova senha
         const { hashPassword } = await import("./_core/localAuth");
@@ -272,12 +276,8 @@ export const appRouter = router({
         // Atualizar senha do usuário
         await db.updateUser(resetToken.userId, { passwordHash });
         // Marcar token como usado
-        const usedAtStr = new Date()
-          .toISOString()
-          .slice(0, 19)
-          .replace("T", " ");
-        await dbConn!
-          .update(passwordResetTokens)
+        const usedAtStr = new Date().toISOString().slice(0, 19).replace("T", " ");
+        await dbConn!.update(passwordResetTokens)
           .set({ usedAt: usedAtStr })
           .where(eq(passwordResetTokens.id, resetToken.id));
         return { success: true };
@@ -290,15 +290,12 @@ export const appRouter = router({
         const dbConn = await db.getDb();
         const { passwordResetTokens } = await import("../drizzle/schema");
         const { eq, and, isNull } = await import("drizzle-orm");
-        const [resetToken] = await dbConn!
-          .select()
+        const [resetToken] = await dbConn!.select()
           .from(passwordResetTokens)
-          .where(
-            and(
-              eq(passwordResetTokens.token, input.token),
-              isNull(passwordResetTokens.usedAt),
-            ),
-          )
+          .where(and(
+            eq(passwordResetTokens.token, input.token),
+            isNull(passwordResetTokens.usedAt)
+          ))
           .limit(1);
         if (!resetToken || new Date(resetToken.expiresAt) < new Date()) {
           return { valid: false };
@@ -309,14 +306,28 @@ export const appRouter = router({
 
   // ============ CLIENTS ROUTER ============
   clients: router({
-    list: artistProcedure.query(async ({ ctx }) => {
-      return await db.listClients(ctx.studioId, ctx.artistId);
-    }),
+    list: artistProcedure
+      .input(z.object({ studioId: z.number().int().positive().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const studioId = ctx.user.role === "superadmin"
+          ? input?.studioId ?? ctx.user.studioId
+          : ctx.user.studioId;
+        if (!studioId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Selecione a empresa para consultar os clientes." });
+        }
+        return await db.listClients(studioId, ctx.artistId);
+      }),
 
-    search: protectedProcedure
-      .input(z.object({ term: z.string() }))
-      .query(async ({ input }) => {
-        return await db.searchClients(input.term);
+    search: artistProcedure
+      .input(z.object({ term: z.string(), studioId: z.number().int().positive().optional() }))
+      .query(async ({ ctx, input }) => {
+        const studioId = ctx.user.role === "superadmin"
+          ? input.studioId ?? ctx.user.studioId
+          : ctx.user.studioId;
+        if (!studioId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Selecione a empresa para pesquisar clientes." });
+        }
+        return await db.searchClients(input.term, undefined, undefined, studioId);
       }),
 
     getById: protectedProcedure
@@ -326,53 +337,36 @@ export const appRouter = router({
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          name: z.string().min(1),
-          email: z.string().email().optional().or(z.literal("")),
-          phone: z.string().optional(),
-          birthDate: z.string().optional(),
-          instagram: z.string().optional(),
-          gender: z.enum(["Homem", "Mulher", "Outros"]).optional(),
-          docType: z.enum(["cpf", "passport"]).optional(),
-          docNumber: z.string().optional(),
-          cep: z.string().optional(),
-          street: z.string().optional(),
-          number: z.string().optional(),
-          complement: z.string().optional(),
-          reference: z.string().optional(),
-          neighborhood: z.string().optional(),
-          city: z.string().optional(),
-          state: z.string().optional(),
-          country: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        name: z.string().min(1),
+        email: z.string().email().optional().or(z.literal("")),
+        phone: z.string().optional(),
+        birthDate: z.string().optional(),
+        instagram: z.string().optional(),
+        gender: z.enum(["Homem", "Mulher", "Outros"]).optional(),
+        docType: z.enum(["cpf", "passport"]).optional(),
+        docNumber: z.string().optional(),
+        cep: z.string().optional(),
+        street: z.string().optional(),
+        number: z.string().optional(),
+        complement: z.string().optional(),
+        reference: z.string().optional(),
+        neighborhood: z.string().optional(),
+        city: z.string().optional(),
+        state: z.string().optional(),
+        country: z.string().optional(),
+        studioId: z.number().int().positive().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
         try {
-          // Determinar studioId: usar do contexto ou buscar primeiro estúdio para superadmin
-          let studioId = ctx.user.studioId;
-
+          const studioId = ctx.user.role === "superadmin"
+            ? input.studioId ?? ctx.user.studioId
+            : ctx.user.studioId;
+          
           if (!studioId) {
-            if (ctx.user.role === "superadmin") {
-              // Superadmin sem studioId: usar primeiro estúdio disponível
-              const firstStudio = await db.getFirstStudio();
-              if (!firstStudio) {
-                throw new TRPCError({
-                  code: "PRECONDITION_FAILED",
-                  message:
-                    "Nenhum estúdio cadastrado no sistema. Crie um estúdio primeiro.",
-                });
-              }
-              studioId = firstStudio.id;
-            } else {
-              throw new TRPCError({
-                code: "FORBIDDEN",
-                message:
-                  "Usuário não vinculado a um estúdio. Acesse Configurações para selecionar seu estúdio.",
-              });
-            }
+            throw new TRPCError({ code: "FORBIDDEN", message: "Selecione a empresa antes de cadastrar o cliente." });
           }
-
+          
           const clientData = {
             studioId: studioId,
             artistId: ctx.user.artistId || null, // Vincular ao artista se for colaborador
@@ -394,13 +388,10 @@ export const appRouter = router({
             state: input.state || null,
             country: input.country || "Brasil",
           };
-          console.log(
-            "[clients.create] Creating client with data:",
-            clientData,
-          );
+          console.log('[clients.create] Creating client with data:', clientData);
           const result = await db.createClient(clientData);
-          console.log("[clients.create] Client created successfully:", result);
-
+          console.log('[clients.create] Client created successfully:', result);
+          
           // Registrar auditoria
           try {
             await db.createAuditLog({
@@ -414,12 +405,9 @@ export const appRouter = router({
               userAgent: ctx.req.headers?.["user-agent"],
             });
           } catch (auditError) {
-            console.error(
-              "[clients.create] Audit log failed (non-critical):",
-              auditError,
-            );
+            console.error('[clients.create] Audit log failed (non-critical):', auditError);
           }
-
+          
           // Sincronizar com Google Sheets
           syncClientToSheets({
             id: result.id,
@@ -435,38 +423,36 @@ export const appRouter = router({
 
           return result;
         } catch (error) {
-          console.error("[clients.create] Error creating client:", error);
+          console.error('[clients.create] Error creating client:', error);
           throw error;
         }
       }),
 
     update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          data: z.object({
-            name: z.string().min(1).optional(),
-            email: z.string().email().optional().or(z.literal("")),
-            phone: z.string().optional(),
-            birthDate: z.string().optional(),
-            instagram: z.string().optional(),
-            cep: z.string().optional(),
-            street: z.string().optional(),
-            neighborhood: z.string().optional(),
-            city: z.string().optional(),
-            state: z.string().optional(),
-            country: z.string().optional(),
-            docType: z.enum(["cpf", "passport"]).optional(),
-            docNumber: z.string().optional(),
-          }),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        data: z.object({
+          name: z.string().min(1).optional(),
+          email: z.string().email().optional().or(z.literal("")),
+          phone: z.string().optional(),
+          birthDate: z.string().optional(),
+          instagram: z.string().optional(),
+          cep: z.string().optional(),
+          street: z.string().optional(),
+          neighborhood: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          country: z.string().optional(),
+          docType: z.enum(["cpf", "passport"]).optional(),
+          docNumber: z.string().optional(),
+        })
+      }))
       .mutation(async ({ ctx, input }) => {
         // Buscar dados antes da atualização
         const clientBefore = await db.getClientById(input.id);
-
+        
         const result = await db.updateClient(input.id, input.data);
-
+        
         // Buscar dados depois da atualização
         const clientAfter = await db.getClientById(input.id);
 
@@ -484,7 +470,7 @@ export const appRouter = router({
             country: clientAfter.country,
           });
         }
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -501,32 +487,18 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
-
+        
         return result;
       }),
 
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Apenas administradores podem excluir clientes.",
-          });
-        }
-
         // Buscar dados antes da exclusão
         const clientBefore = await db.getClientById(input.id);
-
-        if (!clientBefore) {
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Cliente não encontrado.",
-          });
-        }
-
+        
         const result = await db.deleteClient(input.id);
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -541,152 +513,97 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
-
+        
         return result;
       }),
   }),
 
   // ============ APPOINTMENTS ROUTER ============
   appointments: router({
-    list: protectedProcedure.query(async ({ ctx }) => {
-      // Bug 8: filtrar por studioId do usuário
-      return await db.listAppointments(ctx.user.studioId ?? null);
+    list: tenantProcedure.query(async ({ ctx }) => {
+      return await db.listAppointments(ctx.studioId, ctx.artistId);
     }),
 
-    getByClientId: protectedProcedure
+    getByClientId: tenantProcedure
       .input(z.object({ clientId: z.number() }))
-      .query(async ({ input }) => {
-        return await db.getAppointmentsByClientId(input.clientId);
+      .query(async ({ ctx, input }) => {
+        return await db.getAppointmentsByClientId(input.clientId, ctx.studioId, ctx.artistId);
       }),
 
-    getById: protectedProcedure
+    getById: tenantProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ ctx, input }) => {
         if (!input.id || input.id <= 0) return null;
-        const d = await db.getDb();
-        if (!d) return null;
-        const { appointments } = await import("../drizzle/schema.js");
-        const { eq, and } = await import("drizzle-orm");
-        const studioId = ctx.user.studioId ?? 0;
-        const rows = await d
-          .select()
-          .from(appointments)
-          .where(
-            and(
-              eq(appointments.id, input.id),
-              eq(appointments.studioId, studioId),
-            ),
-          )
-          .limit(1);
-        return rows[0] ?? null;
+        const appointment = await db.getAppointmentById(input.id);
+        if (!appointment) return null;
+        if (ctx.studioId != null && appointment.studioId !== ctx.studioId) return null;
+        if (ctx.artistId != null && appointment.artistId !== ctx.artistId) return null;
+        return appointment;
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          clientId: z.number(),
-          calendarId: z.number().optional(),
-          date: z.string(), // YYYY-MM-DD HH:mm:ss (local, sem conversão)
-          duration: z.number().min(1),
-          service: z.string().min(1),
-          artist: z.string().min(1),
-          artistId: z.number().optional(), // FK opcional para artists.id
-          status: z
-            .enum([
-              "agendado",
-              "confirmado",
-              "concluido",
-              "cancelado",
-              "reagendado",
-            ])
-            .optional(),
-          notes: z.string().optional(),
-          referenceImageUrl: z.string().optional(),
-          referenceImageKey: z.string().optional(),
-          depositPaid: z.boolean().optional(),
-          depositAmount: z.number().min(0).optional(),
-          totalAmount: z.number().min(0).optional(),
-          depositPaymentMethod: z
-            .enum(["pix", "dinheiro", "credito", "debito", "transferencia"])
-            .optional(),
-          signalStatus: z
-            .enum(["aguardando_sinal", "sinal_confirmado"])
-            .optional(),
-          paymentStatus: z.enum(["pendente", "pago"]).optional(),
-          paymentMethod: z
-            .enum([
-              "dinheiro",
-              "pix",
-              "cartao_credito",
-              "cartao_debito",
-              "transferencia",
-              "outro",
-            ])
-            .optional(),
-          procedureType: z
-            .enum([
-              "tatuagem",
-              "piercing",
-              "micropigmentacao",
-              "laser",
-              "consulta",
-              "retoque",
-              "outro",
-            ])
-            .optional(),
-          procedureTypeOther: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        clientId: z.number(),
+        studioId: z.number().int().positive().optional(),
+        calendarId: z.number().optional(),
+        date: z.string(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
+        duration: z.number().min(1),
+        service: z.string().min(1),
+        artist: z.string().min(1),
+        artistId: z.number().optional(), // FK opcional para artists.id
+        status: z.enum(["agendado", "confirmado", "concluido", "cancelado", "reagendado"]).optional(),
+        notes: z.string().optional(),
+        referenceImageUrl: z.string().optional(),
+        referenceImageKey: z.string().optional(),
+        depositPaid: z.boolean().optional(),
+        depositAmount: z.number().min(0).optional(),
+        totalAmount: z.number().min(0).optional(),
+        depositPaymentMethod: z.enum(["pix", "dinheiro", "credito", "debito", "transferencia"]).optional(),
+        signalStatus: z.enum(["aguardando_sinal", "sinal_confirmado"]).optional(),
+        paymentStatus: z.enum(["pendente", "pago"]).optional(),
+        paymentMethod: z.enum(["dinheiro", "pix", "cartao_credito", "cartao_debito", "transferencia", "outro"]).optional(),
+        procedureType: z.enum(["tatuagem", "piercing", "micropigmentacao", "laser", "consulta", "retoque", "outro"]).optional(),
+        procedureTypeOther: z.string().optional(),
+        autoReminder: z.object({
+          timing: z.enum(["same_day", "day_before"]),
+          sendTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Horário de lembrete inválido."),
+        }).optional(),
+        recordWhatsAppConsent: z.boolean().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
-        // Determinar studioId
-        let studioId = ctx.user.studioId;
+        const studioId = ctx.user.role === "superadmin"
+          ? input.studioId ?? ctx.user.studioId
+          : ctx.user.studioId;
         if (!studioId) {
-          if (ctx.user.role === "superadmin") {
-            const firstStudio = await db.getFirstStudio();
-            if (!firstStudio) {
-              throw new TRPCError({
-                code: "PRECONDITION_FAILED",
-                message: "Nenhum estúdio cadastrado no sistema.",
-              });
-            }
-            studioId = firstStudio.id;
-          } else {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message: "Usuário não vinculado a um estúdio.",
-            });
-          }
+          throw new TRPCError({ code: "FORBIDDEN", message: "Selecione a empresa antes de criar o agendamento." });
         }
 
+        const client = await db.getClientById(input.clientId);
+        if (!client || client.studioId !== studioId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "O cliente selecionado não pertence à empresa escolhida." });
+        }
+        if (input.artistId) {
+          const selectedArtist = await db.getArtistById(input.artistId, studioId);
+          if (!selectedArtist) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "O artista selecionado não pertence à empresa escolhida." });
+          }
+        }
+        
         // Validar horário comercial
         const settings = await db.getStudioSettings();
         if (settings?.businessHours) {
           try {
-            const businessHours = JSON.parse(settings.businessHours) as Record<
-              string,
-              { open: string; close: string; closed: boolean }
-            >;
+            const businessHours = JSON.parse(settings.businessHours) as Record<string, { open: string; close: string; closed: boolean }>;
             const appointmentDate = new Date(input.date);
-            const dayNames = [
-              "sunday",
-              "monday",
-              "tuesday",
-              "wednesday",
-              "thursday",
-              "friday",
-              "saturday",
-            ];
+            const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
             const dayName = dayNames[appointmentDate.getDay()];
             const dayConfig = businessHours[dayName];
             if (dayConfig?.closed) {
-              throw new TRPCError({
-                code: "BAD_REQUEST",
-                message: `O estúdio está fechado neste dia (${dayName}).`,
-              });
+              throw new TRPCError({ code: "BAD_REQUEST", message: `O estúdio está fechado neste dia (${dayName}).` });
             }
             if (dayConfig?.open && dayConfig?.close) {
-              const [openH, openM] = dayConfig.open.split(":").map(Number);
-              const [closeH, closeM] = dayConfig.close.split(":").map(Number);
+              const [openH, openM] = dayConfig.open.split(':').map(Number);
+              const [closeH, closeM] = dayConfig.close.split(':').map(Number);
               const aptHour = appointmentDate.getHours();
               const aptMin = appointmentDate.getMinutes();
               const aptMinutes = aptHour * 60 + aptMin;
@@ -694,10 +611,7 @@ export const appRouter = router({
               const closeMinutes = closeH * 60 + closeM;
               const endMinutes = aptMinutes + input.duration;
               if (aptMinutes < openMinutes || endMinutes > closeMinutes) {
-                throw new TRPCError({
-                  code: "BAD_REQUEST",
-                  message: `Agendamento fora do horário comercial (${dayConfig.open} - ${dayConfig.close}).`,
-                });
+                throw new TRPCError({ code: "BAD_REQUEST", message: `Agendamento fora do horário comercial (${dayConfig.open} - ${dayConfig.close}).` });
               }
             }
           } catch (e) {
@@ -707,11 +621,7 @@ export const appRouter = router({
         }
 
         // Verificar conflitos antes de criar (operação atômica)
-        const conflictCheck = await db.checkAppointmentConflicts(
-          input.artist,
-          input.date,
-          input.duration,
-        );
+        const conflictCheck = await db.checkAppointmentConflicts(input.artist, input.date, input.duration);
         if (conflictCheck.hasConflict) {
           throw new TRPCError({
             code: "CONFLICT",
@@ -725,49 +635,65 @@ export const appRouter = router({
           try {
             const d = await db.getDb();
             if (d) {
-              const { artists: artistsTable } =
-                await import("../drizzle/schema.js");
+              const { artists: artistsTable } = await import("../drizzle/schema.js");
               const { eq, and } = await import("drizzle-orm");
-              const found = await d
-                .select({ id: artistsTable.id })
+              const found = await d.select({ id: artistsTable.id })
                 .from(artistsTable)
-                .where(
-                  and(
-                    eq(artistsTable.name, input.artist),
-                    eq(artistsTable.studioId, studioId),
-                  ),
-                )
+                .where(and(eq(artistsTable.name, input.artist), eq(artistsTable.studioId, studioId)))
                 .limit(1);
               if (found[0]) resolvedArtistId = found[0].id;
             }
-          } catch {
-            /* silencioso — artistId é opcional */
-          }
+          } catch { /* silencioso — artistId é opcional */ }
         }
 
+        const { autoReminder, recordWhatsAppConsent, ...appointmentInput } = input;
         const appointmentData = {
-          ...input,
+          ...appointmentInput,
           artistId: resolvedArtistId,
           studioId: studioId,
-          status: input.status || ("agendado" as const),
+          status: input.status || "agendado" as const,
           notes: input.notes || null,
           depositPaid: input.depositPaid ? 1 : 0,
           depositAmount: input.depositAmount ?? null,
           totalAmount: input.totalAmount ?? null,
-          signalStatus: input.signalStatus || ("aguardando_sinal" as const),
-          paymentStatus: input.paymentStatus || ("pendente" as const),
+          signalStatus: input.signalStatus || "aguardando_sinal" as const,
+          paymentStatus: input.paymentStatus || "pendente" as const,
           paymentMethod: input.paymentMethod ?? null,
         };
         const result = await db.createAppointment(appointmentData);
-        if (result) await db.syncPostSaleFollowupsForAppointment(result);
+
+        const automaticReminder: { scheduled: boolean; scheduledAt: string | null; reason: string | null } = {
+          scheduled: false,
+          scheduledAt: null,
+          reason: null,
+        };
+
+        if (recordWhatsAppConsent) {
+          await recordAppointmentWhatsappConsent({ studioId, clientId: client.id });
+        }
+
+        if (autoReminder) {
+          if (!client?.phone) {
+            automaticReminder.reason = "client_without_phone";
+          } else {
+            const scheduledAt = scheduleAutomaticAppointmentReminder(input.date, autoReminder.timing, autoReminder.sendTime);
+            await db.createAppointmentReminder({
+              appointmentId: result.id,
+              scheduledAt,
+              message: buildAutomaticAppointmentReminderMessage({
+                clientName: client.name ?? "cliente",
+                appointmentDate: input.date,
+                service: input.service,
+                artist: input.artist,
+              }),
+            });
+            automaticReminder.scheduled = true;
+            automaticReminder.scheduledAt = scheduledAt;
+          }
+        }
 
         // Bug 3: Se sinal já está pago ao criar, gerar transação no caixa
-        if (
-          input.depositPaid &&
-          input.depositAmount &&
-          input.depositAmount > 0
-        ) {
-          const client = await db.getClientById(input.clientId);
+        if (input.depositPaid && input.depositAmount && input.depositAmount > 0) {
           await db.createTransaction({
             studioId,
             clientId: input.clientId,
@@ -780,10 +706,7 @@ export const appRouter = router({
             date: new Date().toISOString().slice(0, 10),
           });
         }
-
-        // Buscar nome do cliente
-        const client = await db.getClientById(input.clientId);
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -796,11 +719,10 @@ export const appRouter = router({
           userAgent: ctx.req.headers?.["user-agent"],
         });
 
-        // Disparar mensagem automática de confirmação de agendamento
+        // Para agendamentos sem lembrete programado, preserva a confirmação imediata já existente.
         try {
-          const { dispatchTemplateMessage } =
-            await import("./messaging/service");
-          if (client?.phone) {
+          const { dispatchTemplateMessage } = await import("./messaging/service");
+          if (!autoReminder && client?.phone) {
             await dispatchTemplateMessage({
               trigger: "appointment_created",
               recipientType: "client",
@@ -809,19 +731,17 @@ export const appRouter = router({
               appointmentId: result.id,
               clientId: input.clientId,
               vars: {
-                nome_cliente: client.name,
+                nome_cliente: firstName(client.name),
                 data: input.date,
                 hora: input.date?.split(" ")[1] ?? "",
                 nome_tatuador: input.artist,
                 servico: input.service,
-                nome_estudio: "",
+                nome_estudio: (await db.getStudioById(studioId))?.name ?? "nosso estúdio",
                 endereco: "",
               },
             });
           }
-        } catch (_msgErr) {
-          /* não bloquear fluxo se mensagem falhar */
-        }
+        } catch (_msgErr) { /* não bloquear fluxo se mensagem falhar */ }
 
         // Sincronizar com Google Sheets
         syncAppointmentToSheets({
@@ -839,115 +759,66 @@ export const appRouter = router({
           depositPaymentMethod: input.depositPaymentMethod,
           notes: input.notes,
         });
-
-        return result;
+        
+        return { ...result, automaticReminder };
       }),
 
     update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          data: z.object({
-            calendarId: z.number().optional(),
-            date: z.string().optional(), // YYYY-MM-DD HH:mm:ss (local, sem conversão)
-            duration: z.number().min(1).optional(),
-            service: z.string().min(1).optional(),
-            artist: z.string().min(1).optional(),
-            artistId: z.number().optional(), // FK opcional para artists.id
-            status: z
-              .enum([
-                "agendado",
-                "confirmado",
-                "concluido",
-                "cancelado",
-                "reagendado",
-              ])
-              .optional(),
-            confirmationStatus: z
-              .enum([
-                "pendente",
-                "confirmado",
-                "nao_confirmado",
-                "atraso",
-                "chegada_antecipada",
-                "reagendar",
-              ])
-              .optional(),
-            confirmationDelayMinutes: z
-              .number()
-              .min(5)
-              .max(180)
-              .nullable()
-              .optional(),
-            confirmationAttention: z
-              .enum(["none", "pending", "accepted", "resolved", "reschedule"])
-              .optional(),
-            notes: z.string().optional(),
-            referenceImageUrl: z.string().optional(),
-            referenceImageKey: z.string().optional(),
-            depositPaid: z.boolean().optional(),
-            depositAmount: z.number().min(0).optional(),
-            totalAmount: z.number().min(0).optional(),
-            depositPaymentMethod: z
-              .enum(["pix", "dinheiro", "credito", "debito", "transferencia"])
-              .optional(),
-            signalStatus: z
-              .enum(["aguardando_sinal", "sinal_confirmado"])
-              .optional(),
-            paymentStatus: z.enum(["pendente", "pago"]).optional(),
-            paymentMethod: z
-              .enum([
-                "dinheiro",
-                "pix",
-                "cartao_credito",
-                "cartao_debito",
-                "transferencia",
-                "outro",
-              ])
-              .optional(),
-            procedureType: z
-              .enum([
-                "tatuagem",
-                "piercing",
-                "micropigmentacao",
-                "laser",
-                "consulta",
-                "retoque",
-                "outro",
-              ])
-              .optional(),
-            procedureTypeOther: z.string().optional(),
-          }),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        data: z.object({
+          calendarId: z.number().optional(),
+          date: z.string().optional(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
+          duration: z.number().min(1).optional(),
+          service: z.string().min(1).optional(),
+          artist: z.string().min(1).optional(),
+          artistId: z.number().optional(), // FK opcional para artists.id
+          status: z.enum(["agendado", "confirmado", "concluido", "cancelado", "reagendado"]).optional(),
+          confirmationStatus: z.enum(["pendente", "confirmado", "nao_confirmado", "atraso", "chegada_antecipada"]).optional(),
+          notes: z.string().optional(),
+          referenceImageUrl: z.string().optional(),
+          referenceImageKey: z.string().optional(),
+          depositPaid: z.boolean().optional(),
+          depositAmount: z.number().min(0).optional(),
+          totalAmount: z.number().min(0).optional(),
+          depositPaymentMethod: z.enum(["pix", "dinheiro", "credito", "debito", "transferencia"]).optional(),
+          signalStatus: z.enum(["aguardando_sinal", "sinal_confirmado"]).optional(),
+          paymentStatus: z.enum(["pendente", "pago"]).optional(),
+          paymentMethod: z.enum(["dinheiro", "pix", "cartao_credito", "cartao_debito", "transferencia", "outro"]).optional(),
+          procedureType: z.enum(["tatuagem", "piercing", "micropigmentacao", "laser", "consulta", "retoque", "outro"]).optional(),
+          procedureTypeOther: z.string().optional(),
+          recordWhatsAppConsent: z.boolean().optional(),
+        })
+      }))
       .mutation(async ({ ctx, input }) => {
         // Buscar dados antes da atualização
         const appointmentBefore = await db.getAppointmentById(input.id);
-
-        const { depositPaid, ...restData } = input.data;
+        const activeStudioId = ctx.user.studioId;
+        if (!appointmentBefore) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado." });
+        if (!activeStudioId || appointmentBefore.studioId !== activeStudioId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "O agendamento não pertence à empresa ativa." });
+        }
+        
+        const { depositPaid, recordWhatsAppConsent, ...restData } = input.data;
+        let resolvedArtistId = restData.artistId;
+        if (!resolvedArtistId && restData.artist && appointmentBefore?.studioId) {
+          const resolvedArtist = (await db.listArtists(appointmentBefore.studioId)).find((candidate) => candidate.name === restData.artist);
+          resolvedArtistId = resolvedArtist?.id;
+        }
         const updateData: Parameters<typeof db.updateAppointment>[1] = {
           ...restData,
-          ...(depositPaid !== undefined
-            ? { depositPaid: depositPaid ? 1 : 0 }
-            : {}),
+          ...(resolvedArtistId ? { artistId: resolvedArtistId } : {}),
+          ...(depositPaid !== undefined ? { depositPaid: depositPaid ? 1 : 0 } : {}),
         };
         const result = await db.updateAppointment(input.id, updateData);
 
         // Bug 3: Gerar transação no caixa quando sinal muda de não-pago para pago
-        const wasNotPaid =
-          !appointmentBefore?.depositPaid ||
-          appointmentBefore.depositPaid === 0;
+        const wasNotPaid = !appointmentBefore?.depositPaid || appointmentBefore.depositPaid === 0;
         const isNowPaid = input.data.depositPaid === true;
-        const depositValue =
-          input.data.depositAmount ?? appointmentBefore?.depositAmount ?? 0;
+        const depositValue = input.data.depositAmount ?? appointmentBefore?.depositAmount ?? 0;
         if (wasNotPaid && isNowPaid && depositValue > 0) {
-          let studioId = ctx.user.studioId;
-          if (!studioId) {
-            const firstStudio = await db.getFirstStudio();
-            studioId = firstStudio?.id || 1;
-          }
           await db.createTransaction({
-            studioId,
+            studioId: appointmentBefore.studioId,
             clientId: appointmentBefore?.clientId ?? null,
             appointmentId: input.id,
             type: "entrada",
@@ -961,14 +832,15 @@ export const appRouter = router({
 
         // Buscar dados depois da atualização
         const appointmentAfter = await db.getAppointmentById(input.id);
-        if (appointmentAfter)
-          await db.syncPostSaleFollowupsForAppointment(appointmentAfter);
-
+        
         // Buscar nome do cliente
-        const client = appointmentAfter?.clientId
+        const client = appointmentAfter?.clientId 
           ? await db.getClientById(appointmentAfter.clientId)
           : null;
-
+        if (recordWhatsAppConsent && appointmentAfter?.clientId) {
+          await recordAppointmentWhatsappConsent({ studioId: appointmentBefore.studioId, clientId: appointmentAfter.clientId });
+        }
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -994,147 +866,68 @@ export const appRouter = router({
             clientName: client?.name,
             clientPhone: client?.phone,
             artistName: appointmentAfter.artist,
-            startTime: appointmentAfter.date
-              ? new Date(appointmentAfter.date)
-              : null,
+            startTime: appointmentAfter.date ? new Date(appointmentAfter.date) : null,
             service: appointmentAfter.service,
             status: appointmentAfter.status,
             depositPaid: appointmentAfter.depositPaid === 1,
-            depositAmount: appointmentAfter.depositAmount
-              ? Number(appointmentAfter.depositAmount)
-              : undefined,
-            totalPrice: appointmentAfter.totalAmount
-              ? Number(appointmentAfter.totalAmount)
-              : undefined,
+            depositAmount: appointmentAfter.depositAmount ? Number(appointmentAfter.depositAmount) : undefined,
+            totalPrice: appointmentAfter.totalAmount ? Number(appointmentAfter.totalAmount) : undefined,
             notes: appointmentAfter.notes,
           });
         }
-
+        
         return result;
-      }),
-
-    complete: protectedProcedure
-      .input(z.object({ id: z.number().int().positive() }))
-      .mutation(async ({ ctx, input }) => {
-        const appointment = await db.getAppointmentById(input.id);
-        if (!appointment) {
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Agendamento não encontrado.",
-          });
-        }
-        if (
-          ctx.user.studioId != null &&
-          appointment.studioId !== ctx.user.studioId
-        ) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Você não pode alterar este agendamento.",
-          });
-        }
-        if (appointment.status === "cancelado") {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Um agendamento cancelado não pode ser concluído.",
-          });
-        }
-
-        await db.updateAppointment(input.id, { status: "concluido" });
-        const completed = await db.getAppointmentById(input.id);
-        if (!completed) {
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Não foi possível confirmar a execução do trabalho.",
-          });
-        }
-
-        await db.syncPostSaleFollowupsForAppointment(completed);
-        const client = await db.getClientById(completed.clientId);
-        await db.createAuditLog({
-          userId: ctx.user.id,
-          userName: ctx.user.name || "Usuário sem nome",
-          action: "update",
-          entity: "appointment",
-          entityId: completed.id,
-          entityName: `${client?.name || "Cliente"} - ${completed.service}`,
-          details: {
-            action: "work_completed",
-            previousStatus: appointment.status,
-            newStatus: "concluido",
-            postSaleStages: ["7d", "60d", "180d", "365d"],
-          },
-          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
-          userAgent: ctx.req.headers?.["user-agent"],
-        });
-
-        return { success: true, appointment: completed, followupsCreated: 4 };
       }),
 
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const appointmentBefore = await db.getAppointmentById(input.id);
-        if (appointmentBefore) {
-          await db.syncPostSaleFollowupsForAppointment({
-            ...appointmentBefore,
-            status: "cancelado",
-          });
-        }
         await db.deleteAppointment(input.id);
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
-          userName: ctx.user.name || "Unknown",
-          action: "delete",
-          entity: "appointment",
+          userName: ctx.user.name || 'Unknown',
+          action: 'delete',
+          entity: 'appointment',
           entityId: input.id,
         });
-
+        
         return { success: true };
       }),
 
     checkConflicts: protectedProcedure
-      .input(
-        z.object({
-          artist: z.string(),
-          date: z.string(),
-          duration: z.number(),
-          excludeId: z.number().optional(), // Para excluir o próprio agendamento ao editar
-        }),
-      )
+      .input(z.object({
+        artist: z.string(),
+        date: z.string(),
+        duration: z.number(),
+        excludeId: z.number().optional(), // Para excluir o próprio agendamento ao editar
+      }))
       .query(async ({ input }) => {
-        return await db.checkAppointmentConflicts(
-          input.artist,
-          input.date,
-          input.duration,
-          input.excludeId,
-        );
+        return await db.checkAppointmentConflicts(input.artist, input.date, input.duration, input.excludeId);
       }),
 
     uploadImage: protectedProcedure
-      .input(
-        z.object({
-          fileName: z.string(),
-          fileData: z.string(), // base64
-          contentType: z.string(),
-        }),
-      )
+      .input(z.object({
+        fileName: z.string(),
+        fileData: z.string(), // base64
+        contentType: z.string(),
+      }))
       .mutation(async ({ input, ctx }) => {
         // Converter base64 para Buffer
-        const base64Data = input.fileData.split(",")[1] || input.fileData;
-        const buffer = Buffer.from(base64Data, "base64");
-
+        const base64Data = input.fileData.split(',')[1] || input.fileData;
+        const buffer = Buffer.from(base64Data, 'base64');
+        
         // Gerar chave única para o arquivo
         const timestamp = Date.now();
         const randomSuffix = Math.random().toString(36).substring(7);
-        const fileExtension = input.fileName.split(".").pop();
+        const fileExtension = input.fileName.split('.').pop();
         const fileKey = `appointments/${ctx.user.id}/${timestamp}-${randomSuffix}.${fileExtension}`;
-
+        
         // Upload para S3
         const { storagePut } = await import("./storage");
         const { url } = await storagePut(fileKey, buffer, input.contentType);
-
+        
         return { url, key: fileKey };
       }),
 
@@ -1144,17 +937,8 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const { createHash } = await import("crypto");
         const appointment = await db.getAppointmentById(input.id);
-        if (!appointment)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Agendamento não encontrado",
-          });
-        const secret = process.env.JWT_SECRET;
-        if (!secret)
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Configuração de segurança ausente",
-          });
+        if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
+        const secret = process.env.JWT_SECRET || "secret";
         const token = createHash("sha256")
           .update(`${input.id}:${appointment.date}:${secret}`)
           .digest("hex")
@@ -1162,188 +946,53 @@ export const appRouter = router({
         return { token, date: appointment.date };
       }),
 
-    // Dados mínimos e seguros para a tela pública de resposta.
-    getConfirmationDetails: publicProcedure
-      .input(z.object({ id: z.number(), token: z.string() }))
-      .query(async ({ input }) => {
-        const { createHash, timingSafeEqual } = await import("crypto");
-        const appointment = await db.getAppointmentById(input.id);
-        if (!appointment)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Agendamento não encontrado",
-          });
-        const secret = process.env.JWT_SECRET;
-        if (!secret)
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Configuração de segurança ausente",
-          });
-        const expected = createHash("sha256")
-          .update(`${input.id}:${appointment.date}:${secret}`)
-          .digest("hex")
-          .slice(0, 16);
-        const receivedBuffer = Buffer.from(input.token);
-        const expectedBuffer = Buffer.from(expected);
-        if (
-          receivedBuffer.length !== expectedBuffer.length ||
-          !timingSafeEqual(receivedBuffer, expectedBuffer)
-        ) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Link inválido ou expirado",
-          });
-        }
-        const client = await db.getClientById(appointment.clientId);
-        return {
-          clientName: client?.name?.split(" ")[0] || "Cliente",
-          date: appointment.date,
-          duration: appointment.duration,
-          service: appointment.service,
-          artist: appointment.artist,
-          confirmationStatus: appointment.confirmationStatus || "pendente",
-          confirmationDelayMinutes: appointment.confirmationDelayMinutes,
-        };
-      }),
-
     // Rota pública para confirmação do cliente via link WhatsApp
     confirm: publicProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          token: z.string(),
-          status: z.enum([
-            "confirmado",
-            "nao_confirmado",
-            "atraso",
-            "reagendar",
-          ]),
-          delayMinutes: z.number().min(5).max(180).optional(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        token: z.string(),
+        status: z.enum(["confirmado", "nao_confirmado", "atraso", "chegada_antecipada"]),
+      }))
       .mutation(async ({ input }) => {
-        const { createHash, timingSafeEqual } = await import("crypto");
+        const { createHash } = await import("crypto");
         const appointment = await db.getAppointmentById(input.id);
-        if (!appointment)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Agendamento não encontrado",
-          });
-        const secret = process.env.JWT_SECRET;
-        if (!secret)
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Configuração de segurança ausente",
-          });
+        if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
+        const secret = process.env.JWT_SECRET || "secret";
         const expected = createHash("sha256")
           .update(`${input.id}:${appointment.date}:${secret}`)
           .digest("hex")
           .slice(0, 16);
-        const receivedBuffer = Buffer.from(input.token);
-        const expectedBuffer = Buffer.from(expected);
-        if (
-          receivedBuffer.length !== expectedBuffer.length ||
-          !timingSafeEqual(receivedBuffer, expectedBuffer)
-        ) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Link inválido ou expirado",
-          });
-        }
-        if (input.status === "atraso" && !input.delayMinutes) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Informe o tempo aproximado do atraso",
-          });
-        }
-
-        const client = await db.getClientById(appointment.clientId);
-        const responseLabels = {
-          confirmado: "Confirmo o horário",
-          atraso: `Vou atrasar aproximadamente ${input.delayMinutes || 0} minutos`,
-          nao_confirmado: "Não vou conseguir comparecer",
-          reagendar: "Preciso reagendar",
-        } as const;
-        const appointmentStatus =
-          input.status === "confirmado"
-            ? "confirmado"
-            : input.status === "nao_confirmado"
-              ? "cancelado"
-              : input.status === "reagendar"
-                ? "reagendado"
-                : appointment.status;
-
-        await db.updateAppointment(input.id, {
-          confirmationStatus: input.status,
-          confirmationDelayMinutes:
-            input.status === "atraso" ? input.delayMinutes : null,
-          confirmationAttention:
-            input.status === "confirmado" ? "none" : "pending",
-          status: appointmentStatus,
-        });
-        await db.logAppointmentResponse({
-          appointmentId: input.id,
-          clientId: appointment.clientId,
-          clientName: client?.name || "Cliente",
-          artistName: appointment.artist,
-          responseLabel: responseLabels[input.status],
-        });
+        if (input.token !== expected) throw new TRPCError({ code: "UNAUTHORIZED", message: "Link inválido" });
+        await db.updateAppointment(input.id, { confirmationStatus: input.status });
         return { success: true, status: input.status };
       }),
 
-    // Decisão do estúdio/artista sobre uma resposta que exige atenção.
-    resolveConfirmationAttention: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          decision: z.enum(["accept_delay", "reschedule", "resolved"]),
-        }),
-      )
+    /** Consome um link aleatório, expirável e de uso único enviado ao cliente. */
+    consumeActionLink: publicProcedure
+      .input(z.object({ token: z.string().min(32).max(128) }))
       .mutation(async ({ input }) => {
-        const appointment = await db.getAppointmentById(input.id);
-        if (!appointment)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Agendamento não encontrado",
-          });
-        const client = await db.getClientById(appointment.clientId);
-        let decisionLabel = "Alerta revisado pelo estúdio.";
-
-        if (input.decision === "accept_delay") {
-          await db.updateAppointment(input.id, {
-            status: "confirmado",
-            confirmationAttention: "accepted",
-          });
-          decisionLabel = `Atraso de aproximadamente ${appointment.confirmationDelayMinutes || "?"} minutos aceito; atendimento mantido.`;
-        } else if (input.decision === "reschedule") {
-          await db.updateAppointment(input.id, {
-            status: "reagendado",
-            confirmationStatus: "reagendar",
-            confirmationAttention: "reschedule",
-          });
-          decisionLabel =
-            "Reagendamento solicitado pelo estúdio; aguardando definição de nova data e horário.";
-        } else {
-          await db.updateAppointment(input.id, {
-            confirmationAttention: "resolved",
-          });
+        try {
+          const result = await consumeAppointmentActionLink(input.token);
+          return { success: true, action: result.action, appointmentId: result.appointmentId };
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Não foi possível registrar esta ação." });
         }
-
-        await db.logAppointmentDecision({
-          appointmentId: appointment.id,
-          clientId: appointment.clientId,
-          clientName: client?.name || "Cliente",
-          artistName: appointment.artist,
-          decisionLabel,
-        });
-
-        return { success: true, decision: input.decision };
       }),
 
-    getResponseHistory: protectedProcedure
-      .input(z.object({ clientId: z.number() }))
-      .query(async ({ input }) => {
-        return await db.getAppointmentResponseHistory(input.clientId);
+    /** Alertas de ação do cliente, sempre limitados ao estúdio da sessão. */
+    listActionAlerts: tenantProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(20).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        if (ctx.studioId == null) throw new TRPCError({ code: "FORBIDDEN", message: "Empresa não selecionada." });
+        return listAppointmentActionAlerts(ctx.studioId, input?.limit ?? 8);
+      }),
+
+    markActionAlertViewed: tenantProcedure
+      .input(z.object({ alertId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.studioId == null) throw new TRPCError({ code: "FORBIDDEN", message: "Empresa não selecionada." });
+        await markAppointmentActionAlertViewed(ctx.studioId, input.alertId);
+        return { success: true };
       }),
 
     // ── Lembretes individuais por agendamento ──────────────────────────────────
@@ -1355,13 +1004,11 @@ export const appRouter = router({
         }),
 
       create: protectedProcedure
-        .input(
-          z.object({
-            appointmentId: z.number(),
-            scheduledAt: z.string(), // "YYYY-MM-DD HH:MM:SS"
-            message: z.string().min(1),
-          }),
-        )
+        .input(z.object({
+          appointmentId: z.number(),
+          scheduledAt: z.string(), // "YYYY-MM-DD HH:MM:SS"
+          message: z.string().min(1),
+        }))
         .mutation(async ({ input }) => {
           return await db.createAppointmentReminder({
             appointmentId: input.appointmentId,
@@ -1371,14 +1018,12 @@ export const appRouter = router({
         }),
 
       update: protectedProcedure
-        .input(
-          z.object({
-            id: z.number(),
-            scheduledAt: z.string().optional(),
-            message: z.string().optional(),
-            status: z.enum(["pending", "sent", "failed"]).optional(),
-          }),
-        )
+        .input(z.object({
+          id: z.number(),
+          scheduledAt: z.string().optional(),
+          message: z.string().optional(),
+          status: z.enum(["pending", "sent", "failed"]).optional(),
+        }))
         .mutation(async ({ input }) => {
           const { id, ...data } = input;
           return await db.updateAppointmentReminder(id, data);
@@ -1397,32 +1042,19 @@ export const appRouter = router({
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => {
         const appointment = await db.getAppointmentById(input.id);
-        if (!appointment)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Agendamento não encontrado",
-          });
+        if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
 
         const client = await db.getClientById(appointment.clientId);
-        if (!client)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Cliente não encontrado",
-          });
+        if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
 
         const studioSettings = await db.getStudioSettings();
-        const anamnesisRecords = await db.getAnamnesisByClientId(
-          appointment.clientId,
-        );
-        const latestAnamnesis =
-          anamnesisRecords.length > 0 ? anamnesisRecords[0] : null;
+        const anamnesisRecords = await db.getAnamnesisByClientId(appointment.clientId);
+        const latestAnamnesis = anamnesisRecords.length > 0 ? anamnesisRecords[0] : null;
 
-        const baseUrl = normalizePublicBaseUrl(
-          process.env.APP_BASE_URL ||
-            (process.env.NODE_ENV === "production"
-              ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}`
-              : "http://localhost:3000"),
-        );
+        const baseUrl = process.env.APP_BASE_URL ||
+          (process.env.NODE_ENV === "production"
+            ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}`
+            : "http://localhost:3000");
 
         // Token de confirmação
         const { createHash } = await import("crypto");
@@ -1431,7 +1063,7 @@ export const appRouter = router({
           .update(`${appointment.id}:${appointment.date}:${secret}`)
           .digest("hex")
           .slice(0, 16);
-        const confirmationLink = `${baseUrl}/confirmar?id=${appointment.id}&token=${token}`;
+        const confirmationLink = `${baseUrl}/confirmar?id=${appointment.id}&token=${token}&status=confirmado`;
 
         // Link de anamnese
         const anamnesisLink = latestAnamnesis
@@ -1443,13 +1075,11 @@ export const appRouter = router({
         const googleCalendarUrl = generateGoogleCalendarUrl({
           appointment,
           client,
-          studio: studioSettings
-            ? {
-                name: studioSettings.studioName,
-                address: studioSettings.address,
-                phone: studioSettings.phone,
-              }
-            : null,
+          studio: studioSettings ? {
+            name: studioSettings.studioName,
+            address: studioSettings.address,
+            phone: studioSettings.phone,
+          } : null,
           anamnesis: latestAnamnesis,
           anamnesisLink,
           confirmationLink,
@@ -1457,9 +1087,7 @@ export const appRouter = router({
         });
 
         // Link de WhatsApp com mensagem de confirmação
-        const dateFormatted = new Date(
-          appointment.date.replace(" ", "T") + "-03:00",
-        ).toLocaleString("pt-BR", {
+        const dateFormatted = new Date(appointment.date.replace(" ", "T") + "-03:00").toLocaleString("pt-BR", {
           weekday: "long",
           day: "2-digit",
           month: "long",
@@ -1471,16 +1099,14 @@ export const appRouter = router({
         const studioName = studioSettings?.studioName || "Estúdio";
         const whatsappMessage = encodeURIComponent(
           `Olá ${client.name}! 🎨\n\n` +
-            `Seu agendamento está confirmado:\n` +
-            `• Serviço: ${appointment.service}\n` +
-            `• Artista: ${appointment.artist}\n` +
-            `• Data: ${dateFormatted}\n` +
-            `• Duração: ${appointment.duration} minutos\n` +
-            (studioSettings?.address
-              ? `• Local: ${studioSettings.address}\n`
-              : "") +
-            `\nResponda sobre seu horário de forma rápida pelo link:\n${confirmationLink}\n\n` +
-            `Qualquer dúvida, estamos à disposição! 🙏\n${studioName}`,
+          `Seu agendamento está confirmado:\n` +
+          `• Serviço: ${appointment.service}\n` +
+          `• Artista: ${appointment.artist}\n` +
+          `• Data: ${dateFormatted}\n` +
+          `• Duração: ${appointment.duration} minutos\n` +
+          (studioSettings?.address ? `• Local: ${studioSettings.address}\n` : "") +
+          `\nConfirme sua presença clicando no link:\n${confirmationLink}\n\n` +
+          `Qualquer dúvida, estamos à disposição! 🙏\n${studioName}`
         );
         const whatsappPhone = client.phone?.replace(/\D/g, "") || "";
         const whatsappLink = whatsappPhone
@@ -1499,116 +1125,11 @@ export const appRouter = router({
       }),
   }),
 
-  // ============ PÓS-VENDA AUTOMÁTICO ============
-  postSaleFollowups: router({
-    list: protectedProcedure.query(async ({ ctx }) => {
-      return await db.listPostSaleFollowups(ctx.user.studioId ?? null);
-    }),
-
-    update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          status: z
-            .enum([
-              "scheduled",
-              "due",
-              "sent",
-              "completed",
-              "postponed",
-              "cancelled",
-              "failed",
-            ])
-            .optional(),
-          deliveryMode: z.enum(["manual", "automatic"]).optional(),
-          scheduledAt: z.string().optional(),
-          message: z.string().nullable().optional(),
-        }),
-      )
-      .mutation(async ({ input }) => {
-        const { id, ...data } = input;
-        return await db.updatePostSaleFollowup(id, {
-          ...data,
-          completedAt:
-            data.status === "completed" ? db.toDateStr(new Date()) : undefined,
-        });
-      }),
-
-    sendNow: protectedProcedure
-      .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
-        const followup = await db.getPostSaleFollowup(input.id);
-        if (!followup)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Acompanhamento não encontrado.",
-          });
-        if (!followup.clientPhone)
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Cliente sem WhatsApp cadastrado.",
-          });
-        const { buildPostSaleMessage } = await import("../shared/postSale");
-        const { sendAndLog } = await import("./messaging/service");
-        const message =
-          followup.message ||
-          buildPostSaleMessage({
-            stage: followup.stage,
-            clientName: followup.clientName,
-            artistName: followup.artistName,
-            service: followup.service,
-            anniversaryYears: followup.anniversaryYears,
-          });
-        const result = await sendAndLog({
-          recipientPhone: followup.clientPhone,
-          recipientName: followup.clientName || undefined,
-          recipientType: "client",
-          message,
-          trigger: `post_sale_${followup.stage}`,
-          appointmentId: followup.appointmentId ?? undefined,
-          clientId: followup.clientId,
-        });
-        await db.updatePostSaleFollowup(
-          input.id,
-          result.success
-            ? {
-                status: "sent",
-                sentAt: db.toDateStr(new Date()),
-                lastError: null,
-              }
-            : {
-                status: "failed",
-                lastError: result.error || "Falha no envio",
-              },
-        );
-        if (!result.success)
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message: result.error || "Não foi possível enviar.",
-          });
-        return { success: true };
-      }),
-  }),
-
   // ============ ANAMNESIS ROUTER ============
   anamnesis: router({
-    getAll: protectedProcedure.query(async () => {
-      return await db.getAllAnamnesis();
-    }),
-
-    getRiskAlerts: protectedProcedure.query(async ({ ctx }) => {
-      if (!ctx.user.studioId) return [];
-      return db.getRiskAlerts(ctx.user.studioId);
-    }),
-
-    getRiskHistoryByClientId: protectedProcedure
-      .input(z.object({ clientId: z.number() }))
-      .query(async ({ input, ctx }) => {
-        if (!ctx.user.studioId) return [];
-        return db.getAnamnesisRiskHistoryByClientId(
-          input.clientId,
-          ctx.user.studioId,
-        );
+    getAll: protectedProcedure
+      .query(async () => {
+        return await db.getAllAnamnesis();
       }),
 
     getByClientId: protectedProcedure
@@ -1630,29 +1151,27 @@ export const appRouter = router({
         if (!anamnese) {
           throw new Error("Anamnese não encontrada");
         }
-
+        
         // Retornar dados para geração de PDF no frontend
         return anamnese;
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          clientId: z.number(),
-          appointmentId: z.number().optional(),
-          hasAllergies: z.boolean(),
-          allergiesDetails: z.string().optional(),
-          hasDiseases: z.boolean(),
-          diseasesDetails: z.string().optional(),
-          usesMedication: z.boolean(),
-          medicationDetails: z.string().optional(),
-          isPregnant: z.boolean(),
-          hasKeloid: z.boolean(),
-          acceptedTerms: z.boolean(),
-          signatureUrl: z.string().optional(),
-          pdfUrl: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        clientId: z.number(),
+        appointmentId: z.number().optional(),
+        hasAllergies: z.boolean(),
+        allergiesDetails: z.string().optional(),
+        hasDiseases: z.boolean(),
+        diseasesDetails: z.string().optional(),
+        usesMedication: z.boolean(),
+        medicationDetails: z.string().optional(),
+        isPregnant: z.boolean(),
+        hasKeloid: z.boolean(),
+        acceptedTerms: z.boolean(),
+        signatureUrl: z.string().optional(),
+        pdfUrl: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
         // Calcular nível de risco automaticamente
         const { calculateRiskLevel } = await import("./riskAssessment");
@@ -1684,22 +1203,7 @@ export const appRouter = router({
           riskLevel: riskAssessment.riskLevel,
           riskFactors: JSON.stringify(riskAssessment.riskFactors),
         };
-        const created = await db.createAnamnesis(anamnesisData);
-        const client = await db.getClientById(input.clientId);
-        if (client) {
-          await db.createAnamnesisRiskHistory({
-            studioId: client.studioId,
-            clientId: input.clientId,
-            appointmentId: input.appointmentId || null,
-            anamnesisRecordId: created.id,
-            source: "manual",
-            eventType: "created",
-            riskLevel: riskAssessment.riskLevel,
-            riskFactors: JSON.stringify(riskAssessment.riskFactors),
-            riskVersion: "2026.1",
-          });
-        }
-        return created;
+        return await db.createAnamnesis(anamnesisData);
       }),
   }),
 
@@ -1716,60 +1220,44 @@ export const appRouter = router({
         return await db.getTransactionsByClientId(input.clientId);
       }),
 
-    getByDateRange: protectedProcedure
-      .input(
-        z.object({
-          startDate: z.string(),
-          endDate: z.string(),
-        }),
-      )
-      .query(async ({ input }) => {
-        return await db.getTransactionsByDateRange(
-          input.startDate,
-          input.endDate,
-        );
+    getByDateRange: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "finance" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar dados financeiros." });
+        }
+        return await db.getTransactionsByDateRange(input.startDate, input.endDate, ctx.studioId);
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          clientId: z.number().optional(),
-          appointmentId: z.number().optional(),
-          type: z.enum(["entrada", "saida"]),
-          category: z.string().min(1),
-          description: z.string().optional(),
-          amount: z.number().min(1),
-          paymentMethod: z.enum([
-            "dinheiro",
-            "pix",
-            "credito",
-            "debito",
-            "transferencia",
-          ]),
-          date: z.string(),
-        }),
-      )
+      .input(z.object({
+        clientId: z.number().optional(),
+        appointmentId: z.number().optional(),
+        type: z.enum(["entrada", "saida"]),
+        category: z.string().min(1),
+        description: z.string().optional(),
+        amount: z.number().min(1),
+        paymentMethod: z.enum(["dinheiro", "pix", "credito", "debito", "transferencia"]),
+        date: z.string(),
+      }))
       .mutation(async ({ ctx, input }) => {
         // Determinar studioId
         let studioId = ctx.user.studioId;
         if (!studioId) {
-          if (ctx.user.role === "superadmin") {
+          if (ctx.user.role === 'superadmin') {
             const firstStudio = await db.getFirstStudio();
             if (!firstStudio) {
-              throw new TRPCError({
-                code: "PRECONDITION_FAILED",
-                message: "Nenhum estúdio cadastrado no sistema.",
-              });
+              throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nenhum estúdio cadastrado no sistema." });
             }
             studioId = firstStudio.id;
           } else {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message: "Usuário não vinculado a um estúdio.",
-            });
+            throw new TRPCError({ code: "FORBIDDEN", message: "Usuário não vinculado a um estúdio." });
           }
         }
-
+        
         const transactionData = {
           ...input,
           studioId: studioId,
@@ -1778,12 +1266,12 @@ export const appRouter = router({
           description: input.description || null,
         };
         const result = await db.createTransaction(transactionData);
-
+        
         // Buscar nome do cliente se houver
-        const client = input.clientId
+        const client = input.clientId 
           ? await db.getClientById(input.clientId)
           : null;
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -1798,42 +1286,38 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
-
+        
         return result;
       }),
 
     update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          data: z.object({
-            clientId: z.number().optional().nullable(),
-            appointmentId: z.number().optional().nullable(),
-            type: z.enum(["entrada", "saida"]).optional(),
-            category: z.string().min(1).optional(),
-            description: z.string().optional(),
-            amount: z.number().min(1).optional(),
-            paymentMethod: z
-              .enum(["dinheiro", "pix", "credito", "debito", "transferencia"])
-              .optional(),
-            date: z.string().optional(),
-          }),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        data: z.object({
+          clientId: z.number().optional().nullable(),
+          appointmentId: z.number().optional().nullable(),
+          type: z.enum(["entrada", "saida"]).optional(),
+          category: z.string().min(1).optional(),
+          description: z.string().optional(),
+          amount: z.number().min(1).optional(),
+          paymentMethod: z.enum(["dinheiro", "pix", "credito", "debito", "transferencia"]).optional(),
+          date: z.string().optional(),
+        })
+      }))
       .mutation(async ({ ctx, input }) => {
         // Buscar dados antes da atualização
         const transactionBefore = await db.getTransactionById(input.id);
-
+        
         const result = await db.updateTransaction(input.id, input.data);
-
+        
         // Buscar dados depois da atualização
         const transactionAfter = await db.getTransactionById(input.id);
-
+        
         // Buscar nome do cliente se houver
-        const client = transactionAfter?.clientId
+        const client = transactionAfter?.clientId 
           ? await db.getClientById(transactionAfter.clientId)
           : null;
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -1851,7 +1335,7 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
-
+        
         return result;
       }),
 
@@ -1860,14 +1344,14 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         // Buscar dados antes da exclusão
         const transactionBefore = await db.getTransactionById(input.id);
-
+        
         const result = await db.deleteTransaction(input.id);
-
+        
         // Buscar nome do cliente se houver
-        const client = transactionBefore?.clientId
+        const client = transactionBefore?.clientId 
           ? await db.getClientById(transactionBefore.clientId)
           : null;
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -1883,57 +1367,37 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
-
+        
         return result;
       }),
 
     // Criar transação com baixa automática de materiais do estoque
     createWithMaterials: protectedProcedure
-      .input(
-        z.object({
-          clientId: z.number().optional(),
-          appointmentId: z.number().optional(),
-          type: z.enum(["entrada", "saida"]),
-          category: z.string().min(1),
-          description: z.string().optional(),
-          amount: z.number().min(1),
-          paymentMethod: z.enum([
-            "dinheiro",
-            "pix",
-            "credito",
-            "debito",
-            "transferencia",
-          ]),
-          date: z.string(),
-          materials: z
-            .array(
-              z.object({
-                materialId: z.number(),
-                quantity: z.number().positive(),
-                reason: z.string().optional(),
-              }),
-            )
-            .optional()
-            .default([]),
-        }),
-      )
+      .input(z.object({
+        clientId: z.number().optional(),
+        appointmentId: z.number().optional(),
+        type: z.enum(["entrada", "saida"]),
+        category: z.string().min(1),
+        description: z.string().optional(),
+        amount: z.number().min(1),
+        paymentMethod: z.enum(["dinheiro", "pix", "credito", "debito", "transferencia"]),
+        date: z.string(),
+        materials: z.array(z.object({
+          materialId: z.number(),
+          quantity: z.number().positive(),
+          reason: z.string().optional(),
+        })).optional().default([]),
+      }))
       .mutation(async ({ ctx, input }) => {
         // Determinar studioId
         let studioId = ctx.user.studioId;
         if (!studioId) {
-          if (ctx.user.role === "superadmin") {
+          if (ctx.user.role === 'superadmin') {
             const firstStudio = await db.getFirstStudio();
-            if (!firstStudio)
-              throw new TRPCError({
-                code: "PRECONDITION_FAILED",
-                message: "Nenhum estúdio cadastrado.",
-              });
+            if (!firstStudio) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nenhum estúdio cadastrado." });
             studioId = firstStudio.id;
           } else {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message: "Usuário não vinculado a um estúdio.",
-            });
+            throw new TRPCError({ code: "FORBIDDEN", message: "Usuário não vinculado a um estúdio." });
           }
         }
 
@@ -1950,22 +1414,15 @@ export const appRouter = router({
         const transaction = await db.createTransaction(transactionData);
 
         // Dar baixa nos materiais selecionados
-        const stockResults: Array<{
-          materialId: number;
-          materialName: string;
-          previousStock: number;
-          newStock: number;
-        }> = [];
+        const stockResults: Array<{ materialId: number; materialName: string; previousStock: number; newStock: number }> = [];
         for (const item of materialItems) {
           const mat = await db.getMaterialById(item.materialId);
           if (!mat) continue;
           const result = await db.addStockMovement({
             materialId: item.materialId,
-            type: "saida",
+            type: 'saida',
             quantity: item.quantity,
-            reason:
-              item.reason ||
-              `Baixa via transação financeira - ${transactionInput.category}`,
+            reason: item.reason || `Baixa via transação financeira - ${transactionInput.category}`,
             createdBy: ctx.user.id,
           });
           stockResults.push({
@@ -1994,70 +1451,62 @@ export const appRouter = router({
 
   // ============ REPORTS ROUTER ============
   reports: router({
-    monthlyRevenue: protectedProcedure
-      .input(
-        z.object({
-          startDate: z.string(),
-          endDate: z.string(),
-        }),
-      )
-      .query(async ({ input }) => {
-        return await db.getMonthlyRevenue(input.startDate, input.endDate);
+    monthlyRevenue: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "reports" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar relatórios." });
+        }
+        return await db.getMonthlyRevenue(input.startDate, input.endDate, ctx.studioId);
       }),
 
-    categoryBreakdown: protectedProcedure
-      .input(
-        z.object({
-          startDate: z.string(),
-          endDate: z.string(),
-        }),
-      )
-      .query(async ({ input }) => {
-        return await db.getCategoryBreakdown(input.startDate, input.endDate);
+    categoryBreakdown: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "reports" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar relatórios." });
+        }
+        return await db.getCategoryBreakdown(input.startDate, input.endDate, ctx.studioId);
       }),
 
-    paymentMethodBreakdown: protectedProcedure
-      .input(
-        z.object({
-          startDate: z.string(),
-          endDate: z.string(),
-        }),
-      )
-      .query(async ({ input }) => {
-        return await db.getPaymentMethodBreakdown(
-          input.startDate,
-          input.endDate,
-        );
+    paymentMethodBreakdown: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "reports" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar relatórios." });
+        }
+        return await db.getPaymentMethodBreakdown(input.startDate, input.endDate, ctx.studioId);
       }),
 
-    summary: protectedProcedure
-      .input(
-        z.object({
-          startDate: z.string(),
-          endDate: z.string(),
-        }),
-      )
-      .query(async ({ input }) => {
-        return await db.getFinancialSummary(input.startDate, input.endDate);
+    summary: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "reports" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar relatórios." });
+        }
+        return await db.getFinancialSummary(input.startDate, input.endDate, ctx.studioId);
       }),
     artistRevenue: protectedProcedure
-      .input(
-        z.object({
-          startDate: z.string(),
-          endDate: z.string(),
-          groupBy: z
-            .enum(["week", "month", "bimonth", "year"])
-            .default("month"),
-        }),
-      )
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+        groupBy: z.enum(['week', 'month', 'bimonth', 'year']).default('month'),
+      }))
       .query(async ({ ctx, input }) => {
         // CORREÇÃO 3: passar studioId para filtrar corretamente (antes era hardcoded = 1)
-        return await db.getArtistRevenue(
-          input.startDate,
-          input.endDate,
-          input.groupBy,
-          ctx.user.studioId ?? null,
-        );
+        return await db.getArtistRevenue(input.startDate, input.endDate, input.groupBy, ctx.user.studioId ?? null);
       }),
   }),
 
@@ -2070,12 +1519,10 @@ export const appRouter = router({
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          clientId: z.number(),
-          content: z.string().min(1),
-        }),
-      )
+      .input(z.object({
+        clientId: z.number(),
+        content: z.string().min(1),
+      }))
       .mutation(async ({ input, ctx }) => {
         const noteData = {
           clientId: input.clientId,
@@ -2101,35 +1548,30 @@ export const appRouter = router({
       }),
 
     uploadImage: protectedProcedure
-      .input(
-        z.object({
-          clientId: z.number(),
-          appointmentId: z.number().optional(),
-          imageBase64: z.string(),
-          fileName: z.string(),
-          mimeType: z.string(),
-          description: z.string().optional(),
-          tags: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        clientId: z.number(),
+        appointmentId: z.number().optional(),
+        imageBase64: z.string(),
+        fileName: z.string(),
+        mimeType: z.string(),
+        description: z.string().optional(),
+        tags: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
         // Converter base64 para buffer
-        const base64Data = input.imageBase64.replace(
-          /^data:image\/\w+;base64,/,
-          "",
-        );
-        const buffer = Buffer.from(base64Data, "base64");
-
+        const base64Data = input.imageBase64.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, 'base64');
+        
         // Gerar nome único para o arquivo
         const timestamp = Date.now();
         const randomSuffix = Math.random().toString(36).substring(2, 8);
-        const extension = input.fileName.split(".").pop() || "jpg";
+        const extension = input.fileName.split('.').pop() || 'jpg';
         const fileKey = `client-${input.clientId}/gallery/${timestamp}-${randomSuffix}.${extension}`;
-
+        
         // Upload para S3
         const { storagePut } = await import("./storage");
         const { url } = await storagePut(fileKey, buffer, input.mimeType);
-
+        
         // Salvar no banco de dados
         const galleryData = {
           clientId: input.clientId,
@@ -2139,21 +1581,19 @@ export const appRouter = router({
           description: input.description || null,
           tags: input.tags || null,
         };
-
+        
         return await db.createGalleryImage(galleryData);
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          clientId: z.number(),
-          appointmentId: z.number().optional(),
-          imageUrl: z.string(),
-          imageKey: z.string(),
-          description: z.string().optional(),
-          tags: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        clientId: z.number(),
+        appointmentId: z.number().optional(),
+        imageUrl: z.string(),
+        imageKey: z.string(),
+        description: z.string().optional(),
+        tags: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
         const galleryData = {
           ...input,
@@ -2169,210 +1609,6 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         return await db.deleteGalleryImage(input.id);
       }),
-  }),
-
-  // ============ OPERAÇÃO COMERCIAL ============
-  commercial: router({
-    today: protectedProcedure.query(async ({ ctx }) => {
-      return db.getTodayOperations(ctx.user.studioId ?? 1);
-    }),
-
-    leads: router({
-      list: protectedProcedure.query(async ({ ctx }) => {
-        return db.listSalesLeads(ctx.user.studioId ?? 1);
-      }),
-
-      create: protectedProcedure
-        .input(
-          z.object({
-            clientId: z.number().int().positive().nullable().optional(),
-            appointmentId: z.number().int().positive().nullable().optional(),
-            artistId: z.number().int().positive().nullable().optional(),
-            name: z.string().trim().min(2).max(255),
-            phone: z.string().trim().max(30).nullable().optional(),
-            email: z.string().trim().email().max(320).nullable().optional(),
-            service: z.string().trim().max(255).nullable().optional(),
-            description: z.string().max(5000).nullable().optional(),
-            estimatedValue: z.number().int().min(0).nullable().optional(),
-            stage: z
-              .enum([
-                "new",
-                "awaiting_info",
-                "preparing_quote",
-                "quote_sent",
-                "awaiting_reply",
-                "awaiting_deposit",
-                "scheduled",
-                "lost",
-                "archived",
-              ])
-              .default("new"),
-            nextFollowupAt: z.string().nullable().optional(),
-            notes: z.string().max(5000).nullable().optional(),
-          }),
-        )
-        .mutation(async ({ ctx, input }) => {
-          return db.createSalesLead({
-            ...input,
-            studioId: ctx.user.studioId ?? 1,
-            nextFollowupAt: input.nextFollowupAt
-              ? db.toDateStr(input.nextFollowupAt)
-              : null,
-          });
-        }),
-
-      update: protectedProcedure
-        .input(
-          z.object({
-            id: z.number().int().positive(),
-            clientId: z.number().int().positive().nullable().optional(),
-            appointmentId: z.number().int().positive().nullable().optional(),
-            artistId: z.number().int().positive().nullable().optional(),
-            name: z.string().trim().min(2).max(255).optional(),
-            phone: z.string().trim().max(30).nullable().optional(),
-            email: z.string().trim().email().max(320).nullable().optional(),
-            service: z.string().trim().max(255).nullable().optional(),
-            description: z.string().max(5000).nullable().optional(),
-            estimatedValue: z.number().int().min(0).nullable().optional(),
-            stage: z
-              .enum([
-                "new",
-                "awaiting_info",
-                "preparing_quote",
-                "quote_sent",
-                "awaiting_reply",
-                "awaiting_deposit",
-                "scheduled",
-                "lost",
-                "archived",
-              ])
-              .optional(),
-            nextFollowupAt: z.string().nullable().optional(),
-            lostReason: z.string().max(1000).nullable().optional(),
-            notes: z.string().max(5000).nullable().optional(),
-          }),
-        )
-        .mutation(async ({ ctx, input }) => {
-          const { id, ...data } = input;
-          return db.updateSalesLead(id, ctx.user.studioId ?? 1, {
-            ...data,
-            nextFollowupAt: data.nextFollowupAt
-              ? db.toDateStr(data.nextFollowupAt)
-              : data.nextFollowupAt,
-          });
-        }),
-
-      delete: protectedProcedure
-        .input(z.object({ id: z.number().int().positive() }))
-        .mutation(async ({ ctx, input }) =>
-          db.deleteSalesLead(input.id, ctx.user.studioId ?? 1),
-        ),
-    }),
-
-    waitlist: router({
-      list: protectedProcedure.query(async ({ ctx }) => {
-        return db.listWaitlistEntries(ctx.user.studioId ?? 1);
-      }),
-
-      suggestions: protectedProcedure.query(async ({ ctx }) => {
-        return db.getWaitlistSuggestions(ctx.user.studioId ?? 1);
-      }),
-
-      create: protectedProcedure
-        .input(
-          z.object({
-            clientId: z.number().int().positive(),
-            artistId: z.number().int().positive().nullable().optional(),
-            service: z.string().trim().max(255).nullable().optional(),
-            preferredDays: z
-              .array(
-                z.enum([
-                  "domingo",
-                  "segunda",
-                  "terca",
-                  "quarta",
-                  "quinta",
-                  "sexta",
-                  "sabado",
-                ]),
-              )
-              .default([]),
-            preferredPeriods: z
-              .array(z.enum(["manha", "tarde", "noite"]))
-              .default([]),
-            minDuration: z.number().int().min(15).max(720).default(60),
-            maxDuration: z.number().int().min(15).max(720).default(480),
-            priority: z.number().int().min(0).max(100).default(0),
-            notes: z.string().max(5000).nullable().optional(),
-          }),
-        )
-        .mutation(async ({ ctx, input }) => {
-          if (input.maxDuration < input.minDuration) {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message: "A duração máxima deve ser maior que a mínima",
-            });
-          }
-          const { preferredDays, preferredPeriods, ...data } = input;
-          return db.createWaitlistEntry({
-            ...data,
-            studioId: ctx.user.studioId ?? 1,
-            preferredDays: JSON.stringify(preferredDays),
-            preferredPeriods: JSON.stringify(preferredPeriods),
-            status: "active",
-          });
-        }),
-
-      update: protectedProcedure
-        .input(
-          z.object({
-            id: z.number().int().positive(),
-            artistId: z.number().int().positive().nullable().optional(),
-            service: z.string().trim().max(255).nullable().optional(),
-            preferredDays: z
-              .array(
-                z.enum([
-                  "domingo",
-                  "segunda",
-                  "terca",
-                  "quarta",
-                  "quinta",
-                  "sexta",
-                  "sabado",
-                ]),
-              )
-              .optional(),
-            preferredPeriods: z
-              .array(z.enum(["manha", "tarde", "noite"]))
-              .optional(),
-            minDuration: z.number().int().min(15).max(720).optional(),
-            maxDuration: z.number().int().min(15).max(720).optional(),
-            priority: z.number().int().min(0).max(100).optional(),
-            status: z
-              .enum(["active", "contacted", "booked", "paused", "cancelled"])
-              .optional(),
-            notes: z.string().max(5000).nullable().optional(),
-          }),
-        )
-        .mutation(async ({ ctx, input }) => {
-          const { id, preferredDays, preferredPeriods, ...data } = input;
-          return db.updateWaitlistEntry(id, ctx.user.studioId ?? 1, {
-            ...data,
-            ...(preferredDays
-              ? { preferredDays: JSON.stringify(preferredDays) }
-              : {}),
-            ...(preferredPeriods
-              ? { preferredPeriods: JSON.stringify(preferredPeriods) }
-              : {}),
-          });
-        }),
-
-      delete: protectedProcedure
-        .input(z.object({ id: z.number().int().positive() }))
-        .mutation(async ({ ctx, input }) =>
-          db.deleteWaitlistEntry(input.id, ctx.user.studioId ?? 1),
-        ),
-    }),
   }),
 
   // ============ DASHBOARD ROUTER ============
@@ -2401,13 +1637,11 @@ export const appRouter = router({
   // ============ SEARCH ROUTER ============
   search: router({
     global: protectedProcedure
-      .input(
-        z.object({
-          term: z.string().min(1),
-          startDate: z.date().optional(),
-          endDate: z.date().optional(),
-        }),
-      )
+      .input(z.object({ 
+        term: z.string().min(1),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }))
       .query(async ({ input }) => {
         const [clients, appointments, transactions] = await Promise.all([
           db.searchClients(input.term, input.startDate, input.endDate),
@@ -2424,14 +1658,105 @@ export const appRouter = router({
   }),
 
   // ============ NOTIFICATIONS ROUTER ============
-  notifications: router({
-    getUpcomingAppointments: protectedProcedure.query(async () => {
-      return await db.getUpcomingAppointments();
+  notifications: router({    
+    getUpcomingAppointments: tenantProcedure.query(async ({ ctx }) => {
+      return await db.getUpcomingAppointments(ctx.studioId, ctx.artistId);
     }),
 
     sendReminders: protectedProcedure.mutation(async () => {
       return await db.sendAppointmentReminders();
     }),
+
+    sendSelectedReminders: tenantProcedure
+      .input(z.object({
+        appointmentIds: z.array(z.number().int().positive()).min(1).max(50),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const studioId = ctx.studioId;
+        if (!studioId) throw new TRPCError({ code: "FORBIDDEN", message: "Selecione uma empresa antes de enviar lembretes." });
+        const selectable = await db.getUpcomingAppointments(studioId, ctx.artistId);
+        const requestedIds = new Set(input.appointmentIds);
+        const selected = selectable.filter((appointment) => requestedIds.has(appointment.id));
+        if (selected.length !== requestedIds.size) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Um ou mais agendamentos não estão disponíveis para envio." });
+        }
+
+        const { dispatchTemplateMessage } = await import("./messaging/service");
+        const studio = await db.getStudioById(studioId);
+        if (!studio) throw new TRPCError({ code: "NOT_FOUND", message: "Estúdio selecionado não encontrado." });
+        const studioName = studio.name?.trim() || "nosso estúdio";
+        const studioAddress = formatStudioAddress(studio);
+        const connection = await db.getDb();
+        const activeIntegration = connection ? (await connection.select({ id: whatsappIntegrations.id })
+          .from(whatsappIntegrations)
+          .where(and(
+            eq(whatsappIntegrations.studioId, studioId),
+            eq(whatsappIntegrations.status, "ativo"),
+            eq(whatsappIntegrations.isEnabled, 1),
+          )).limit(1))[0] : null;
+        if (!connection || !activeIntegration) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Não há integração BotConversa ativa para o estúdio selecionado." });
+        }
+        let sent = 0;
+        let failed = 0;
+        const details: Array<{ appointmentId: number; success: boolean; error?: string }> = [];
+
+        for (const appointment of selected) {
+          if (!appointment.clientPhone) {
+            failed += 1;
+            details.push({ appointmentId: appointment.id, success: false, error: "Cliente sem telefone cadastrado" });
+            continue;
+          }
+          const consent = (await connection.select({ id: integrationContacts.id })
+            .from(integrationContacts)
+            .where(and(
+              eq(integrationContacts.studioId, studioId),
+              eq(integrationContacts.integrationId, activeIntegration.id),
+              eq(integrationContacts.clientId, appointment.clientId),
+              eq(integrationContacts.hasWhatsappOptIn, 1),
+              isNull(integrationContacts.optedOutAt),
+            )).limit(1))[0];
+          if (!consent) {
+            failed += 1;
+            details.push({ appointmentId: appointment.id, success: false, error: "Cliente sem opt-in ativo para WhatsApp" });
+            continue;
+          }
+          const date = new Date(`${String(appointment.date).replace(" ", "T")}-03:00`);
+          const actionLinks = await issueAppointmentActionLinks({ studioId, appointmentId: appointment.id });
+          const result = await dispatchTemplateMessage({
+            studioId,
+            trigger: "appointment_reminder_24h",
+            recipientType: "client",
+            recipientPhone: appointment.clientPhone,
+            recipientName: firstName(appointment.clientName),
+            appointmentId: appointment.id,
+            clientId: appointment.clientId,
+            vars: {
+              nome_cliente: firstName(appointment.clientName),
+              nome_estudio: studioName,
+              nome_artista: appointment.artist ?? "artista",
+              nome_tatuador: appointment.artist ?? "artista",
+              data: date.toLocaleDateString("pt-BR"),
+              hora: date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+              servico: appointment.service ?? "sessão",
+              endereco: studioAddress,
+              link_anamnese: "",
+              link_ebook: "",
+              link_confirmacao: actionLinks.confirmed,
+              link_adiantamento: actionLinks.early,
+              link_atraso: actionLinks.late,
+              link_remarcar: actionLinks.reschedule_requested,
+              __appointment_action_links: actionLinks as unknown as string,
+            },
+            idempotencyKey: `manual-appointment-reminder:${studioId}:${appointment.id}:${String(appointment.date)}`,
+          });
+          if (result.success) sent += 1;
+          else failed += 1;
+          details.push({ appointmentId: appointment.id, success: result.success, error: result.success ? undefined : result.error });
+        }
+
+        return { success: failed === 0, sent, failed, details };
+      }),
 
     getNotificationLogs: protectedProcedure
       .input(z.object({ limit: z.number().optional() }))
@@ -2450,19 +1775,31 @@ export const appRouter = router({
       }),
 
     // Listar todos os lembretes individuais pendentes (para exibir na tela de Notificações)
-    getPendingReminders: protectedProcedure.query(async () => {
-      return await db.getAllPendingReminders();
+    getPendingReminders: tenantProcedure.query(async ({ ctx }) => {
+      const studioId = ctx.studioId;
+      if (!studioId) throw new TRPCError({ code: "FORBIDDEN", message: "Selecione uma empresa antes de consultar lembretes." });
+      return await db.getAllPendingReminders(studioId);
     }),
+
+    // Mantém o envio no processador de fila: o clique não abre WhatsApp local
+    // nem realiza chamada externa diretamente na requisição do navegador.
+    sendPendingReminderNow: tenantProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        const studioId = ctx.studioId;
+        if (!studioId) throw new TRPCError({ code: "FORBIDDEN", message: "Selecione uma empresa antes de enviar o lembrete." });
+        const released = await db.releasePendingReminderNow(input.id, studioId);
+        if (!released) throw new TRPCError({ code: "NOT_FOUND", message: "Lembrete pendente não encontrado para o estúdio selecionado." });
+        return { success: true, queued: true };
+      }),
 
     // Atualizar data/hora de um lembrete individual
     updateReminder: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          scheduledAt: z.string(),
-          message: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        scheduledAt: z.string(),
+        message: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
         return await db.updateAppointmentReminder(id, data);
@@ -2484,31 +1821,29 @@ export const appRouter = router({
     }),
 
     update: protectedProcedure
-      .input(
-        z.object({
-          studioName: z.string().optional(),
-          address: z.string().optional(),
-          city: z.string().optional(),
-          state: z.string().optional(),
-          zipCode: z.string().optional(),
-          phone: z.string().optional(),
-          email: z.string().email().optional().or(z.literal("")),
-          website: z.string().optional(),
-          instagram: z.string().optional(),
-          logoUrl: z.string().optional(),
-          logoKey: z.string().optional(),
-          primaryColor: z.string().optional(),
-          secondaryColor: z.string().optional(),
-          businessHours: z.string().optional(),
-          enableBirthdayReminders: z.number().optional(),
-          enableAppointmentReminders: z.number().optional(),
-          // Configurações WhatsApp
-          reminderDaysBefore: z.number().optional(),
-          reminderSendTime: z.string().optional(),
-          reminderResend: z.number().optional(),
-          reminderResendTime: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        studioName: z.string().optional(),
+        address: z.string().optional(),
+        city: z.string().optional(),
+        state: z.string().optional(),
+        zipCode: z.string().optional(),
+        phone: z.string().optional(),
+        email: z.string().email().optional().or(z.literal("")),
+        website: z.string().optional(),
+        instagram: z.string().optional(),
+        logoUrl: z.string().optional(),
+        logoKey: z.string().optional(),
+        primaryColor: z.string().optional(),
+        secondaryColor: z.string().optional(),
+        businessHours: z.string().optional(),
+        enableBirthdayReminders: z.number().optional(),
+        enableAppointmentReminders: z.number().optional(),
+        // Configurações WhatsApp
+        reminderDaysBefore: z.number().optional(),
+        reminderSendTime: z.string().optional(),
+        reminderResend: z.number().optional(),
+        reminderResendTime: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
         return await db.updateStudioSettings(input);
       }),
@@ -2516,56 +1851,69 @@ export const appRouter = router({
 
   // ============ ARTISTS ROUTER ============
   artists: router({
-    list: protectedProcedure.query(async () => {
-      return await db.listArtists();
+    list: tenantProcedure.query(async ({ ctx }) => {
+      return await db.listArtists(ctx.studioId, ctx.artistId);
     }),
 
-    getById: protectedProcedure
+    getById: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
-        return await db.getArtistById(input.id);
+      .query(async ({ ctx, input }) => {
+        return await db.getArtistById(input.id, ctx.studioId);
+      }),
+
+    uploadAvatar: tenantProcedure
+      .input(z.object({
+        artistId: z.number().int().positive(),
+        fileName: z.string().min(1).max(160),
+        imageBase64: z.string().min(1).max(7_000_000),
+        mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const artist = await db.getArtistById(input.artistId, ctx.studioId);
+        if (!artist || (ctx.artistId != null && artist.id !== ctx.artistId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Artista não disponível para este usuário." });
+        }
+        const base64 = input.imageBase64.replace(/^data:image\/(jpeg|png|webp);base64,/, "");
+        const buffer = Buffer.from(base64, "base64");
+        if (!buffer.length || buffer.length > 5 * 1024 * 1024) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "A imagem deve ter até 5 MB." });
+        }
+        const extension = input.mimeType === "image/jpeg" ? "jpg" : input.mimeType.split("/")[1];
+        const fileKey = `artists/${artist.studioId}/${artist.id}/avatar-${Date.now()}.${extension}`;
+        const { storagePut } = await import("./storage");
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        await db.updateArtist(artist.id, { photoUrl: url, photoKey: fileKey });
+        return { photoUrl: url, photoKey: fileKey };
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          name: z.string().min(1),
-          email: z.string().email().optional().or(z.literal("")),
-          phone: z.string().optional(),
-          instagram: z.string().optional(),
-          specialty: z.string().optional(),
-          bio: z.string().optional(),
-          photoUrl: z.string().optional(),
-          photoKey: z.string().optional(),
-          color: z
-            .string()
-            .regex(/^#[0-9A-Fa-f]{6}$/)
-            .optional()
-            .nullable(),
-          active: z.number().optional(),
-        }),
-      )
+      .input(z.object({
+        name: z.string().min(1),
+        email: z.string().email().optional().or(z.literal("")),
+        phone: z.string().optional(),
+        instagram: z.string().optional(),
+        specialty: z.string().optional(),
+        bio: z.string().optional(),
+        photoUrl: z.string().optional(),
+        photoKey: z.string().optional(),
+        color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(),
+        active: z.number().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
         // Determinar studioId
         let studioId = ctx.user.studioId;
         if (!studioId) {
-          if (ctx.user.role === "superadmin") {
+          if (ctx.user.role === 'superadmin') {
             const firstStudio = await db.getFirstStudio();
             if (!firstStudio) {
-              throw new TRPCError({
-                code: "PRECONDITION_FAILED",
-                message: "Nenhum estúdio cadastrado no sistema.",
-              });
+              throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nenhum estúdio cadastrado no sistema." });
             }
             studioId = firstStudio.id;
           } else {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message: "Usuário não vinculado a um estúdio.",
-            });
+            throw new TRPCError({ code: "FORBIDDEN", message: "Usuário não vinculado a um estúdio." });
           }
         }
-
+        
         const artistData = {
           ...input,
           studioId: studioId,
@@ -2574,25 +1922,19 @@ export const appRouter = router({
       }),
 
     update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          name: z.string().min(1).optional(),
-          email: z.string().email().optional().or(z.literal("")),
-          phone: z.string().optional(),
-          instagram: z.string().optional(),
-          specialty: z.string().optional(),
-          bio: z.string().optional(),
-          photoUrl: z.string().optional(),
-          photoKey: z.string().optional(),
-          color: z
-            .string()
-            .regex(/^#[0-9A-Fa-f]{6}$/)
-            .optional()
-            .nullable(),
-          active: z.number().optional(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        email: z.string().email().optional().or(z.literal("")),
+        phone: z.string().optional(),
+        instagram: z.string().optional(),
+        specialty: z.string().optional(),
+        bio: z.string().optional(),
+        photoUrl: z.string().optional(),
+        photoKey: z.string().optional(),
+        color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(),
+        active: z.number().optional(),
+      }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
         return await db.updateArtist(id, data);
@@ -2603,7 +1945,7 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         return await db.deleteArtist(input.id);
       }),
-  }),
+   }),
 
   // ============ USERS ROUTER (Admin only) ============
   users: router({
@@ -2625,24 +1967,20 @@ export const appRouter = router({
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          openId: z.string().min(1),
-          name: z.string().optional(),
-          email: z.string().email().optional().or(z.literal("")),
-          role: z.enum(["superadmin", "admin", "collaborator"]).optional(),
-          studioId: z.number().optional().nullable(),
-          artistId: z.number().optional().nullable(),
-          profilePhotoUrl: z.string().max(500).optional().nullable(),
-          profilePhotoKey: z.string().max(500).optional().nullable(),
-        }),
-      )
+      .input(z.object({
+        openId: z.string().min(1),
+        name: z.string().optional(),
+        email: z.string().email().optional().or(z.literal("")),
+        role: z.enum(["superadmin", "admin", "collaborator"]).optional(),
+        studioId: z.number().optional().nullable(),
+        artistId: z.number().optional().nullable(),
+      }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
         const result = await db.createUser(input);
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -2660,38 +1998,34 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
-
+        
         return result;
       }),
 
     update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          name: z.string().optional(),
-          email: z.string().email().optional().or(z.literal("")),
-          role: z.enum(["superadmin", "admin", "collaborator"]).optional(),
-          studioId: z.number().optional().nullable(),
-          artistId: z.number().optional().nullable(),
-          isActive: z.number().optional(),
-          profilePhotoUrl: z.string().max(500).optional().nullable(),
-          profilePhotoKey: z.string().max(500).optional().nullable(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        email: z.string().email().optional().or(z.literal("")),
+        role: z.enum(["superadmin", "admin", "collaborator"]).optional(),
+        studioId: z.number().optional().nullable(),
+        artistId: z.number().optional().nullable(),
+        isActive: z.number().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
-
+        
         // Buscar dados antes da atualização
         const userBefore = await db.getUserById(input.id);
-
+        
         const { id, ...data } = input;
         const result = await db.updateUser(id, data);
-
+        
         // Buscar dados depois da atualização
         const userAfter = await db.getUserById(input.id);
-
+        
         // Determinar ação (update, activate ou deactivate)
         let action: "update" | "activate" | "deactivate" = "update";
         if (input.isActive !== undefined && userBefore) {
@@ -2701,7 +2035,7 @@ export const appRouter = router({
             action = "deactivate";
           }
         }
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -2718,7 +2052,7 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
-
+        
         return result;
       }),
 
@@ -2728,12 +2062,12 @@ export const appRouter = router({
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
-
+        
         // Buscar dados antes da exclusão
         const userBefore = await db.getUserById(input.id);
-
+        
         const result = await db.deleteUser(input.id);
-
+        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -2748,26 +2082,20 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
-
+        
         return result;
       }),
 
     // Criar usuário local com e-mail + senha (AUTH_MODE=local)
     createLocal: protectedProcedure
-      .input(
-        z.object({
-          name: z.string().min(1, "Nome obrigatório"),
-          email: z.string().email("E-mail inválido"),
-          password: z.string().min(6, "Senha mínima de 6 caracteres"),
-          role: z
-            .enum(["superadmin", "admin", "collaborator"])
-            .default("collaborator"),
-          studioId: z.number().optional().nullable(),
-          artistId: z.number().optional().nullable(),
-          profilePhotoUrl: z.string().max(500).optional().nullable(),
-          profilePhotoKey: z.string().max(500).optional().nullable(),
-        }),
-      )
+      .input(z.object({
+        name: z.string().min(1, "Nome obrigatório"),
+        email: z.string().email("E-mail inválido"),
+        password: z.string().min(6, "Senha mínima de 6 caracteres"),
+        role: z.enum(["superadmin", "admin", "collaborator"]).default("collaborator"),
+        studioId: z.number().optional().nullable(),
+        artistId: z.number().optional().nullable(),
+      }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -2775,10 +2103,7 @@ export const appRouter = router({
         // Verificar se e-mail já existe
         const existing = await db.getUserByEmail(input.email);
         if (existing) {
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: "E-mail já cadastrado",
-          });
+          throw new TRPCError({ code: "CONFLICT", message: "E-mail já cadastrado" });
         }
         const { hashPassword } = await import("./_core/localAuth");
         const passwordHash = await hashPassword(input.password);
@@ -2791,8 +2116,6 @@ export const appRouter = router({
           studioId: input.studioId ?? null,
           artistId: input.artistId ?? null,
           passwordHash,
-          profilePhotoUrl: input.profilePhotoUrl ?? null,
-          profilePhotoKey: input.profilePhotoKey ?? null,
         });
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -2800,90 +2123,28 @@ export const appRouter = router({
           action: "create",
           entity: "user",
           entityName: input.name,
-          details: {
-            email: input.email,
-            role: input.role,
-            loginMethod: "local",
-          },
+          details: { email: input.email, role: input.role, loginMethod: "local" },
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
         return result;
       }),
 
-    uploadProfilePhoto: protectedProcedure
-      .input(
-        z.object({
-          fileData: z.string().min(1).max(7_100_000),
-          mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-        }),
-      )
-      .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Apenas administradores podem enviar fotos de usuários.",
-          });
-        }
-
-        const { decodeProfileImage } = await import("./profileImage");
-        const { storagePut } = await import("./storage");
-        const { randomUUID } = await import("crypto");
-
-        let decoded: ReturnType<typeof decodeProfileImage>;
-        try {
-          decoded = decodeProfileImage(input.fileData, input.mimeType);
-        } catch (error) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Foto de perfil inválida.",
-          });
-        }
-
-        const studioScope = ctx.user.studioId ?? "global";
-        const key = `users/profile/${studioScope}/${randomUUID()}.${decoded.extension}`;
-        const uploaded = await storagePut(key, decoded.buffer, input.mimeType);
-        if (!uploaded.url) {
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message: "O armazenamento de imagens não está disponível.",
-          });
-        }
-        return { profilePhotoUrl: uploaded.url, profilePhotoKey: uploaded.key };
-      }),
-
     // Trocar a própria senha (usuário logado)
     changePassword: protectedProcedure
-      .input(
-        z.object({
-          currentPassword: z.string().min(1, "Senha atual obrigatória"),
-          newPassword: z
-            .string()
-            .min(6, "Nova senha deve ter no mínimo 6 caracteres"),
-        }),
-      )
+      .input(z.object({
+        currentPassword: z.string().min(1, "Senha atual obrigatória"),
+        newPassword: z.string().min(6, "Nova senha deve ter no mínimo 6 caracteres"),
+      }))
       .mutation(async ({ ctx, input }) => {
         const user = await db.getUserById(ctx.user.id);
         if (!user?.passwordHash) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Sua conta não possui senha local configurada",
-          });
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Sua conta não possui senha local configurada" });
         }
-        const { verifyPassword, hashPassword } =
-          await import("./_core/localAuth");
-        const valid = await verifyPassword(
-          input.currentPassword,
-          user.passwordHash,
-        );
+        const { verifyPassword, hashPassword } = await import("./_core/localAuth");
+        const valid = await verifyPassword(input.currentPassword, user.passwordHash);
         if (!valid) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Senha atual incorreta",
-          });
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
         }
         const passwordHash = await hashPassword(input.newPassword);
         await db.updateUser(ctx.user.id, { passwordHash });
@@ -2903,12 +2164,10 @@ export const appRouter = router({
 
     // Redefinir senha de um usuário local (admin only)
     setPassword: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          password: z.string().min(6, "Senha mínima de 6 caracteres"),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        password: z.string().min(6, "Senha mínima de 6 caracteres"),
+      }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -2923,18 +2182,14 @@ export const appRouter = router({
   // ============ AUDIT ROUTER (Admin only) ============
   audit: router({
     list: protectedProcedure
-      .input(
-        z
-          .object({
-            action: z.string().optional(),
-            entity: z.string().optional(),
-            startDate: z.date().optional(),
-            endDate: z.date().optional(),
-            userId: z.number().optional(),
-            limit: z.number().optional(),
-          })
-          .optional(),
-      )
+      .input(z.object({
+        action: z.string().optional(),
+        entity: z.string().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+        userId: z.number().optional(),
+        limit: z.number().optional(),
+      }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -2952,14 +2207,10 @@ export const appRouter = router({
       }),
 
     statistics: protectedProcedure
-      .input(
-        z
-          .object({
-            startDate: z.date().optional(),
-            endDate: z.date().optional(),
-          })
-          .optional(),
-      )
+      .input(z.object({
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -2968,12 +2219,10 @@ export const appRouter = router({
       }),
 
     actionsByDay: protectedProcedure
-      .input(
-        z.object({
-          startDate: z.date(),
-          endDate: z.date(),
-        }),
-      )
+      .input(z.object({
+        startDate: z.date(),
+        endDate: z.date(),
+      }))
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -2982,14 +2231,10 @@ export const appRouter = router({
       }),
 
     actionsByType: protectedProcedure
-      .input(
-        z
-          .object({
-            startDate: z.date().optional(),
-            endDate: z.date().optional(),
-          })
-          .optional(),
-      )
+      .input(z.object({
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -2998,54 +2243,35 @@ export const appRouter = router({
       }),
 
     actionsByEntity: protectedProcedure
-      .input(
-        z
-          .object({
-            startDate: z.date().optional(),
-            endDate: z.date().optional(),
-          })
-          .optional(),
-      )
+      .input(z.object({
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
-        return await db.getAuditActionsByEntity(
-          input?.startDate,
-          input?.endDate,
-        );
+        return await db.getAuditActionsByEntity(input?.startDate, input?.endDate);
       }),
 
     topActiveUsers: protectedProcedure
-      .input(
-        z
-          .object({
-            limit: z.number().optional(),
-            startDate: z.date().optional(),
-            endDate: z.date().optional(),
-          })
-          .optional(),
-      )
+      .input(z.object({
+        limit: z.number().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
-        return await db.getTopActiveUsers(
-          input?.limit,
-          input?.startDate,
-          input?.endDate,
-        );
+        return await db.getTopActiveUsers(input?.limit, input?.startDate, input?.endDate);
       }),
 
     heatmap: protectedProcedure
-      .input(
-        z
-          .object({
-            startDate: z.date().optional(),
-            endDate: z.date().optional(),
-          })
-          .optional(),
-      )
+      .input(z.object({
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -3054,23 +2280,19 @@ export const appRouter = router({
       }),
 
     exportPDF: protectedProcedure
-      .input(
-        z.object({
-          startDate: z.date(),
-          endDate: z.date(),
-          logsLimit: z.number().optional(),
-          usersLimit: z.number().optional(),
-          template: z
-            .object({
-              includeSections: z.array(z.string()).optional(),
-              reportTitle: z.string().optional(),
-              reportSubtitle: z.string().optional(),
-              primaryColor: z.string().optional(),
-              footerText: z.string().optional(),
-            })
-            .optional(),
-        }),
-      )
+      .input(z.object({
+        startDate: z.date(),
+        endDate: z.date(),
+        logsLimit: z.number().optional(),
+        usersLimit: z.number().optional(),
+        template: z.object({
+          includeSections: z.array(z.string()).optional(),
+          reportTitle: z.string().optional(),
+          reportSubtitle: z.string().optional(),
+          primaryColor: z.string().optional(),
+          footerText: z.string().optional(),
+        }).optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -3082,24 +2304,13 @@ export const appRouter = router({
         const usersLimit = input.usersLimit || 5;
 
         // Buscar todos os dados necessários
-        const [
-          statistics,
-          actionsByDay,
-          actionsByType,
-          actionsByEntity,
-          topUsers,
-          recentLogs,
-        ] = await Promise.all([
+        const [statistics, actionsByDay, actionsByType, actionsByEntity, topUsers, recentLogs] = await Promise.all([
           db.getAuditStatistics(input.startDate, input.endDate),
           db.getAuditActionsByDay(input.startDate, input.endDate),
           db.getAuditActionsByType(input.startDate, input.endDate),
           db.getAuditActionsByEntity(input.startDate, input.endDate),
           db.getTopActiveUsers(usersLimit, input.startDate, input.endDate),
-          db.listAuditLogs({
-            startDate: input.startDate,
-            endDate: input.endDate,
-            limit: logsLimit,
-          }),
+          db.listAuditLogs({ startDate: input.startDate, endDate: input.endDate, limit: logsLimit }),
         ]);
 
         // Gerar PDF
@@ -3125,22 +2336,20 @@ export const appRouter = router({
 
   reportTemplates: router({
     create: protectedProcedure
-      .input(
-        z.object({
-          name: z.string(),
-          description: z.string().optional(),
-          includeSections: z.array(z.string()),
-          sectionOrder: z.array(z.string()),
-          logsLimit: z.number(),
-          usersLimit: z.number(),
-          reportTitle: z.string().optional(),
-          reportSubtitle: z.string().optional(),
-          primaryColor: z.string().optional(),
-          logoUrl: z.string().optional(),
-          logoKey: z.string().optional(),
-          footerText: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        name: z.string(),
+        description: z.string().optional(),
+        includeSections: z.array(z.string()),
+        sectionOrder: z.array(z.string()),
+        logsLimit: z.number(),
+        usersLimit: z.number(),
+        reportTitle: z.string().optional(),
+        reportSubtitle: z.string().optional(),
+        primaryColor: z.string().optional(),
+        logoUrl: z.string().optional(),
+        logoKey: z.string().optional(),
+        footerText: z.string().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -3152,12 +2361,13 @@ export const appRouter = router({
         return { id: templateId };
       }),
 
-    list: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
-      }
-      return await db.listReportTemplates(ctx.user.id);
-    }),
+    list: protectedProcedure
+      .query(async ({ ctx }) => {
+        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
+        }
+        return await db.listReportTemplates(ctx.user.id);
+      }),
 
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
@@ -3169,23 +2379,21 @@ export const appRouter = router({
       }),
 
     update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          name: z.string().optional(),
-          description: z.string().optional(),
-          includeSections: z.array(z.string()).optional(),
-          sectionOrder: z.array(z.string()).optional(),
-          logsLimit: z.number().optional(),
-          usersLimit: z.number().optional(),
-          reportTitle: z.string().optional(),
-          reportSubtitle: z.string().optional(),
-          primaryColor: z.string().optional(),
-          logoUrl: z.string().optional(),
-          logoKey: z.string().optional(),
-          footerText: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        includeSections: z.array(z.string()).optional(),
+        sectionOrder: z.array(z.string()).optional(),
+        logsLimit: z.number().optional(),
+        usersLimit: z.number().optional(),
+        reportTitle: z.string().optional(),
+        reportSubtitle: z.string().optional(),
+        primaryColor: z.string().optional(),
+        logoUrl: z.string().optional(),
+        logoKey: z.string().optional(),
+        footerText: z.string().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
@@ -3212,34 +2420,28 @@ export const appRouter = router({
       return await db.listCalendars(ctx.user.id);
     }),
     create: protectedProcedure
-      .input(
-        z.object({
-          name: z.string(),
-          description: z.string().optional(),
-          color: z.string().optional(),
-          isVisible: z.number().optional(),
-          isDefault: z.number().optional(),
-        }),
-      )
+      .input(z.object({
+        name: z.string(),
+        description: z.string().optional(),
+        color: z.string().optional(),
+        isVisible: z.number().optional(),
+        isDefault: z.number().optional(),
+      }))
       .mutation(async ({ input, ctx }) => {
         const calendarData = { ...input, userId: ctx.user.id };
-        const [result] = await (await db.getDb())!
-          .insert(calendars)
-          .values(calendarData);
+        const [result] = await (await db.getDb())!.insert(calendars).values(calendarData);
         const calendar = await db.getCalendarById(result.insertId, ctx.user.id);
         return calendar;
       }),
     update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          name: z.string().optional(),
-          description: z.string().optional(),
-          color: z.string().optional(),
-          isVisible: z.number().optional(),
-          isDefault: z.number().optional(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        color: z.string().optional(),
+        isVisible: z.number().optional(),
+        isDefault: z.number().optional(),
+      }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
         await db.updateCalendar(id, ctx.user.id, data);
@@ -3249,11 +2451,7 @@ export const appRouter = router({
     toggleVisibility: protectedProcedure
       .input(z.object({ id: z.number(), isVisible: z.number() }))
       .mutation(async ({ input, ctx }) => {
-        await db.toggleCalendarVisibility(
-          input.id,
-          ctx.user.id,
-          input.isVisible,
-        );
+        await db.toggleCalendarVisibility(input.id, ctx.user.id, input.isVisible);
         const calendar = await db.getCalendarById(input.id, ctx.user.id);
         return calendar;
       }),
@@ -3269,23 +2467,18 @@ export const appRouter = router({
   anamnese: router({
     // Criar solicitação e gerar link
     createRequest: protectedProcedure
-      .input(
-        z.object({
-          clientId: z.number(),
-          appointmentId: z.number().optional(),
-          sentVia: z.enum(["email", "whatsapp"]),
-          sentTo: z.string(),
-        }),
-      )
+      .input(z.object({
+        clientId: z.number(),
+        appointmentId: z.number().optional(),
+        sentVia: z.enum(["email", "whatsapp"]),
+        sentTo: z.string(),
+      }))
       .mutation(async ({ input }) => {
-        // Gerar token criptograficamente seguro (64 caracteres hexadecimais)
-        const { randomBytes } = await import("node:crypto");
-        const token = randomBytes(32).toString("hex");
+        // Gerar token único
+        const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
         // Expirar em 7 dias
-        const expiresAt = db.toDateStr(
-          new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        );
-
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        
         const requestId = await db.createAnamneseRequest({
           clientId: input.clientId,
           appointmentId: input.appointmentId,
@@ -3293,18 +2486,16 @@ export const appRouter = router({
           sentVia: input.sentVia,
           sentTo: input.sentTo,
           expiresAt,
-          statusRequest: "pendente",
+          statusRequest: 'pendente',
         });
-
+        
         // Retornar link — usa domínio dinâmico do ambiente
-        const baseUrl = normalizePublicBaseUrl(
-          process.env.APP_BASE_URL ||
-            (process.env.NODE_ENV === "production"
-              ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}`
-              : "http://localhost:3000"),
-        );
+        const baseUrl = process.env.APP_BASE_URL ||
+          (process.env.NODE_ENV === "production"
+            ? `https://${process.env.VITE_APP_ID ? "tatuei.com" : "tatuei.manus.space"}`
+            : "http://localhost:3000");
         const link = `${baseUrl}/anamnese/${token}`;
-
+        
         return { requestId, token, link, expiresAt };
       }),
 
@@ -3314,31 +2505,32 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const request = await db.getAnamneseRequestByToken(input.token);
         if (!request) {
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Link inválido ou expirado",
-          });
+          throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido ou expirado" });
         }
         if (new Date(request.expiresAt) < new Date() && !request.completedAt) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Link expirado",
-          });
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado" });
         }
         // Buscar dados do cliente
         const client = await db.getClientById(request.clientId);
-        // Se já preenchida, buscar o payload existente para pré-preencher o formulário
+        // Uma solicitação de revisão mantém a submissão anterior intacta e a usa
+        // somente para pré-preencher o novo formulário.
         let existingPayload: Record<string, any> | null = null;
         let existingSubmissionId: number | null = null;
         if (request.completedAt) {
-          const submission = await db.getAnamneseSubmissionByRequestId(
-            request.id,
-          );
+          const submission = await db.getAnamneseSubmissionByRequestId(request.id);
           if (submission) {
-            try {
-              existingPayload = JSON.parse(submission.payloadJson);
-            } catch {}
+            try { existingPayload = JSON.parse(submission.payloadJson); } catch {}
             existingSubmissionId = submission.id;
+          }
+        } else {
+          const latestSubmission = (await db.getAnamneseSubmissionsByClientId(request.clientId))[0];
+          if (latestSubmission) {
+            try { existingPayload = JSON.parse(latestSubmission.payloadJson); } catch {}
+          } else {
+            const legacyRecord = (await db.getAnamnesisByClientId(request.clientId))[0];
+            if (legacyRecord && client) {
+              existingPayload = buildLegacyAnamneseReviewPayload(client, legacyRecord);
+            }
           }
         }
         return {
@@ -3347,93 +2539,51 @@ export const appRouter = router({
           existingPayload,
           existingSubmissionId,
           isEditing: !!request.completedAt,
+          isReview: !request.completedAt && !!existingPayload,
         };
       }),
 
     // Submeter anamnese preenchida (público) — também suporta reedição
     submitAnamnese: publicProcedure
-      .input(
-        z.object({
-          token: z.string(),
-          payload: z.record(z.string(), z.any()),
-          submissionId: z.number().optional(), // presente quando está editando
-        }),
-      )
+      .input(z.object({
+        token: z.string(),
+        payload: z.record(z.string(), z.any()),
+        submissionId: z.number().optional(), // presente quando está editando
+      }))
       .mutation(async ({ input }) => {
         const request = await db.getAnamneseRequestByToken(input.token);
         if (!request) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido" });
         }
-
+        
         const payloadJson = JSON.stringify(input.payload);
-        const { calculatePublicAnamneseRisk, RISK_ASSESSMENT_VERSION } =
-          await import("./riskAssessment");
-        const riskAssessment = calculatePublicAnamneseRisk(input.payload);
-        const riskData = {
-          riskLevel: riskAssessment.riskLevel,
-          riskFactors: JSON.stringify(riskAssessment.riskFactors),
-          riskVersion: RISK_ASSESSMENT_VERSION,
-        };
-        const client = await db.getClientById(request.clientId);
-
+        
         if (request.completedAt) {
           // Modo edição: atualizar submissão existente
           // Usa o submissionId enviado pelo frontend ou busca pelo requestId como fallback
           let targetId = input.submissionId;
           if (!targetId) {
-            const existing = await db.getAnamneseSubmissionByRequestId(
-              request.id,
-            );
+            const existing = await db.getAnamneseSubmissionByRequestId(request.id);
             targetId = existing?.id;
           }
           if (!targetId) {
-            throw new TRPCError({
-              code: "NOT_FOUND",
-              message: "Submissão original não encontrada",
-            });
+            throw new TRPCError({ code: "NOT_FOUND", message: "Submissão original não encontrada" });
           }
-          await db.updateAnamneseSubmission(targetId, payloadJson, riskData);
-          if (client) {
-            await db.createAnamnesisRiskHistory({
-              studioId: client.studioId,
-              clientId: request.clientId,
-              appointmentId: request.appointmentId,
-              submissionId: targetId,
-              source: "public_link",
-              eventType: "updated",
-              ...riskData,
-            });
-          }
+          await db.updateAnamneseSubmission(targetId, payloadJson);
           return { success: true, submissionId: targetId };
         }
-
+        
         // Primeira submissão
         if (new Date(request.expiresAt) < new Date()) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Link expirado",
-          });
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado" });
         }
         const submissionId = await db.createAnamneseSubmission({
           requestId: request.id,
           clientId: request.clientId,
           appointmentId: request.appointmentId,
           payloadJson,
-          ...riskData,
         });
         await db.markAnamneseRequestCompleted(request.id);
-
-        if (client) {
-          await db.createAnamnesisRiskHistory({
-            studioId: client.studioId,
-            clientId: request.clientId,
-            appointmentId: request.appointmentId,
-            submissionId: Number(submissionId),
-            source: "public_link",
-            eventType: "created",
-            ...riskData,
-          });
-        }
 
         // Sincronizar com Google Sheets
         syncAnamnesisSubmissionToSheets({
@@ -3450,57 +2600,27 @@ export const appRouter = router({
     getByClientId: protectedProcedure
       .input(z.object({ clientId: z.number() }))
       .query(async ({ input }) => {
-        const submissions = await db.getAnamneseSubmissionsByClientId(
-          input.clientId,
-        );
-        return submissions.map((s) => ({
+        const submissions = await db.getAnamneseSubmissionsByClientId(input.clientId);
+        return submissions.map(s => ({
           ...s,
           payload: JSON.parse(s.payloadJson),
         }));
       }),
 
     // Listar solicitações de um cliente
-    getRequestsByClientId: protectedProcedure
+     getRequestsByClientId: protectedProcedure
       .input(z.object({ clientId: z.number() }))
       .query(async ({ input }) => {
         return await db.getAnamneseRequestsByClientId(input.clientId);
       }),
     // Editar submissão via link (painel interno)
     updateSubmission: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          payload: z.record(z.string(), z.any()),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        payload: z.record(z.string(), z.any()),
+      }))
       .mutation(async ({ input }) => {
-        const { calculatePublicAnamneseRisk, RISK_ASSESSMENT_VERSION } =
-          await import("./riskAssessment");
-        const risk = calculatePublicAnamneseRisk(input.payload);
-        const riskData = {
-          riskLevel: risk.riskLevel,
-          riskFactors: JSON.stringify(risk.riskFactors),
-          riskVersion: RISK_ASSESSMENT_VERSION,
-        };
-        await db.updateAnamneseSubmission(
-          input.id,
-          JSON.stringify(input.payload),
-          riskData,
-        );
-        const submission = await db.getAnamneseSubmissionById(input.id);
-        if (submission) {
-          const client = await db.getClientById(submission.clientId);
-          if (client)
-            await db.createAnamnesisRiskHistory({
-              studioId: client.studioId,
-              clientId: submission.clientId,
-              appointmentId: submission.appointmentId,
-              submissionId: submission.id,
-              source: "public_link",
-              eventType: "updated",
-              ...riskData,
-            });
-        }
+        await db.updateAnamneseSubmission(input.id, JSON.stringify(input.payload));
 
         // Sincronizar com Google Sheets
         syncAnamnesisSubmissionToSheets({
@@ -3519,92 +2639,30 @@ export const appRouter = router({
       }),
     // Editar ficha manual (painel interno)
     updateRecord: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          hasAllergies: z.boolean().optional(),
-          allergiesDetails: z.string().optional(),
-          hasDiseases: z.boolean().optional(),
-          diseasesDetails: z.string().optional(),
-          usesMedication: z.boolean().optional(),
-          medicationDetails: z.string().optional(),
-          isPregnant: z.boolean().optional(),
-          hasKeloid: z.boolean().optional(),
-          acceptedTerms: z.boolean().optional(),
-          notes: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        hasAllergies: z.boolean().optional(),
+        allergiesDetails: z.string().optional(),
+        hasDiseases: z.boolean().optional(),
+        diseasesDetails: z.string().optional(),
+        usesMedication: z.boolean().optional(),
+        medicationDetails: z.string().optional(),
+        isPregnant: z.boolean().optional(),
+        hasKeloid: z.boolean().optional(),
+        acceptedTerms: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
-        const current = await db.getAnamnesisById(id);
-        if (!current)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Ficha não encontrada",
-          });
-        const merged = {
-          hasAllergies: data.hasAllergies ?? !!current.hasAllergies,
-          allergiesDetails: data.allergiesDetails ?? current.allergiesDetails,
-          hasDiseases: data.hasDiseases ?? !!current.hasDiseases,
-          diseasesDetails: data.diseasesDetails ?? current.diseasesDetails,
-          usesMedication: data.usesMedication ?? !!current.usesMedication,
-          medicationDetails:
-            data.medicationDetails ?? current.medicationDetails,
-          isPregnant: data.isPregnant ?? !!current.isPregnant,
-          hasKeloid: data.hasKeloid ?? !!current.hasKeloid,
-        };
-        const { calculateRiskLevel } = await import("./riskAssessment");
-        const risk = calculateRiskLevel(merged);
         await db.updateAnamnesisRecord(id, {
           ...data,
-          hasAllergies:
-            data.hasAllergies !== undefined
-              ? data.hasAllergies
-                ? 1
-                : 0
-              : undefined,
-          hasDiseases:
-            data.hasDiseases !== undefined
-              ? data.hasDiseases
-                ? 1
-                : 0
-              : undefined,
-          usesMedication:
-            data.usesMedication !== undefined
-              ? data.usesMedication
-                ? 1
-                : 0
-              : undefined,
-          isPregnant:
-            data.isPregnant !== undefined
-              ? data.isPregnant
-                ? 1
-                : 0
-              : undefined,
-          hasKeloid:
-            data.hasKeloid !== undefined ? (data.hasKeloid ? 1 : 0) : undefined,
-          acceptedTerms:
-            data.acceptedTerms !== undefined
-              ? data.acceptedTerms
-                ? 1
-                : 0
-              : undefined,
-          riskLevel: risk.riskLevel,
-          riskFactors: JSON.stringify(risk.riskFactors),
+          hasAllergies: data.hasAllergies !== undefined ? (data.hasAllergies ? 1 : 0) : undefined,
+          hasDiseases: data.hasDiseases !== undefined ? (data.hasDiseases ? 1 : 0) : undefined,
+          usesMedication: data.usesMedication !== undefined ? (data.usesMedication ? 1 : 0) : undefined,
+          isPregnant: data.isPregnant !== undefined ? (data.isPregnant ? 1 : 0) : undefined,
+          hasKeloid: data.hasKeloid !== undefined ? (data.hasKeloid ? 1 : 0) : undefined,
+          acceptedTerms: data.acceptedTerms !== undefined ? (data.acceptedTerms ? 1 : 0) : undefined,
         });
-        const client = await db.getClientById(current.clientId);
-        if (client)
-          await db.createAnamnesisRiskHistory({
-            studioId: client.studioId,
-            clientId: current.clientId,
-            appointmentId: current.appointmentId,
-            anamnesisRecordId: current.id,
-            source: "manual",
-            eventType: "updated",
-            riskLevel: risk.riskLevel,
-            riskFactors: JSON.stringify(risk.riskFactors),
-            riskVersion: "2026.1",
-          });
         return { success: true };
       }),
     // Excluir ficha manual (painel interno)
@@ -3618,56 +2676,22 @@ export const appRouter = router({
     getSubmissionByRequestId: publicProcedure
       .input(z.object({ requestId: z.number() }))
       .query(async ({ input }) => {
-        const submission = await db.getAnamneseSubmissionByRequestId(
-          input.requestId,
-        );
+        const submission = await db.getAnamneseSubmissionByRequestId(input.requestId);
         if (!submission) return null;
         return { ...submission, payload: JSON.parse(submission.payloadJson) };
       }),
     // Atualizar submissão via formulário público (cliente edita ficha já preenchida)
     updateSubmissionPublic: publicProcedure
-      .input(
-        z.object({
-          token: z.string(),
-          payload: z.record(z.string(), z.any()),
-        }),
-      )
+      .input(z.object({
+        token: z.string(),
+        payload: z.record(z.string(), z.any()),
+      }))
       .mutation(async ({ input }) => {
         const request = await db.getAnamneseRequestByToken(input.token);
-        if (!request)
-          throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido" });
-        const submission = await db.getAnamneseSubmissionByRequestId(
-          request.id,
-        );
-        if (!submission)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Ficha não encontrada",
-          });
-        const { calculatePublicAnamneseRisk, RISK_ASSESSMENT_VERSION } =
-          await import("./riskAssessment");
-        const risk = calculatePublicAnamneseRisk(input.payload);
-        const riskData = {
-          riskLevel: risk.riskLevel,
-          riskFactors: JSON.stringify(risk.riskFactors),
-          riskVersion: RISK_ASSESSMENT_VERSION,
-        };
-        await db.updateAnamneseSubmission(
-          submission.id,
-          JSON.stringify(input.payload),
-          riskData,
-        );
-        const client = await db.getClientById(submission.clientId);
-        if (client)
-          await db.createAnamnesisRiskHistory({
-            studioId: client.studioId,
-            clientId: submission.clientId,
-            appointmentId: submission.appointmentId,
-            submissionId: submission.id,
-            source: "public_link",
-            eventType: "updated",
-            ...riskData,
-          });
+        if (!request) throw new TRPCError({ code: 'NOT_FOUND', message: 'Link inválido' });
+        const submission = await db.getAnamneseSubmissionByRequestId(request.id);
+        if (!submission) throw new TRPCError({ code: 'NOT_FOUND', message: 'Ficha não encontrada' });
+        await db.updateAnamneseSubmission(submission.id, JSON.stringify(input.payload));
         return { success: true };
       }),
   }),
@@ -3683,47 +2707,39 @@ export const appRouter = router({
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => {
         const supplier = await db.getSupplierById(input.id);
-        if (!supplier)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Fornecedor não encontrado",
-          });
+        if (!supplier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fornecedor não encontrado' });
         return supplier;
       }),
 
     create: protectedProcedure
-      .input(
-        z.object({
-          name: z.string().min(1),
-          cnpj: z.string().optional(),
-          contactName: z.string().optional(),
-          phone: z.string().optional(),
-          whatsapp: z.string().optional(),
-          email: z.string().email().optional().or(z.literal("")),
-          address: z.string().optional(),
-          notes: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        name: z.string().min(1),
+        cnpj: z.string().optional(),
+        contactName: z.string().optional(),
+        phone: z.string().optional(),
+        whatsapp: z.string().optional(),
+        email: z.string().email().optional().or(z.literal('')),
+        address: z.string().optional(),
+        notes: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
         const id = await db.createSupplier(input);
         return { id };
       }),
 
     update: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          name: z.string().min(1).optional(),
-          cnpj: z.string().optional(),
-          contactName: z.string().optional(),
-          phone: z.string().optional(),
-          whatsapp: z.string().optional(),
-          email: z.string().email().optional().or(z.literal("")),
-          address: z.string().optional(),
-          notes: z.string().optional(),
-          isActive: z.number().optional(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        cnpj: z.string().optional(),
+        contactName: z.string().optional(),
+        phone: z.string().optional(),
+        whatsapp: z.string().optional(),
+        email: z.string().email().optional().or(z.literal('')),
+        address: z.string().optional(),
+        notes: z.string().optional(),
+        isActive: z.number().optional(),
+      }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
         await db.updateSupplier(id, data);
@@ -3735,181 +2751,6 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         await db.deleteSupplier(input.id);
         return { success: true };
-      }),
-  }),
-
-  // ============ CATÁLOGO TÉCNICO ============
-  catalog: router({
-    brands: protectedProcedure.query(async () => {
-      return await db.listCatalogBrands();
-    }),
-
-    productLines: protectedProcedure
-      .input(
-        z.object({
-          brandId: z.number().int().positive().optional(),
-          category: z.string().trim().min(1).optional(),
-        }),
-      )
-      .query(async ({ input }) => {
-        return await db.listCatalogProductLines(input.brandId, input.category);
-      }),
-
-    search: protectedProcedure
-      .input(
-        z.object({
-          query: z.string().max(255).optional(),
-          category: z.string().trim().min(1).optional(),
-          brandId: z.number().int().positive().optional(),
-          lineId: z.number().int().positive().optional(),
-          formats: z
-            .array(z.string().trim().min(1).max(100))
-            .max(12)
-            .optional(),
-          needleCount: z.number().int().positive().optional(),
-          needleDiameter: z.number().positive().max(1).optional(),
-          taper: z.string().trim().min(1).max(100).optional(),
-          supplierId: z.number().int().positive().optional(),
-          limit: z.number().int().min(1).max(200).optional(),
-        }),
-      )
-      .query(async ({ input }) => {
-        return await db.searchCatalogVariants(input);
-      }),
-
-    supplierOfferings: protectedProcedure
-      .input(z.object({ supplierId: z.number().int().positive() }))
-      .query(async ({ input }) => {
-        return await db.listSupplierCatalogOfferings(input.supplierId);
-      }),
-
-    createSupplierOffering: protectedProcedure
-      .input(
-        z.object({
-          supplierId: z.number().int().positive(),
-          brandId: z.number().int().positive(),
-          lineId: z.number().int().positive().optional(),
-          variantId: z.number().int().positive().optional(),
-          sourceUrl: z.string().url().optional().or(z.literal("")),
-          evidenceStatus: z.enum(["item", "marca", "pendente"]),
-          lastVerifiedAt: z.number().int().positive().optional(),
-          notes: z.string().max(2000).optional(),
-        }),
-      )
-      .mutation(async ({ input }) => {
-        const id = await db.createSupplierCatalogOffering({
-          ...input,
-          sourceUrl: input.sourceUrl || undefined,
-        });
-        return { id };
-      }),
-
-    deactivateSupplierOffering: protectedProcedure
-      .input(z.object({ id: z.number().int().positive() }))
-      .mutation(async ({ input }) => {
-        await db.deactivateSupplierCatalogOffering(input.id);
-        return { success: true };
-      }),
-
-    addToStock: protectedProcedure
-      .input(
-        z.object({
-          variantId: z.number().int().positive(),
-          supplierId: z.number().int().positive().optional(),
-          baseUnit: z.string().trim().min(1).max(50).default("un"),
-          purchaseUnit: z.string().trim().min(1).max(50).default("cx"),
-          unitsPerPackage: z.number().positive().default(1),
-          packageQuantity: z.number().min(0).default(0),
-          minStock: z.number().min(0).default(0),
-          targetStock: z.number().min(0).default(0),
-          avgPrice: z.number().min(0).default(0),
-          lotNumber: z.string().trim().max(100).optional(),
-          expiresAt: z.string().trim().optional(),
-          alertAt: z.string().trim().optional(),
-          notes: z.string().max(2000).optional(),
-        }),
-      )
-      .mutation(async ({ input }) => {
-        if ((input.expiresAt || input.alertAt) && !input.lotNumber) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Informe o lote para cadastrar validade ou data de aviso.",
-          });
-        }
-        if (input.alertAt && !input.expiresAt) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Informe a validade para definir a data do aviso.",
-          });
-        }
-        if (
-          input.alertAt &&
-          input.expiresAt &&
-          new Date(input.alertAt) > new Date(input.expiresAt)
-        ) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "A data do aviso deve ser anterior ou igual à validade.",
-          });
-        }
-        const variant = await db.getCatalogVariantById(input.variantId);
-        if (!variant)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Variação técnica não encontrada.",
-          });
-        if (
-          variant.evidenceStatus === "bloqueado" ||
-          variant.anvisaStatus === "bloqueado"
-        ) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message:
-              "Este produto está bloqueado e não pode ser adicionado ao estoque.",
-          });
-        }
-        const label = [
-          variant.brandName,
-          variant.lineName,
-          variant.name,
-          variant.sku,
-        ]
-          .filter(Boolean)
-          .join(" · ");
-        const normalizedStock = input.packageQuantity * input.unitsPerPackage;
-        const id = await db.createMaterial({
-          name: label,
-          category: variant.category,
-          unit: input.baseUnit,
-          baseUnit: input.baseUnit,
-          purchaseUnit: input.purchaseUnit,
-          unitsPerPackage: String(input.unitsPerPackage),
-          currentStock: "0",
-          minStock: String(input.minStock),
-          targetStock: String(input.targetStock || input.minStock),
-          avgPrice: String(input.avgPrice),
-          supplierId: input.supplierId,
-          catalogVariantId: input.variantId,
-          requiresLotControl: variant.requiresLotControl,
-          anvisaStatus: variant.anvisaStatus,
-          notes: input.notes,
-        });
-        if (normalizedStock > 0) {
-          await db.addStockMovement({
-            materialId: id,
-            type: "entrada",
-            quantity: normalizedStock,
-            inputQuantity: input.packageQuantity,
-            inputUnit: input.purchaseUnit,
-            conversionFactor: input.unitsPerPackage,
-            reason: "Estoque inicial pelo catálogo técnico",
-            lotNumber: input.lotNumber,
-            expiresAt: input.expiresAt,
-            alertAt: input.alertAt,
-            source: "compra",
-          });
-        }
-        return { id };
       }),
   }),
 
@@ -3925,49 +2766,30 @@ export const appRouter = router({
       return await db.getLowStockMaterials();
     }),
 
-    getReorderSuggestions: protectedProcedure.query(async () => {
-      return await db.getReorderSuggestions();
-    }),
-
     getMaterial: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => {
         const mat = await db.getMaterialById(input.id);
-        if (!mat)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Material não encontrado",
-          });
+        if (!mat) throw new TRPCError({ code: 'NOT_FOUND', message: 'Material não encontrado' });
         return mat;
       }),
 
     createMaterial: protectedProcedure
-      .input(
-        z.object({
-          name: z.string().min(1),
-          category: z.string().min(1),
-          unit: z.string().min(1),
-          baseUnit: z.string().min(1).optional(),
-          purchaseUnit: z.string().min(1).optional(),
-          unitsPerPackage: z.number().positive().optional(),
-          currentStock: z.number().min(0).default(0),
-          minStock: z.number().min(0).default(0),
-          targetStock: z.number().min(0).optional(),
-          avgPrice: z.number().min(0).default(0),
-          supplierId: z.number().optional(),
-          catalogVariantId: z.number().int().positive().optional(),
-          notes: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        name: z.string().min(1),
+        category: z.string().min(1),
+        unit: z.string().min(1),
+        currentStock: z.number().min(0).default(0),
+        minStock: z.number().min(0).default(0),
+        avgPrice: z.number().min(0).default(0),
+        supplierId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
         const id = await db.createMaterial({
           ...input,
-          baseUnit: input.baseUnit || input.unit,
-          purchaseUnit: input.purchaseUnit || input.unit,
-          unitsPerPackage: String(input.unitsPerPackage || 1),
           currentStock: String(input.currentStock),
           minStock: String(input.minStock),
-          targetStock: String(input.targetStock ?? input.minStock),
           avgPrice: String(input.avgPrice),
         });
 
@@ -3986,42 +2808,22 @@ export const appRouter = router({
       }),
 
     updateMaterial: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          name: z.string().min(1).optional(),
-          category: z.string().optional(),
-          unit: z.string().optional(),
-          baseUnit: z.string().optional(),
-          purchaseUnit: z.string().optional(),
-          unitsPerPackage: z.number().positive().optional(),
-          minStock: z.number().min(0).optional(),
-          targetStock: z.number().min(0).optional(),
-          avgPrice: z.number().min(0).optional(),
-          supplierId: z.number().optional().nullable(),
-          catalogVariantId: z.number().int().positive().optional().nullable(),
-          notes: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        category: z.string().optional(),
+        unit: z.string().optional(),
+        minStock: z.number().min(0).optional(),
+        avgPrice: z.number().min(0).optional(),
+        supplierId: z.number().optional().nullable(),
+        notes: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
-        const {
-          id,
-          minStock,
-          targetStock,
-          avgPrice,
-          unitsPerPackage,
-          ...rest
-        } = input;
+        const { id, minStock, avgPrice, ...rest } = input;
         await db.updateMaterial(id, {
           ...rest,
           ...(minStock !== undefined ? { minStock: String(minStock) } : {}),
-          ...(targetStock !== undefined
-            ? { targetStock: String(targetStock) }
-            : {}),
           ...(avgPrice !== undefined ? { avgPrice: String(avgPrice) } : {}),
-          ...(unitsPerPackage !== undefined
-            ? { unitsPerPackage: String(unitsPerPackage) }
-            : {}),
         });
 
         // Sincronizar com Google Sheets
@@ -4031,9 +2833,7 @@ export const appRouter = router({
             id: matAfter.id,
             category: matAfter.category,
             model: matAfter.name,
-            currentStock: matAfter.currentStock
-              ? Number(matAfter.currentStock)
-              : 0,
+            currentStock: matAfter.currentStock ? Number(matAfter.currentStock) : 0,
             unit: matAfter.unit,
             minStock: matAfter.minStock ? Number(matAfter.minStock) : 0,
             notes: matAfter.notes,
@@ -4045,133 +2845,38 @@ export const appRouter = router({
 
     deleteMaterial: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Apenas administradores podem remover materiais.",
-          });
-        }
+      .mutation(async ({ input }) => {
         await db.deleteMaterial(input.id);
         return { success: true };
       }),
 
     listMovements: protectedProcedure
-      .input(
-        z.object({
-          materialId: z.number().optional(),
-          limit: z.number().optional().default(50),
-        }),
-      )
+      .input(z.object({ materialId: z.number().optional(), limit: z.number().optional().default(50) }))
       .query(async ({ input }) => {
         return await db.listStockMovements(input.materialId, input.limit);
       }),
 
-    listLots: protectedProcedure
-      .input(z.object({ materialId: z.number().optional() }))
-      .query(async ({ input }) => db.listMaterialLots(input.materialId)),
-
-    deactivateLot: protectedProcedure
-      .input(z.object({ id: z.number().int().positive() }))
-      .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Apenas administradores podem desativar lotes.",
-          });
-        }
-
-        const lot = await db.deactivateMaterialLot(input.id);
-        if (!lot) {
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Lote não encontrado ou já desativado.",
-          });
-        }
-
-        await db.createAuditLog({
-          userId: ctx.user.id,
-          userName: ctx.user.name || "Usuário sem nome",
-          action: "delete",
-          entity: "settings",
-          entityId: lot.id,
-          entityName: `Lote ${lot.lotNumber}`,
-          details: {
-            operation: "deactivate_material_lot",
-            deactivatedLot: lot,
-            stockTotalChanged: false,
-          },
-          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
-          userAgent: ctx.req.headers?.["user-agent"],
-        });
-
-        return { success: true };
-      }),
-
-    getExpiryAlerts: protectedProcedure
-      .input(z.object({ days: z.number().int().min(1).max(365).default(90) }))
-      .query(async ({ input }) => db.getExpiryAlerts(input.days)),
-
     addMovement: protectedProcedure
-      .input(
-        z.object({
-          materialId: z.number(),
-          type: z.enum(["entrada", "saida", "ajuste"]),
-          quantity: z.number().positive(),
-          inputQuantity: z.number().positive().optional(),
-          inputUnit: z.string().trim().min(1).max(50).optional(),
-          conversionFactor: z.number().positive().optional(),
-          reason: z.string().optional(),
-          reference: z.string().optional(),
-          lotNumber: z.string().trim().max(100).optional(),
-          expiresAt: z.string().trim().optional(),
-          alertAt: z.string().trim().optional(),
-          source: z
-            .enum(["manual", "procedimento", "compra", "ajuste"])
-            .optional(),
-        }),
-      )
+      .input(z.object({
+        materialId: z.number(),
+        type: z.enum(['entrada', 'saida', 'ajuste']),
+        quantity: z.number().positive(),
+        reason: z.string().optional(),
+        reference: z.string().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
-        if ((input.expiresAt || input.alertAt) && !input.lotNumber) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Informe o lote para cadastrar validade ou data de aviso.",
-          });
-        }
-        if (input.alertAt && !input.expiresAt) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Informe a validade para definir a data do aviso.",
-          });
-        }
-        if (
-          input.alertAt &&
-          input.expiresAt &&
-          new Date(input.alertAt) > new Date(input.expiresAt)
-        ) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "A data do aviso deve ser anterior ou igual à validade.",
-          });
-        }
-        const movResult = await db.addStockMovement({
-          ...input,
-          createdBy: ctx.user.id,
-        });
+        const movResult = await db.addStockMovement({ ...input, createdBy: ctx.user.id });
 
         // Sincronizar com Google Sheets
         syncStockMovementToSheets({
-          id:
-            typeof movResult === "object" &&
-            movResult !== null &&
-            "id" in movResult
-              ? (movResult as { id: number }).id
-              : 0,
+          id: typeof movResult === 'object' && movResult !== null && 'id' in movResult
+            ? (movResult as { id: number }).id
+            : 0,
           materialId: input.materialId,
           movementType: input.type,
           quantity: input.quantity,
           reason: input.reason,
-          responsible: ctx.user.name || ctx.user.email || "Sistema",
+          responsible: ctx.user.name || ctx.user.email || 'Sistema',
           createdAt: new Date(),
         });
 
@@ -4187,143 +2892,37 @@ export const appRouter = router({
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => {
         const order = await db.getPurchaseOrderById(input.id);
-        if (!order)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Pedido não encontrado",
-          });
+        if (!order) throw new TRPCError({ code: 'NOT_FOUND', message: 'Pedido não encontrado' });
         return order;
       }),
 
     createOrder: protectedProcedure
-      .input(
-        z.object({
-          supplierId: z.number(),
+      .input(z.object({
+        supplierId: z.number(),
+        notes: z.string().optional(),
+        items: z.array(z.object({
+          materialId: z.number(),
+          quantity: z.number().positive(),
+          unitPrice: z.number().min(0).optional(),
           notes: z.string().optional(),
-          items: z
-            .array(
-              z.object({
-                materialId: z.number().int().positive().optional(),
-                catalogVariantId: z.number().int().positive().optional(),
-                materialName: z.string().trim().min(1).max(255),
-                materialUnit: z.string().trim().min(1).max(50),
-                quantity: z.number().positive(),
-                unitPrice: z.number().min(0).optional(),
-                notes: z.string().optional(),
-              }),
-            )
-            .min(1),
-        }),
-      )
+        })).min(1),
+      }))
       .mutation(async ({ ctx, input }) => {
-        const id = await db.createPurchaseOrder({
-          ...input,
-          createdBy: ctx.user.id,
-        });
+        const id = await db.createPurchaseOrder({ ...input, createdBy: ctx.user.id });
         return { id };
       }),
 
     updateOrderStatus: protectedProcedure
-      .input(
-        z.object({
-          id: z.number(),
-          status: z.enum([
-            "rascunho",
-            "enviado",
-            "confirmado",
-            "recebido",
-            "cancelado",
-          ]),
-        }),
-      )
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(['rascunho', 'enviado', 'confirmado', 'recebido', 'cancelado']),
+      }))
       .mutation(async ({ input }) => {
-        if (input.status === "recebido") {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message:
-              "Use a função Receber pedido para lançar os itens no estoque.",
-          });
-        }
         await db.updatePurchaseOrderStatus(input.id, input.status);
         return { success: true };
       }),
 
-    receiveOrder: protectedProcedure
-      .input(
-        z.object({
-          orderId: z.number().int().positive(),
-          items: z
-            .array(
-              z.object({
-                orderItemId: z.number().int().positive(),
-                materialId: z.number().int().positive().optional(),
-                receivedQuantity: z.number().min(0).max(1_000_000),
-                baseUnit: z.string().trim().min(1).max(50),
-                purchaseUnit: z.string().trim().min(1).max(50),
-                unitsPerPackage: z.number().positive().max(1_000_000),
-                unitPrice: z.number().min(0).max(100_000_000).optional(),
-                lotNumber: z.string().trim().max(100).optional(),
-                expiresAt: z.string().trim().optional(),
-                alertAt: z.string().trim().optional(),
-                qualityStatus: z.enum([
-                  "nao_verificada",
-                  "aprovado",
-                  "ressalva",
-                  "recusado",
-                ]),
-                qualityNotes: z.string().trim().max(2000).optional(),
-              }),
-            )
-            .min(1),
-        }),
-      )
-      .mutation(async ({ ctx, input }) => {
-        try {
-          const result = await db.receivePurchaseOrder({
-            ...input,
-            receivedBy: ctx.user.id,
-          });
-
-          for (const movement of result.movements) {
-            syncStockMovementToSheets({
-              id: movement.id,
-              materialId: movement.materialId,
-              movementType: "entrada",
-              quantity: movement.quantity,
-              reason: `Recebimento do pedido #${input.orderId}`,
-              responsible: ctx.user.name || ctx.user.email || "Sistema",
-              createdAt: new Date(),
-            });
-          }
-
-          await db.createAuditLog({
-            userId: ctx.user.id,
-            userName: ctx.user.name || "Usuário sem nome",
-            action: "update",
-            entity: "settings",
-            entityId: input.orderId,
-            entityName: `Pedido #${input.orderId}`,
-            details: {
-              operation: "receive_purchase_order",
-              stockMovements: result.movements,
-            },
-            ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
-            userAgent: ctx.req.headers?.["user-agent"],
-          });
-
-          return result;
-        } catch (error) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Não foi possível receber o pedido.",
-          });
-        }
-      }),
-
-    deleteOrder: protectedProcedure
+     deleteOrder: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         await db.deletePurchaseOrder(input.id);
@@ -4333,13 +2932,9 @@ export const appRouter = router({
       .input(z.object({ orderId: z.number() }))
       .query(async ({ input }) => {
         const order = await db.getPurchaseOrderById(input.orderId);
-        if (!order)
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Pedido não encontrado",
-          });
+        if (!order) throw new TRPCError({ code: 'NOT_FOUND', message: 'Pedido não encontrado' });
         const message = db.buildWhatsAppOrderMessage(order as any);
-        const rawPhone = (order.supplierWhatsapp || "").trim();
+        const rawPhone = (order.supplierWhatsapp || '').trim();
         const encodedMsg = encodeURIComponent(message);
         const link = rawPhone
           ? `https://wa.me/${normalizeWhatsAppNumber(rawPhone)}?text=${encodedMsg}`
@@ -4362,19 +2957,14 @@ export const appRouter = router({
 
     // Definir/atualizar percentual de um artista
     upsert: protectedProcedure
-      .input(
-        z.object({
-          artistId: z.number(),
-          percentage: z.number().min(0).max(100),
-          notes: z.string().optional(),
-        }),
-      )
+      .input(z.object({
+        artistId: z.number(),
+        percentage: z.number().min(0).max(100),
+        notes: z.string().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Apenas administradores podem editar percentuais",
-          });
+        if (ctx.user.role !== 'admin' && ctx.user.role !== 'superadmin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Apenas administradores podem editar percentuais' });
         }
         let studioId = ctx.user.studioId;
         if (!studioId) {
@@ -4388,55 +2978,48 @@ export const appRouter = router({
   // ===== RELATÓRIOS FINANCEIROS POR COLABORADOR =====
   collaboratorReports: router({
     // Relatório de um colaborador por período
-    byPeriod: protectedProcedure
-      .input(
-        z.object({
-          artistName: z.string(),
-          period: z.enum(["daily", "weekly", "monthly", "annual"]),
-          referenceDate: z.string().optional(), // YYYY-MM-DD
-        }),
-      )
+    byPeriod: artistProcedure
+      .input(z.object({
+        artistName: z.string(),
+        period: z.enum(['daily', 'weekly', 'monthly', 'annual']),
+        referenceDate: z.string().optional(), // YYYY-MM-DD
+      }))
       .query(async ({ ctx, input }) => {
-        let studioId = ctx.user.studioId;
+        let studioId = ctx.studioId;
         if (!studioId) {
           const firstStudio = await db.getFirstStudio();
           studioId = firstStudio?.id || 1;
         }
-        return db.getCollaboratorReport(
-          studioId,
-          input.artistName,
-          input.period,
-          input.referenceDate,
-        );
+        if (ctx.artistId != null) {
+          const artist = await db.getArtistById(ctx.artistId, studioId);
+          if (!artist) throw new TRPCError({ code: "FORBIDDEN", message: "Artista não disponível para este usuário." });
+          return db.getCollaboratorReport(studioId, artist.name, input.period, input.referenceDate);
+        }
+        return db.getCollaboratorReport(studioId, input.artistName, input.period, input.referenceDate);
       }),
 
     // Relatório geral de todos os colaboradores
-    summary: protectedProcedure
-      .input(
-        z.object({
-          period: z.enum(["daily", "weekly", "monthly", "annual"]),
-          referenceDate: z.string().optional(),
-        }),
-      )
+    summary: artistProcedure
+      .input(z.object({
+        period: z.enum(['daily', 'weekly', 'monthly', 'annual']),
+        referenceDate: z.string().optional(),
+      }))
       .query(async ({ ctx, input }) => {
-        let studioId = ctx.user.studioId;
+        let studioId = ctx.studioId;
         if (!studioId) {
           const firstStudio = await db.getFirstStudio();
           studioId = firstStudio?.id || 1;
         }
-        return db.getCollaboratorsSummary(
-          studioId,
-          input.period,
-          input.referenceDate,
-        );
+        return db.getCollaboratorsSummary(studioId, input.period, input.referenceDate, ctx.artistId);
       }),
   }),
 
-  // ============ CONTACTS IMPORT/EXPORT ROUTER ============
+   // ============ CONTACTS IMPORT/EXPORT ROUTER ============
   contacts: contactsRouter,
-  legacyAnamnesis: legacyAnamnesisRouter,
   // ============ POD SESSION — EXECUÇÃO TÉCNICA ============
   procedures: proceduresRouter,
+  // ============ POD SESSION SaaS — CATÁLOGO, ESTOQUE E AUDITORIA ============
+  pod: podSaasRouter,
   // ============ CENTRAL DE MENSAGENS / WHATSAPP ============
   messaging: messagingRouter,
 });

@@ -17,7 +17,6 @@ build/
 # IDE and editor files
 .vscode/
 .idea/
-.manus/
 *.swp
 *.swo
 *~
@@ -107,3 +106,10 @@ temp/
 *.sqlite
 *.sqlite3
 .project-config.json
+
+# Deployment artifacts
+__MACOSX/
+*.zip
+
+# Manus local/runtime metadata (may contain infrastructure identifiers)
+.manus/

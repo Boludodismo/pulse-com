@@ -12,7 +12,6 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Send } from "lucide-react";
-import { buildWhatsAppLink } from "@shared/const";
 
 // Máscara de data DD/MM/AAAA
 function applyDateMask(raw: string): string {
@@ -100,10 +99,10 @@ export default function NewClient() {
           
           // Abrir WhatsApp ou mostrar mensagem de sucesso
           if (anamneseChannel === "whatsapp") {
-            const message =
+            const message = encodeURIComponent(
               `Olá ${formData.name}! Por favor, preencha sua ficha de anamnese através deste link: ${link}`
-            ;
-            window.open(buildWhatsAppLink(recipient, message), "_blank");
+            );
+            window.open(`https://wa.me/${recipient.replace(/\D/g, "")}?text=${message}`, "_blank");
             toast.success("WhatsApp aberto com o link de anamnese!");
           } else {
             toast.success("Link de anamnese criado! (Email será implementado em breve)");
