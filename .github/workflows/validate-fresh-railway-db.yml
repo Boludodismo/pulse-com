@@ -23,7 +23,7 @@ jobs:
     env:
       DATABASE_URL: mysql://root:rootpass@127.0.0.1:3306/podcrm
       RUN_DB_MIGRATIONS: "true"
-      MIGRATION_BASELINE_INDEX: "14"
+      MIGRATION_BASELINE_INDEX: "0"
       AUTH_MODE: local
       VITE_AUTH_MODE: local
       JWT_SECRET: ci-only-secret-at-least-32-characters-long
