@@ -1,0 +1,88 @@
+name: Finalizar homologacao 2026-09-06
+
+on:
+  push:
+    branches:
+      - homologacao-2026-09-06
+    paths:
+      - '.upload/**'
+      - '.github/workflows/unpack-homologacao.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unpack-validate-commit:
+    if: github.ref == 'refs/heads/homologacao-2026-09-06'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout da branch de homologacao
+        uses: actions/checkout@v4
+        with:
+          ref: homologacao-2026-09-06
+          fetch-depth: 0
+
+      - name: Reconstruir pacote e substituir staging pelo projeto real
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .upload/tatuei_archive.part* | tr -d '\r\n' | base64 --decode > /tmp/tatuei.tar.xz
+          mkdir -p /tmp/tatuei
+          tar -xJf /tmp/tatuei.tar.xz -C /tmp/tatuei
+          test -f /tmp/tatuei/package.json
+          test -d /tmp/tatuei/client
+          test -d /tmp/tatuei/server
+          test -d /tmp/tatuei/drizzle
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
+          cp -a /tmp/tatuei/. .
+          rm -rf .upload
+          echo "Arquivos reconstruidos: $(find . -type f -not -path './.git/*' | wc -l)"
+
+      - name: Configurar pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.4.1
+          run_install: false
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Validar TypeScript
+        run: pnpm check
+
+      - name: Validar build de producao
+        run: pnpm build
+
+      - name: Confirmar ausencia de staging e artefatos sensiveis
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d .upload
+          test ! -d .manus
+          test ! -f .env
+          test -f package.json
+          test -f Dockerfile
+          test -f drizzle/meta/_journal.json
+
+      - name: Criar commit final da homologacao
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteracao pendente."
+            exit 0
+          fi
+          git commit -m "Prepara POD CRM 2026 para homologacao no Railway"
+          git push origin HEAD:homologacao-2026-09-06
