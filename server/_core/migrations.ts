@@ -41,7 +41,9 @@ function normalizeMysqlStatement(statement: string): string {
 
   const escapedColumn = escapeRegExp(columnName);
   const indexedColumnPattern = new RegExp(
-    `(?:PRIMARY\\s+KEY|UNIQUE(?:\\s+(?:KEY|INDEX))?|KEY|INDEX)(?:\\s+\\`[^\\`]+\\`)?\\s*\\(\\s*\\`${escapedColumn}\\``,
+    "(?:PRIMARY\\s+KEY|UNIQUE(?:\\s+(?:KEY|INDEX))?|KEY|INDEX)(?:\\s+`[^`]+`)?\\s*\\(\\s*`" +
+      escapedColumn +
+      "`",
     "i",
   );
 
