@@ -92,7 +92,7 @@ export function EventModal({
   const [pendingReminders, setPendingReminders] = useState<Array<{date: string; time: string; message: string}>>([]);
   const [automaticReminderTiming, setAutomaticReminderTiming] = useState<"day_before" | "same_day" | "none">("day_before");
   const [automaticReminderTime, setAutomaticReminderTime] = useState<string>("09:00");
-  const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(true);
+  const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(false);
   const [plannedTenantMaterialId, setPlannedTenantMaterialId] = useState<string | undefined>();
   const [plannedQuantity, setPlannedQuantity] = useState("1");
   const [pendingPlannedMaterials, setPendingPlannedMaterials] = useState<Array<{ tenantMaterialId: number; name: string; unit: string; quantity: string }>>([]);
@@ -316,7 +316,9 @@ export function EventModal({
           toast.warning(`${failures} material(is) previsto(s) não foram salvos. O agendamento foi criado sem baixa de estoque.`);
         }
       }
-      if (result?.automaticReminder?.scheduled) {
+      if (result?.warnings?.length) {
+        result.warnings.forEach(message => toast.warning(message, { duration: 10000 }));
+      } else if (result?.automaticReminder?.scheduled) {
         const scheduledAt = result.automaticReminder.scheduledAt?.slice(0, 16).replace(" ", " às ");
         toast.success(`Agendamento criado e lembrete automático programado para ${scheduledAt}.`);
       } else if (result?.automaticReminder?.reason === "client_without_phone") {
@@ -337,8 +339,9 @@ export function EventModal({
   });
 
   const updateMutation = trpc.appointments.update.useMutation({
-    onSuccess: () => {
-      toast.success("Evento atualizado com sucesso!");
+    onSuccess: (result) => {
+      if (result.warnings?.length) result.warnings.forEach(message => toast.warning(message, { duration: 10000 }));
+      else toast.success("Evento atualizado com sucesso!");
       notifySync("agendamento");
       // Invalidar cache para sincronização imediata
       utils.appointments.list.invalidate();
@@ -443,7 +446,7 @@ export function EventModal({
     setPendingReminders([]);
     setAutomaticReminderTiming("day_before");
     setAutomaticReminderTime("09:00");
-    setRecordWhatsAppConsent(true);
+    setRecordWhatsAppConsent(false);
     setPlannedTenantMaterialId(undefined);
     setPlannedQuantity("1");
     setPendingPlannedMaterials([]);
@@ -659,7 +662,8 @@ export function EventModal({
         paymentMethod: paymentMethod || undefined,
         procedureType: procedureType || undefined,
         procedureTypeOther: procedureType === "outro" ? procedureTypeOther || undefined : undefined,
-        recordWhatsAppConsent,
+        // Editing appointment details does not grant WhatsApp consent.
+        recordWhatsAppConsent: false,
       };
       
       // Adicionar calendarId se foi definido

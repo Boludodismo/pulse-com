@@ -670,28 +670,38 @@ export const appRouter = router({
           reason: null,
         };
 
-        if (recordWhatsAppConsent) {
-          await recordAppointmentWhatsappConsent({ studioId, clientId: client.id });
-        }
-
-        if (autoReminder) {
-          if (!client?.phone) {
-            automaticReminder.reason = "client_without_phone";
-          } else {
-            const scheduledAt = scheduleAutomaticAppointmentReminder(input.date, autoReminder.timing, autoReminder.sendTime);
-            await db.createAppointmentReminder({
-              appointmentId: result.id,
-              scheduledAt,
-              message: buildAutomaticAppointmentReminderMessage({
-                clientName: client.name ?? "cliente",
-                appointmentDate: input.date,
-                service: input.service,
-                artist: input.artist,
-              }),
-            });
-            automaticReminder.scheduled = true;
-            automaticReminder.scheduledAt = scheduledAt;
+        const warnings: string[] = [];
+        // The appointment is already committed. An optional messaging failure
+        // must not report a failed save or encourage a duplicate submission.
+        try {
+          if (recordWhatsAppConsent) {
+            const recorded = await recordAppointmentWhatsappConsent({ studioId, clientId: client.id });
+            if (!recorded) throw new Error("whatsapp_unavailable");
           }
+
+          if (autoReminder) {
+            if (!client?.phone) {
+              automaticReminder.reason = "client_without_phone";
+            } else {
+              const scheduledAt = scheduleAutomaticAppointmentReminder(input.date, autoReminder.timing, autoReminder.sendTime);
+              await db.createAppointmentReminder({
+                appointmentId: result.id,
+                scheduledAt,
+                message: buildAutomaticAppointmentReminderMessage({
+                  clientName: client.name ?? "cliente",
+                  appointmentDate: input.date,
+                  service: input.service,
+                  artist: input.artist,
+                }),
+              });
+              automaticReminder.scheduled = true;
+              automaticReminder.scheduledAt = scheduledAt;
+            }
+          }
+        } catch {
+          automaticReminder.reason = "whatsapp_unavailable";
+          warnings.push("Agendamento salvo. A autorização ou o lembrete do WhatsApp não pôde ser registrado; confira a integração antes de programar mensagens.");
+          console.warn("[Appointments] Saved appointment; WhatsApp follow-up unavailable.");
         }
 
         // Bug 3: Se sinal já está pago ao criar, gerar transação no caixa
@@ -762,7 +772,7 @@ export const appRouter = router({
           notes: input.notes,
         });
         
-        return { ...result, automaticReminder };
+        return { ...result, automaticReminder, warnings };
       }),
 
     update: protectedProcedure
@@ -849,8 +859,15 @@ export const appRouter = router({
         const client = appointmentAfter?.clientId 
           ? await db.getClientById(appointmentAfter.clientId)
           : null;
+        const warnings: string[] = [];
         if (recordWhatsAppConsent && appointmentAfter?.clientId) {
-          await recordAppointmentWhatsappConsent({ studioId: appointmentBefore.studioId, clientId: appointmentAfter.clientId });
+          try {
+            const recorded = await recordAppointmentWhatsappConsent({ studioId: appointmentBefore.studioId, clientId: appointmentAfter.clientId });
+            if (!recorded) throw new Error("whatsapp_unavailable");
+          } catch {
+            warnings.push("Agendamento atualizado. A autorização do WhatsApp não pôde ser registrada; confira a integração antes de programar mensagens.");
+            console.warn("[Appointments] Updated appointment; WhatsApp consent unavailable.");
+          }
         }
         
         // Registrar auditoria
@@ -888,7 +905,7 @@ export const appRouter = router({
           });
         }
         
-        return result;
+        return { ...result, warnings };
       }),
 
     delete: protectedProcedure
