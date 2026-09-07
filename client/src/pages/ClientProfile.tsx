@@ -1,3 +1,4 @@
+import { ClientCare } from "@/components/CustomerCarePanel";
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -618,6 +619,7 @@ export default function ClientProfile() {
       </Card>
 
       {/* Tabs */}
+      <ClientCare clientId={clientId} />
       <Tabs defaultValue="appointments" className="w-full">
         <TabsList className="flex w-full bg-zinc-800 rounded-lg p-1 min-h-[44px] overflow-x-auto">
           <TabsTrigger value="appointments" className="flex-1 min-w-fit text-xs sm:text-sm py-2">

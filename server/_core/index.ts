@@ -1,3 +1,4 @@
+import { ensureStagingMessagingSchema } from "./stagingMessagingSchema";
 import { ensureStagingInventorySchema } from "./stagingInventorySchema";
 import "dotenv/config";
 import express from "express";
@@ -22,6 +23,7 @@ async function startServer() {
   // Disabled by default so existing Manus/production behavior is unchanged.
   await runStartupMigrations();
   await ensureStagingInventorySchema();
+  await ensureStagingMessagingSchema();
 
   const app = express();
   const server = createServer(app);

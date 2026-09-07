@@ -143,7 +143,7 @@ export const messagingRouter = router({
       .where(eq(messageAutomationSettings.studioId, studioId)).limit(1))[0] ?? {
       studioId, appointmentRemindersEnabled: 0, appointmentDaysBefore: 1,
       appointmentSendTime: "10:00", oneHourRemindersEnabled: 0, birthdayMessagesEnabled: 0,
-      birthdaySendTime: "10:00", birthdayMessageTemplate: null,
+      birthdaySendTime: "09:00", birthdayMessageTemplate: null,
       timezone: "America/Sao_Paulo", lastAppointmentCycleAt: null,
       lastBirthdayCycleAt: null, lastError: null,
     };
@@ -171,7 +171,7 @@ export const messagingRouter = router({
         appointmentSendTime: input.appointmentSendTime,
         oneHourRemindersEnabled: input.oneHourRemindersEnabled ? 1 : 0,
         birthdayMessagesEnabled: input.birthdayMessagesEnabled ? 1 : 0,
-        birthdaySendTime: input.birthdaySendTime,
+        birthdaySendTime: "09:00",
         birthdayMessageTemplate: input.birthdayMessageTemplate,
       }).onDuplicateKeyUpdate({ set: {
         appointmentRemindersEnabled: input.appointmentRemindersEnabled ? 1 : 0,
@@ -179,7 +179,7 @@ export const messagingRouter = router({
         appointmentSendTime: input.appointmentSendTime,
         oneHourRemindersEnabled: input.oneHourRemindersEnabled ? 1 : 0,
         birthdayMessagesEnabled: input.birthdayMessagesEnabled ? 1 : 0,
-        birthdaySendTime: input.birthdaySendTime,
+        birthdaySendTime: "09:00",
         birthdayMessageTemplate: input.birthdayMessageTemplate,
       }});
       return { ok: true };

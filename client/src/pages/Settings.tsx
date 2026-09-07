@@ -147,7 +147,7 @@ export default function Settings() {
       appointmentSendTime: notificationSettings.reminderSendTime,
       oneHourRemindersEnabled: notificationSettings.enableOneHourReminder,
       birthdayMessagesEnabled: notificationSettings.enableBirthdayReminders,
-      birthdaySendTime: notificationSettings.reminderSendTime,
+      birthdaySendTime: "09:00",
     });
   };
 

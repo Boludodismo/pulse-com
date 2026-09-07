@@ -1,3 +1,4 @@
+import { customerCareRouter } from "./routers/customerCare";
 import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
 import { assertOwnArtist, isInventoryManager } from "./inventoryAccess";
 import { z } from "zod";
@@ -64,6 +65,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  customerCare: customerCareRouter,
   system: systemRouter,
   
   // Quick consume endpoint para registrar insumos rapidamente

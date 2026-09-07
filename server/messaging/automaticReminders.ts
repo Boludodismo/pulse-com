@@ -1,3 +1,4 @@
+import { careRules } from "../../drizzle/customerCareSchema";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { appointments, artists, clients, integrationContacts, integrationJobs, messageAutomationSettings, appointmentReminders, studios, whatsappIntegrations } from "../../drizzle/schema";
@@ -7,7 +8,7 @@ import { interpolateTemplate } from "./provider";
 import { formatAppointmentActionLinks, issueAppointmentActionLinks } from "../appointmentActions";
 import { firstName, formatStudioAddress, useFirstNameInGreeting } from "./messagePresentation";
 
-const FALLBACK_BIRTHDAY_TEMPLATE = "Olá, {nome_cliente}! Hoje é um dia especial. O time {nome_estudio} deseja um feliz aniversário, com muita saúde e realizações!";
+const FALLBACK_BIRTHDAY_TEMPLATE = "Bom dia, {nome_cliente}! 🎉 Feliz aniversário! Desejamos muita alegria e um novo ciclo cheio de boas histórias. Um abraço da equipe {nome_estudio}!";
 
 export function automaticReminderIdempotencyKey(kind: "appointment" | "birthday" | "individual" | "one_hour_client" | "one_hour_artist", integrationId: number, sourceId: number, occurrence: string) {
   return hashIntegrationPayload(`automatic:${kind}:${integrationId}:${sourceId}:${occurrence}`);
@@ -211,13 +212,14 @@ export async function runAutomaticMessageCycle() {
       }
     }
 
-    if (settings.birthdayMessagesEnabled && now.time >= settings.birthdaySendTime) {
+    const careBirthday = (await db.select({ id: careRules.id }).from(careRules).where(and(eq(careRules.studioId, integration.studioId), eq(careRules.kind, "birthday"), eq(careRules.enabled, 1))).limit(1))[0];
+    if (!careBirthday && settings.birthdayMessagesEnabled && now.time >= "09:00" && now.time < "10:00") {
       const allClients = await db.select({ id: clients.id, name: clients.name, phone: clients.phone, birthDate: clients.birthDate })
         .from(clients).where(and(eq(clients.studioId, integration.studioId), sql`${clients.birthDate} IS NOT NULL`));
       const birthdays = allClients.filter((client) => String(client.birthDate).slice(5, 10) === now.date.slice(5, 10));
       for (const client of birthdays) {
         if (!client.phone || !(await hasActiveConsent(integration.studioId, integration.id, client.id))) { result.skipped += 1; continue; }
-        const message = interpolateTemplate(settings.birthdayMessageTemplate || FALLBACK_BIRTHDAY_TEMPLATE, { nome_cliente: client.name, nome_estudio: studioName });
+        const message = interpolateTemplate(settings.birthdayMessageTemplate || FALLBACK_BIRTHDAY_TEMPLATE, { nome_cliente: firstName(client.name), nome_estudio: studioName });
         const dispatch = await sendAndLog({
           studioId: integration.studioId, integrationId: integration.id, recipientType: "client", recipientPhone: client.phone,
           recipientName: client.name ?? undefined, clientId: client.id, message, trigger: "birthday_reminder",

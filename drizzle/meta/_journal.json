@@ -372,6 +372,13 @@
       "when": 1788768000000,
       "tag": "0052_artist_inventory_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "5",
+      "when": 1788825600000,
+      "tag": "0053_customer_care",
+      "breakpoints": true
     }
   ]
 }

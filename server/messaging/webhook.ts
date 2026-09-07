@@ -1,3 +1,4 @@
+import { recordCareWhatsappReply } from "./customerCare";
 import { getDb } from "../db";
 import { messageQueue, appointments } from "../../drizzle/schema";
 import { and, eq, desc } from "drizzle-orm";
@@ -9,6 +10,7 @@ import { dispatchTemplateMessage } from "./service";
  * - "2" → solicita remarcação
  */
 export async function handleWebhookReply(phone: string, message: string, studioId?: number) {
+  if (studioId && await recordCareWhatsappReply(studioId,phone,message)) return;
   const db = await getDb();
   if (!db) return;
 

@@ -1,3 +1,4 @@
+export { careRules, careEvents, careSessions, careTags } from "./customerCareSchema";
 import { mysqlTable, mysqlSchema, AnyMySqlColumn, index, uniqueIndex, int, bigint, varchar, mysqlEnum, timestamp, datetime, text, tinyint, decimal } from "drizzle-orm/mysql-core"
 import { sql } from "drizzle-orm"
 

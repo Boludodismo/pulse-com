@@ -1,3 +1,4 @@
+import { runCustomerCareCycle } from "./messaging/customerCare";
 /**
  * scheduler.ts
  * Cron jobs automáticos para lembretes de aniversário, agendamentos e WhatsApp.
@@ -353,6 +354,7 @@ export async function runLegacyNotificationCycle() {
   // A agenda e os aniversários não passam pela configuração de reenvio. Cada
   // origem cria jobs próprios, idempotentes e escopados, que o Heartbeat entrega
   // posteriormente pela integração ativa do respectivo estúdio.
+  await runCustomerCareCycle();
   const automatic = await runAutomaticMessageCycle();
   const individual = await enqueueDueIndividualReminders();
   console.log("[Scheduler] Ciclo automático BotConversa", { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped });

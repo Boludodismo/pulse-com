@@ -1,3 +1,4 @@
+import { CareNotice } from "./CustomerCarePanel";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -381,6 +382,7 @@ function DashboardLayoutContent({
 
         {/* Conteúdo principal com padding responsivo */}
         <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0 overflow-x-hidden">
+          <CareNotice />
           {children}
         </main>
       </SidebarInset>

@@ -295,7 +295,8 @@ export async function searchClients(term: string, startDate?: Date, endDate?: Da
     or(
       like(clients.name, searchTerm),
       like(clients.email, searchTerm),
-      like(clients.phone, searchTerm)
+      like(clients.phone, searchTerm),
+      sql`EXISTS (SELECT 1 FROM care_tags t WHERE t.client_id = ${clients.id} AND t.studio_id = ${clients.studioId} AND t.label LIKE ${searchTerm})`
     )
   ];
   if (studioId !== null && studioId !== undefined) {

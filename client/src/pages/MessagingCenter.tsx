@@ -1,3 +1,4 @@
+import CustomerCarePanel from "@/components/CustomerCarePanel";
 import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { downloadMessageHistoryCSV } from "@/lib/messagingHistoryCsv";
@@ -330,6 +331,7 @@ export default function MessagingCenter() {
           </div>
         </div>
 
+        <CustomerCarePanel />
         {/* Aviso de webhook */}
         <Card className="bg-zinc-900 border-orange-500/30">
           <CardContent className="pt-4 pb-3">

@@ -134,7 +134,7 @@ export default function Clients() {
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
-          placeholder="Buscar por nome, email ou telefone..."
+          placeholder="Buscar por nome, email, telefone ou etiqueta..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="pl-10 h-10 sm:h-11"
