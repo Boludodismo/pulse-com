@@ -142,8 +142,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     textFields.forEach(assignNullable);
 
     if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
+      values.lastSignedIn = toDateStr(new Date(user.lastSignedIn));
+      updateSet.lastSignedIn = toDateStr(new Date(user.lastSignedIn));
     }
     if (user.role !== undefined) {
       values.role = user.role;
@@ -246,7 +246,7 @@ export async function updateUser(id: number, data: { name?: string; email?: stri
   if (data.artistId !== undefined) updateData.artistId = data.artistId;
   if (data.isActive !== undefined) updateData.isActive = data.isActive;
   if (data.passwordHash !== undefined) updateData.passwordHash = data.passwordHash;
-  if (data.lastSignedIn !== undefined) updateData.lastSignedIn = data.lastSignedIn;
+  if (data.lastSignedIn !== undefined) updateData.lastSignedIn = toDateStr(new Date(data.lastSignedIn));
   const result = await db.update(users).set(updateData).where(eq(users.id, id));;
   return result;
 }
