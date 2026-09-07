@@ -365,6 +365,13 @@
       "when": 1788223483276,
       "tag": "0051_pod_session_multitenant_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "5",
+      "when": 1788768000000,
+      "tag": "0052_artist_inventory_ownership",
+      "breakpoints": true
     }
   ]
 }

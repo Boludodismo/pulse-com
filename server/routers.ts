@@ -1,3 +1,5 @@
+import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
+import { assertOwnArtist, isInventoryManager } from "./inventoryAccess";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME, normalizeWhatsAppNumber } from "@shared/const";
@@ -13,7 +15,7 @@ import {
 import { publicProcedure, protectedProcedure, artistProcedure, router, superAdminProcedure, adminProcedure, tenantProcedure } from "./_core/trpc";
 import { SAAS_MODULES, createStudioInvitation, listStudioInvitations, revokeStudioInvitation, claimStudioInvitation, listUserPermissions, replaceUserPermissions, summarizeSaasMetrics, hasModulePermission } from "./saas";
 import * as db from "./db";
-import { calendars, integrationContacts, whatsappIntegrations } from "../drizzle/schema";
+import { calendars, integrationContacts, whatsappIntegrations, tenantMaterials } from "../drizzle/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { whatsAppSchedulerStatus } from "./scheduler";
 import { contactsRouter } from "./routers/contacts";
@@ -1852,12 +1854,14 @@ export const appRouter = router({
   // ============ ARTISTS ROUTER ============
   artists: router({
     list: tenantProcedure.query(async ({ ctx }) => {
+      assertOwnArtist(ctx, ctx.artistId);
       return await db.listArtists(ctx.studioId, ctx.artistId);
     }),
 
     getById: tenantProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ ctx, input }) => {
+        assertOwnArtist(ctx, input.id);
         return await db.getArtistById(input.id, ctx.studioId);
       }),
 
@@ -1869,24 +1873,17 @@ export const appRouter = router({
         mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
       }))
       .mutation(async ({ ctx, input }) => {
+        assertOwnArtist(ctx, input.artistId);
         const artist = await db.getArtistById(input.artistId, ctx.studioId);
         if (!artist || (ctx.artistId != null && artist.id !== ctx.artistId)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Artista não disponível para este usuário." });
         }
-        const base64 = input.imageBase64.replace(/^data:image\/(jpeg|png|webp);base64,/, "");
-        const buffer = Buffer.from(base64, "base64");
-        if (!buffer.length || buffer.length > 5 * 1024 * 1024) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "A imagem deve ter até 5 MB." });
-        }
-        const extension = input.mimeType === "image/jpeg" ? "jpg" : input.mimeType.split("/")[1];
-        const fileKey = `artists/${artist.studioId}/${artist.id}/avatar-${Date.now()}.${extension}`;
-        const { storagePut } = await import("./storage");
-        const { url } = await storagePut(fileKey, buffer, input.mimeType);
-        await db.updateArtist(artist.id, { photoUrl: url, photoKey: fileKey });
-        return { photoUrl: url, photoKey: fileKey };
+        const photo = await saveArtistAvatar(ctx.studioId, input);
+        await db.updateArtist(artist.id, photo);
+        return photo;
       }),
 
-    create: protectedProcedure
+    create: tenantProcedure
       .input(z.object({
         name: z.string().min(1),
         email: z.string().email().optional().or(z.literal("")),
@@ -1896,32 +1893,18 @@ export const appRouter = router({
         bio: z.string().optional(),
         photoUrl: z.string().optional(),
         photoKey: z.string().optional(),
+        avatar: avatarSchema.optional(),
         color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(),
         active: z.number().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        // Determinar studioId
-        let studioId = ctx.user.studioId;
-        if (!studioId) {
-          if (ctx.user.role === 'superadmin') {
-            const firstStudio = await db.getFirstStudio();
-            if (!firstStudio) {
-              throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nenhum estúdio cadastrado no sistema." });
-            }
-            studioId = firstStudio.id;
-          } else {
-            throw new TRPCError({ code: "FORBIDDEN", message: "Usuário não vinculado a um estúdio." });
-          }
-        }
-        
-        const artistData = {
-          ...input,
-          studioId: studioId,
-        };
-        return await db.createArtist(artistData);
+        if (!isInventoryManager(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode cadastrar artistas." });
+        const { avatar, ...fields } = input;
+        const photo = avatar ? await saveArtistAvatar(ctx.studioId, avatar) : {};
+        return await db.createArtist({ ...fields, ...photo, studioId: ctx.studioId });
       }),
 
-    update: protectedProcedure
+    update: tenantProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
@@ -1932,17 +1915,29 @@ export const appRouter = router({
         bio: z.string().optional(),
         photoUrl: z.string().optional(),
         photoKey: z.string().optional(),
+        avatar: avatarSchema.optional(),
         color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(),
         active: z.number().optional(),
       }))
-      .mutation(async ({ input }) => {
-        const { id, ...data } = input;
-        return await db.updateArtist(id, data);
+      .mutation(async ({ ctx, input }) => {
+        assertOwnArtist(ctx, input.id);
+        const artist = await db.getArtistById(input.id, ctx.studioId);
+        if (!artist) throw new TRPCError({ code: "NOT_FOUND", message: "Artista não encontrado neste estúdio." });
+        const { id, avatar, ...data } = input;
+        if (!isInventoryManager(ctx) && data.active !== undefined && data.active !== artist.active) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode alterar o status." });
+        const photo = avatar ? await saveArtistAvatar(ctx.studioId, avatar) : {};
+        return await db.updateArtist(id, { ...data, ...photo });
       }),
 
-    delete: protectedProcedure
+    delete: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        if (!isInventoryManager(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode remover artistas." });
+        if (!await db.getArtistById(input.id, ctx.studioId)) throw new TRPCError({ code: "NOT_FOUND", message: "Artista não encontrado neste estúdio." });
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Banco indisponível." });
+        const owned = await database.select({ id: tenantMaterials.id }).from(tenantMaterials).where(and(eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.ownerArtistId, input.id))).limit(1);
+        if (owned.length) throw new TRPCError({ code: "CONFLICT", message: "Este artista possui histórico de estoque. Desative o cadastro para preservar os registros." });
         return await db.deleteArtist(input.id);
       }),
    }),

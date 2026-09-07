@@ -1,3 +1,4 @@
+import { useAuth } from "@/_core/hooks/useAuth";
 import { useState } from "react";
 import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
@@ -55,6 +56,9 @@ const emptyForm: ArtistForm = {
 };
 
 export default function Artists() {
+  const { user } = useAuth();
+  const isManager = user?.role === "admin" || user?.role === "superadmin";
+  const [pendingAvatar, setPendingAvatar] = useState<{ imageBase64: string; mimeType: "image/jpeg" | "image/png" | "image/webp" } | undefined>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ArtistForm>(emptyForm);
@@ -89,23 +93,15 @@ export default function Artists() {
     onError: (e) => toast.error(`Erro: ${e.message}`),
   });
 
-  const uploadAvatarMutation = trpc.artists.uploadAvatar.useMutation({
-    onSuccess: (result) => {
-      setForm((previous) => ({ ...previous, photoUrl: result.photoUrl }));
-      utils.artists.list.invalidate();
-      toast.success("Foto de perfil atualizada.");
-    },
-    onError: (error) => toast.error(error.message || "Não foi possível enviar a foto."),
-    onSettled: () => setIsUploadingAvatar(false),
-  });
-
   const openCreate = () => {
+    setPendingAvatar(undefined);
     setEditingId(null);
     setForm(emptyForm);
     setDialogOpen(true);
   };
 
   const openEdit = (artist: typeof artists[0]) => {
+    setPendingAvatar(undefined);
     setEditingId(artist.id);
     setForm({
       name: artist.name,
@@ -123,6 +119,7 @@ export default function Artists() {
 
   const closeDialog = () => {
     setDialogOpen(false);
+    setPendingAvatar(undefined);
     setEditingId(null);
     setForm(emptyForm);
   };
@@ -135,6 +132,7 @@ export default function Artists() {
     }
     const payload = {
       ...form,
+      avatar: pendingAvatar,
       color: form.color || null,
     };
     if (editingId) {
@@ -156,10 +154,6 @@ export default function Artists() {
 
   const handleAvatarFile = (file?: File) => {
     if (!file) return;
-    if (!editingId) {
-      toast.error("Salve o artista antes de enviar a foto de perfil.");
-      return;
-    }
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       toast.error("Envie uma imagem JPG, PNG ou WebP.");
       return;
@@ -168,17 +162,13 @@ export default function Artists() {
       toast.error("A imagem deve ter no máximo 5 MB.");
       return;
     }
+    setIsUploadingAvatar(true);
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result !== "string") return;
-      setIsUploadingAvatar(true);
-      uploadAvatarMutation.mutate({
-        artistId: editingId,
-        fileName: file.name,
-        imageBase64: reader.result,
-        mimeType: file.type as "image/jpeg" | "image/png" | "image/webp",
-      });
+      if (typeof reader.result === "string") setPendingAvatar({ imageBase64: reader.result, mimeType: file.type as "image/jpeg" | "image/png" | "image/webp" });
+      setIsUploadingAvatar(false);
     };
+    reader.onerror = () => { setIsUploadingAvatar(false); toast.error("Não foi possível ler a foto. Tente novamente."); };
     reader.readAsDataURL(file);
   };
 
@@ -195,7 +185,7 @@ export default function Artists() {
             Gerencie os artistas do estúdio e suas cores no calendário
           </p>
         </div>
-        <Button onClick={openCreate} className="gap-2 w-full sm:w-auto text-xs sm:text-sm">
+        <Button disabled={!isManager} onClick={openCreate} className="gap-2 w-full sm:w-auto text-xs sm:text-sm">
           <Plus className="h-3 w-3 sm:h-4 sm:w-4" />
           Novo Artista
         </Button>
@@ -293,7 +283,7 @@ export default function Artists() {
                       <Badge
                         variant={artist.active === 1 ? "default" : "secondary"}
                         className="cursor-pointer"
-                        onClick={(e) => { e.stopPropagation(); toggleActive(artist); }}
+                        onClick={(e) => { e.stopPropagation(); if (isManager) toggleActive(artist); }}
                       >
                         {artist.active === 1 ? "Ativo" : "Inativo"}
                       </Badge>
@@ -312,7 +302,7 @@ export default function Artists() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={(e) => { e.stopPropagation(); handleDelete(artist.id, artist.name); }}
+                          disabled={!isManager} onClick={(e) => { e.stopPropagation(); handleDelete(artist.id, artist.name); }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -327,8 +317,8 @@ export default function Artists() {
       )}
 
       {/* Dialog de cadastro/edição */}
-      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) closeDialog(); }}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open && !isUploadingAvatar && !createMutation.isPending && !updateMutation.isPending) closeDialog(); }}>
+        <DialogContent className="max-w-lg max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingId ? "Editar Artista" : "Novo Artista"}
@@ -336,7 +326,7 @@ export default function Artists() {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="col-span-2 space-y-1.5">
+              <div className="sm:col-span-2 space-y-1.5">
                 <Label htmlFor="name">Nome *</Label>
                 <Input
                   id="name"
@@ -388,39 +378,32 @@ export default function Artists() {
                 </div>
               </div>
 
-              <div className="col-span-2 space-y-2">
-                <Label htmlFor="photoUrl">Avatar / Foto de Perfil</Label>
+              <div className="sm:col-span-2 space-y-2">
+                <Label>Avatar / Foto de Perfil</Label>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  {form.photoUrl ? (
-                    <img src={form.photoUrl} alt="Prévia do avatar" className="h-12 w-12 rounded-full object-cover ring-2 ring-border" />
+                  {(pendingAvatar?.imageBase64 || form.photoUrl) ? (
+                    <img src={pendingAvatar?.imageBase64 || form.photoUrl} alt="Prévia do avatar" className="h-12 w-12 rounded-full object-cover ring-2 ring-border" />
                   ) : (
                     <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center text-sm font-semibold text-muted-foreground">
                       {form.name.charAt(0).toUpperCase() || "A"}
                     </div>
                   )}
-                  <Input
-                    id="photoUrl"
-                    type="url"
-                    placeholder="https://… (opcional)"
-                    value={form.photoUrl}
-                    onChange={(event) => setForm({ ...form, photoUrl: event.target.value })}
-                  />
                   <label className="inline-flex cursor-pointer items-center justify-center rounded-md border border-input px-3 py-2 text-sm font-medium hover:bg-accent whitespace-nowrap">
-                    {isUploadingAvatar ? "Enviando…" : "Enviar foto"}
+                    {isUploadingAvatar ? "Carregando…" : "Escolher foto"}
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
                       className="sr-only"
-                      disabled={!editingId || isUploadingAvatar}
+                      disabled={isUploadingAvatar || createMutation.isPending || updateMutation.isPending}
                       onChange={(event) => handleAvatarFile(event.target.files?.[0])}
                     />
                   </label>
                 </div>
-                {!editingId && <p className="text-xs text-muted-foreground">Crie o artista primeiro para enviar a foto; a URL pode ser definida agora.</p>}
+                <p className="text-xs text-muted-foreground">JPG, PNG ou WebP, até 5 MB. A foto será enviada ao salvar o cadastro.</p>
               </div>
 
               {/* Seletor de cor personalizada */}
-              <div className="col-span-2 space-y-2">
+              <div className="sm:col-span-2 space-y-2">
                 <Label>Cor no Calendário Visual</Label>
                 <div className="space-y-3">
                   {/* Paleta de cores pré-definidas */}
@@ -474,7 +457,7 @@ export default function Artists() {
                 </div>
               </div>
 
-              <div className="col-span-2 space-y-1.5">
+              <div className="sm:col-span-2 space-y-1.5">
                 <Label htmlFor="bio">Bio / Descrição</Label>
                 <Textarea
                   id="bio"
@@ -486,12 +469,12 @@ export default function Artists() {
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={closeDialog}>
+              <Button type="button" variant="outline" disabled={isUploadingAvatar || createMutation.isPending || updateMutation.isPending} onClick={closeDialog}>
                 Cancelar
               </Button>
               <Button
                 type="submit"
-                disabled={createMutation.isPending || updateMutation.isPending}
+                disabled={isUploadingAvatar || createMutation.isPending || updateMutation.isPending}
               >
                 {editingId ? "Salvar Alterações" : "Cadastrar Artista"}
               </Button>

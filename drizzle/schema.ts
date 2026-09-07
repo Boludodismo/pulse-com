@@ -397,6 +397,7 @@ export const materialCatalogItems = mysqlTable("material_catalog_items", {
 export const tenantMaterials = mysqlTable("tenant_materials", {
 	id: int().autoincrement().notNull(),
 	studioId: int().notNull(),
+	ownerArtistId: int(),
 	catalogItemId: int(),
 	legacyMaterialId: int(),
 	name: varchar({ length: 255 }).notNull(),
@@ -423,6 +424,15 @@ export const tenantMaterials = mysqlTable("tenant_materials", {
 	index("tenant_materials_catalog_idx").on(table.studioId, table.catalogItemId),
 	index("tenant_materials_supplier_idx").on(table.studioId, table.supplierId),
 	uniqueIndex("tenant_materials_legacy_source_unique").on(table.studioId, table.legacyMaterialId),
+]);
+
+export const studioMaterialArtists = mysqlTable("studio_material_artists", {
+  id: int().autoincrement().primaryKey(),
+  studioId: int().notNull(),
+  tenantMaterialId: int().notNull(),
+  artistId: int().notNull(),
+}, (table) => [
+  uniqueIndex("studio_material_artist_unique").on(table.studioId, table.tenantMaterialId, table.artistId),
 ]);
 
 export const tenantInventoryMovements = mysqlTable("tenant_inventory_movements", {

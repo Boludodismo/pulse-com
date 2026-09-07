@@ -1,3 +1,4 @@
+import { assertOwnArtist, canUseMaterial, isInventoryManager, requireInventoryArtist, requireMaterialForArtist, requireOwnedMaterial, type InventoryDatabase, type InventoryContext } from "../inventoryAccess";
 import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
@@ -13,13 +14,14 @@ import {
   technicalProcedures,
   tenantInventoryMovements,
   tenantMaterials,
+  studioMaterialArtists,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { hasModulePermission, type SaasModule } from "../saas";
 import { router, superAdminProcedure, tenantProcedure } from "../_core/trpc";
 
 const quantitySchema = z.string().regex(/^\d{1,9}(?:\.\d{1,3})?$/, "Informe uma quantidade positiva com até três casas decimais.");
-const costSchema = z.string().regex(/^\d{1,9}(?:\.\d{1,4})?$/, "Informe um custo não negativo com até quatro casas decimais.");
+const costSchema = z.string().regex(/^\d{1,8}(?:\.\d{1,4})?$/, "Informe um custo não negativo com até quatro casas decimais.");
 const dateTimeSchema = z.string().datetime({ offset: true }).optional();
 
 function nowSql() {
@@ -72,6 +74,10 @@ function multiplyQuantityByCost(quantity: string, unitCost: string): string {
   return Number(fraction[4]) >= 5 ? incrementFixedDecimal(truncated, 4) : truncated;
 }
 
+function insertId(result: unknown): number | undefined {
+  return (Array.isArray(result) ? result[0] : result)?.insertId;
+}
+
 function isAffected(result: unknown) {
   const raw = result as { affectedRows?: number; rowsAffected?: number } | [{ affectedRows?: number }];
   if (Array.isArray(raw)) return (raw[0]?.affectedRows ?? 0) === 1;
@@ -90,12 +96,13 @@ async function requireModule(ctx: { user: { id: number; role: string }; studioId
   if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: `Você não possui permissão para ${write ? "alterar" : "consultar"} este módulo.` });
 }
 
-async function requireProcedure(database: Awaited<ReturnType<typeof requireDatabase>>, procedureId: number, studioId: number) {
+async function requireProcedure(database: Awaited<ReturnType<typeof requireDatabase>>, procedureId: number, ctx: InventoryContext) {
   const procedure = (await database.select().from(technicalProcedures).where(and(
     eq(technicalProcedures.id, procedureId),
-    eq(technicalProcedures.studioId, studioId),
+    eq(technicalProcedures.studioId, ctx.studioId),
   )).limit(1))[0];
   if (!procedure) throw new TRPCError({ code: "NOT_FOUND", message: "Sessão POD não encontrada nesta empresa." });
+  assertOwnArtist(ctx, procedure.artistId);
   return procedure;
 }
 
@@ -144,7 +151,7 @@ export const podSaasRouter = router({
         description: input.description ?? null,
         isActive: 1,
       });
-      return { id: (inserted as { insertId?: number }).insertId };
+      return { id: insertId(inserted) };
     }),
 
     createItem: superAdminProcedure.input(z.object({
@@ -174,7 +181,7 @@ export const podSaasRouter = router({
         icon: input.icon ?? null,
         isActive: 1,
       });
-      return { id: (inserted as { insertId?: number }).insertId };
+      return { id: insertId(inserted) };
     }),
 
     setItemActive: superAdminProcedure.input(z.object({ id: z.number().int().positive(), isActive: z.boolean() }))
@@ -188,16 +195,41 @@ export const podSaasRouter = router({
   }),
 
   inventory: router({
-    list: tenantProcedure.query(async ({ ctx }) => {
+    list: tenantProcedure.input(z.object({ artistId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {
       await requireModule(ctx, "stock");
       const database = await requireDatabase();
-      return database.select().from(tenantMaterials).where(and(
-        eq(tenantMaterials.studioId, ctx.studioId),
-        eq(tenantMaterials.isActive, 1),
-      )).orderBy(asc(tenantMaterials.name));
+      const artistId = input?.artistId ?? (isInventoryManager(ctx) ? null : ctx.artistId);
+      assertOwnArtist(ctx, artistId);
+      if (artistId) await requireInventoryArtist(database, ctx.studioId, artistId);
+      const allocations = await database.select().from(studioMaterialArtists).where(eq(studioMaterialArtists.studioId, ctx.studioId));
+      const materials = await database.select().from(tenantMaterials).where(and(eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.isActive, 1))).orderBy(asc(tenantMaterials.name));
+      return materials.map(material => ({ ...material, suppliedTo: allocations.filter(a => a.tenantMaterialId === material.id).map(a => a.artistId) }))
+        .filter(material => artistId == null || canUseMaterial(material.ownerArtistId, material.suppliedTo, artistId));
+    }),
+
+    movements: tenantProcedure.input(z.object({ tenantMaterialId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      await requireModule(ctx, "stock");
+      const database = await requireDatabase();
+      await requireOwnedMaterial(database, ctx, input.tenantMaterialId);
+      return database.select().from(tenantInventoryMovements).where(and(eq(tenantInventoryMovements.studioId, ctx.studioId), eq(tenantInventoryMovements.tenantMaterialId, input.tenantMaterialId))).orderBy(desc(tenantInventoryMovements.createdAt)).limit(100);
+    }),
+
+    setSuppliedArtists: tenantProcedure.input(z.object({ tenantMaterialId: z.number().int().positive(), artistIds: z.array(z.number().int().positive()).max(500) })).mutation(async ({ ctx, input }) => {
+      if (!isInventoryManager(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador do estúdio pode definir o fornecimento." });
+      const database = await requireDatabase();
+      return database.transaction(async tx => {
+        const material = (await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id, input.tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.isActive, 1))).limit(1).for("update"))[0];
+        if (!material || material.ownerArtistId != null) throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione um material do estoque do estúdio." });
+        const artistIds = Array.from(new Set(input.artistIds));
+        for (const id of artistIds) await requireInventoryArtist(tx as unknown as InventoryDatabase, ctx.studioId, id);
+        await tx.delete(studioMaterialArtists).where(and(eq(studioMaterialArtists.studioId, ctx.studioId), eq(studioMaterialArtists.tenantMaterialId, material.id)));
+        if (artistIds.length) await tx.insert(studioMaterialArtists).values(artistIds.map(artistId => ({ studioId: ctx.studioId, tenantMaterialId: material.id, artistId })));
+        return { artistIds };
+      });
     }),
 
     create: tenantProcedure.input(z.object({
+      ownerArtistId: z.number().int().positive().nullable().default(null),
       catalogItemId: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(255).optional(),
       category: z.string().trim().max(120).optional(),
@@ -218,14 +250,18 @@ export const podSaasRouter = router({
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "stock", true);
       const database = await requireDatabase();
-      const catalogItem = input.catalogItemId ? (await database.select().from(materialCatalogItems).where(and(
+      assertOwnArtist(ctx, input.ownerArtistId);
+      if (input.ownerArtistId) await requireInventoryArtist(database, ctx.studioId, input.ownerArtistId);
+      return database.transaction(async (tx) => {
+      const catalogItem = input.catalogItemId ? (await tx.select().from(materialCatalogItems).where(and(
         eq(materialCatalogItems.id, input.catalogItemId),
         eq(materialCatalogItems.isActive, 1),
       )).limit(1))[0] : null;
       if (input.catalogItemId && !catalogItem) throw new TRPCError({ code: "NOT_FOUND", message: "Item de catálogo não encontrado." });
 
-      const inserted = await database.insert(tenantMaterials).values({
+      const inserted = await tx.insert(tenantMaterials).values({
         studioId: ctx.studioId,
+        ownerArtistId: input.ownerArtistId,
         catalogItemId: catalogItem?.id ?? null,
         name: catalogItem?.name ?? input.name!,
         category: input.category ?? catalogItem?.subcategory ?? null,
@@ -244,9 +280,9 @@ export const podSaasRouter = router({
         notes: input.notes ?? null,
         createdByUserId: ctx.user.id,
       });
-      const materialId = (inserted as { insertId?: number }).insertId;
+      const materialId = insertId(inserted);
       if (!materialId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível criar o material do estoque." });
-      await database.insert(tenantInventoryMovements).values({
+      await tx.insert(tenantInventoryMovements).values({
         studioId: ctx.studioId,
         tenantMaterialId: materialId,
         type: "entrada",
@@ -259,6 +295,7 @@ export const podSaasRouter = router({
         createdByUserId: ctx.user.id,
       });
       return { id: materialId };
+      });
     }),
 
     adjustBalance: tenantProcedure.input(z.object({
@@ -276,6 +313,7 @@ export const podSaasRouter = router({
           eq(tenantMaterials.isActive, 1),
         )).limit(1))[0];
         if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado nesta empresa." });
+        assertOwnArtist(ctx, material.ownerArtistId);
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         const newQuantity = decimalToScaled(input.newQuantity, 3);
         const persistedPreviousQuantity = scaledToDecimal(previousQuantity, 3);
@@ -321,6 +359,7 @@ export const podSaasRouter = router({
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "stock", true);
       const database = await requireDatabase();
+      await requireOwnedMaterial(database, ctx, input.tenantMaterialId);
       const { tenantMaterialId, expiresAt, ...fields } = input;
       const result = await database.update(tenantMaterials).set({
         ...fields,
@@ -341,6 +380,7 @@ export const podSaasRouter = router({
     archive: tenantProcedure.input(z.object({ tenantMaterialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "stock", true);
       const database = await requireDatabase();
+      await requireOwnedMaterial(database, ctx, input.tenantMaterialId);
       const result = await database.update(tenantMaterials).set({ isActive: 0 }).where(and(
         eq(tenantMaterials.id, input.tenantMaterialId),
         eq(tenantMaterials.studioId, ctx.studioId),
@@ -375,14 +415,16 @@ export const podSaasRouter = router({
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "appointments", true);
       const database = await requireDatabase();
-      const appointment = (await database.select({ id: appointments.id }).from(appointments).where(and(
+      const appointment = (await database.select({ id: appointments.id, artistId: appointments.artistId }).from(appointments).where(and(
         eq(appointments.id, input.appointmentId), eq(appointments.studioId, ctx.studioId),
       )).limit(1))[0];
       if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado nesta empresa." });
+      assertOwnArtist(ctx, appointment.artistId);
       const material = input.tenantMaterialId ? (await database.select().from(tenantMaterials).where(and(
         eq(tenantMaterials.id, input.tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId),
       )).limit(1))[0] : null;
       if (input.tenantMaterialId && !material) throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado nesta empresa." });
+      if (material) await requireMaterialForArtist(database, ctx, material, appointment.artistId);
       const catalogItem = input.catalogItemId ? (await database.select().from(materialCatalogItems).where(and(
         eq(materialCatalogItems.id, input.catalogItemId), eq(materialCatalogItems.isActive, 1),
       )).limit(1))[0] : null;
@@ -397,7 +439,7 @@ export const podSaasRouter = router({
         quantityPlanned: scaledToDecimal(decimalToScaled(input.quantityPlanned, 3), 3),
         createdByUserId: ctx.user.id,
       });
-      return { id: (inserted as { insertId?: number }).insertId };
+      return { id: insertId(inserted) };
     }),
 
     markUnused: tenantProcedure.input(z.object({ plannedMaterialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
@@ -440,7 +482,8 @@ export const podSaasRouter = router({
       if (appointment && appointment.clientId !== input.clientId) throw new TRPCError({ code: "BAD_REQUEST", message: "O agendamento selecionado pertence a outro cliente." });
       if (appointment?.artistId && input.artistId && appointment.artistId !== input.artistId) throw new TRPCError({ code: "BAD_REQUEST", message: "O artista informado não corresponde ao agendamento." });
 
-      const resolvedArtistId = input.artistId ?? appointment?.artistId ?? null;
+      const resolvedArtistId = input.artistId ?? appointment?.artistId ?? ctx.artistId ?? null;
+      assertOwnArtist(ctx, resolvedArtistId);
       const artist = resolvedArtistId ? (await database.select().from(artists).where(and(
         eq(artists.id, resolvedArtistId), eq(artists.studioId, ctx.studioId),
       )).limit(1))[0] : null;
@@ -462,13 +505,13 @@ export const podSaasRouter = router({
         referenceImageUrl: appointment?.referenceImageUrl ?? input.referenceImageUrl ?? null,
         referenceImageKey: appointment?.referenceImageKey ?? input.referenceImageKey ?? null,
       });
-      return { id: (inserted as { insertId?: number }).insertId };
+      return { id: insertId(inserted) };
     }),
 
     get: tenantProcedure.input(z.object({ procedureId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       await requireModule(ctx, "pod");
       const database = await requireDatabase();
-      const procedure = await requireProcedure(database, input.procedureId, ctx.studioId);
+      const procedure = await requireProcedure(database, input.procedureId, ctx);
       const pauses = await database.select().from(procedurePauses).where(and(
         eq(procedurePauses.procedureId, procedure.id), eq(procedurePauses.studioId, ctx.studioId),
       )).orderBy(asc(procedurePauses.startedAt));
@@ -484,7 +527,7 @@ export const podSaasRouter = router({
     startPause: tenantProcedure.input(z.object({ procedureId: z.number().int().positive(), reason: z.string().trim().max(120).optional() })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "pod", true);
       const database = await requireDatabase();
-      const procedure = await requireProcedure(database, input.procedureId, ctx.studioId);
+      const procedure = await requireProcedure(database, input.procedureId, ctx);
       if (procedure.status === "finalizado") throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível pausar uma sessão finalizada." });
       const openPause = (await database.select({ id: procedurePauses.id }).from(procedurePauses).where(and(
         eq(procedurePauses.procedureId, procedure.id), eq(procedurePauses.studioId, ctx.studioId), isNull(procedurePauses.endedAt),
@@ -493,13 +536,13 @@ export const podSaasRouter = router({
       const startedAt = nowSql();
       const inserted = await database.insert(procedurePauses).values({ studioId: ctx.studioId, procedureId: procedure.id, artistId: procedure.artistId, startedAt, reason: input.reason ?? null });
       await database.update(technicalProcedures).set({ status: "pausado", pausedAt: startedAt }).where(and(eq(technicalProcedures.id, procedure.id), eq(technicalProcedures.studioId, ctx.studioId)));
-      return { id: (inserted as { insertId?: number }).insertId, startedAt };
+      return { id: insertId(inserted), startedAt };
     }),
 
     resumePause: tenantProcedure.input(z.object({ procedureId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "pod", true);
       const database = await requireDatabase();
-      const procedure = await requireProcedure(database, input.procedureId, ctx.studioId);
+      const procedure = await requireProcedure(database, input.procedureId, ctx);
       const openPause = (await database.select().from(procedurePauses).where(and(
         eq(procedurePauses.procedureId, procedure.id), eq(procedurePauses.studioId, ctx.studioId), isNull(procedurePauses.endedAt),
       )).limit(1))[0];
@@ -520,12 +563,13 @@ export const podSaasRouter = router({
       await requireModule(ctx, "stock", true);
       const database = await requireDatabase();
       return database.transaction(async (tx) => {
-        const procedure = await requireProcedure(tx as unknown as Awaited<ReturnType<typeof requireDatabase>>, input.procedureId, ctx.studioId);
+        const procedure = await requireProcedure(tx as unknown as Awaited<ReturnType<typeof requireDatabase>>, input.procedureId, ctx);
         if (procedure.status === "finalizado") throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível consumir materiais em uma sessão finalizada." });
         const material = (await tx.select().from(tenantMaterials).where(and(
           eq(tenantMaterials.id, input.tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.isActive, 1),
-        )).limit(1))[0];
+        )).limit(1).for("update"))[0];
         if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado nesta empresa." });
+        await requireMaterialForArtist(tx as unknown as InventoryDatabase, ctx, material, procedure.artistId);
         const quantity = decimalToScaled(input.quantity, 3);
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         if (previousQuantity < quantity) throw new TRPCError({ code: "BAD_REQUEST", message: "Saldo insuficiente para confirmar este consumo." });
@@ -569,7 +613,7 @@ export const podSaasRouter = router({
           consumedAt: nowSql(),
           createdByUserId: ctx.user.id,
         });
-        const consumptionId = (consumption as { insertId?: number }).insertId;
+        const consumptionId = insertId(consumption);
         if (!consumptionId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível registrar o consumo." });
         await tx.insert(tenantInventoryMovements).values({
           studioId: ctx.studioId,
@@ -597,6 +641,7 @@ export const podSaasRouter = router({
           eq(procedureInventoryConsumptions.id, input.consumptionId), eq(procedureInventoryConsumptions.studioId, ctx.studioId),
         )).limit(1))[0];
         if (!consumption) throw new TRPCError({ code: "NOT_FOUND", message: "Consumo não encontrado nesta empresa." });
+        assertOwnArtist(ctx, consumption.artistId);
         if (consumption.status === "revertido") return { id: consumption.id, status: "revertido" as const, alreadyReverted: true };
         const material = (await tx.select().from(tenantMaterials).where(and(
           eq(tenantMaterials.id, consumption.tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId),

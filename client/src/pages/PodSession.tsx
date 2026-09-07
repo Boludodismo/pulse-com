@@ -165,7 +165,7 @@ export default function PodSession() {
     { procedureId },
     { enabled: procedureId > 0, refetchInterval: 30_000 }
   );
-  const tenantInventoryQuery = trpc.pod.inventory.list.useQuery(undefined, { enabled: procedureId > 0 });
+  const tenantInventoryQuery = trpc.pod.inventory.list.useQuery({ artistId: procedureQuery.data?.procedure?.artistId ?? undefined }, { enabled: procedureId > 0 && !!procedureQuery.data?.procedure?.artistId });
 
   const utils = trpc.useUtils();
 
@@ -697,7 +697,7 @@ export default function PodSession() {
                   <SelectContent>
                     {tenantMaterials.map((material) => (
                       <SelectItem key={material.id} value={String(material.id)}>
-                        {material.name} · {material.currentQuantity} {material.unit}
+                        {material.name} ({material.ownerArtistId == null ? "Estúdio" : "Artista"}) · {material.currentQuantity} {material.unit}
                       </SelectItem>
                     ))}
                   </SelectContent>

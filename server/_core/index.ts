@@ -1,3 +1,4 @@
+import { ensureStagingInventorySchema } from "./stagingInventorySchema";
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
@@ -20,6 +21,7 @@ async function startServer() {
   // Keep schema synchronized on controlled standalone deployments.
   // Disabled by default so existing Manus/production behavior is unchanged.
   await runStartupMigrations();
+  await ensureStagingInventorySchema();
 
   const app = express();
   const server = createServer(app);

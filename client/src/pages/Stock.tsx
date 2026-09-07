@@ -1,3 +1,4 @@
+import ArtistInventory from "@/components/ArtistInventory";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useSyncToast } from "@/hooks/useSyncToast";
@@ -246,6 +247,10 @@ export default function Stock() {
 
   return (
     <DashboardLayout>
+      <Tabs defaultValue="owners" className="space-y-6">
+        <TabsList><TabsTrigger value="owners">Estúdio e artistas</TabsTrigger><TabsTrigger value="general">Materiais gerais</TabsTrigger></TabsList>
+        <TabsContent value="owners"><ArtistInventory /></TabsContent>
+        <TabsContent value="general">
       <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -556,6 +561,8 @@ export default function Stock() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+        </TabsContent>
+      </Tabs>
     </DashboardLayout>
   );
 }

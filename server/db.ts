@@ -1433,8 +1433,8 @@ export async function createArtist(artist: InsertArtist) {
   }
 
   try {
-    console.log('[createArtist] Creating artist with data:', artist);
-    const [inserted] = await db.insert(artists).values(artist);
+    const now = toDateStr(new Date());
+    const [inserted] = await db.insert(artists).values({ ...artist, createdAt: now, updatedAt: now });
     console.log('[createArtist] Artist created with ID:', inserted.insertId);
     return await getArtistById(inserted.insertId);
   } catch (error) {
