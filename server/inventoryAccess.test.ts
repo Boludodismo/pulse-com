@@ -282,3 +282,20 @@ describe("Estoque individual e fornecimento", () => {
     });
   });
 });
+
+describe("Catálogo técnico atualizado", () => {
+  it("copia especificações oficiais do arquivo e mantém saldo e fornecedor separados", async () => {
+    const { writes } = database([]);
+    await podSaasRouter.createCaller(admin).inventory.create({ technicalCatalogIndex: 0, name: "Nome adulterado", brand: "Marca adulterada", currentQuantity: "20", unitCost: "5" });
+    expect(writes[0].values).toMatchObject({ name: "Fine Line 0601", brand: "Skin Ink", line: "Fine Line", model: "0601-RL-Fine", unit: "un", currentQuantity: "20.000", supplierId: null, studioId: 10, ownerArtistId: null });
+  });
+  it("bloqueia no servidor itens proibidos e índices inexistentes", async () => {
+    const { TECHNICAL_CATALOG_2026 } = await import("../shared/technicalCatalog2026");
+    expect(TECHNICAL_CATALOG_2026).toHaveLength(909);
+    const { writes } = database([]);
+    const blocked = TECHNICAL_CATALOG_2026.findIndex(i => i.evidenceStatus === "bloqueado" || i.anvisaStatus === "bloqueado");
+    expect(blocked).toBeGreaterThanOrEqual(0);
+    for (const technicalCatalogIndex of [blocked, 909]) await expect(podSaasRouter.createCaller(admin).inventory.create({ technicalCatalogIndex, name: "Teste", currentQuantity: "1", unitCost: "1" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(writes).toHaveLength(0);
+  });
+});

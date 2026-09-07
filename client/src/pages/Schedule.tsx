@@ -632,7 +632,7 @@ export default function Schedule() {
     const [hours, minutes] = editForm.time.split(":").map(Number);
     const newDate = new Date(year, month - 1, day, hours, minutes);
     utils.appointments.checkConflicts
-      .fetch({ artist: editForm.artist, date: newDate.toISOString(), duration: Number(editForm.duration), excludeId: selectedAppointment.id })
+      .fetch({ artist: editForm.artist, date: toLocalDateString(newDate), duration: Number(editForm.duration), excludeId: selectedAppointment.id })
       .then((conflictResult) => {
         if (conflictResult.hasConflict) {
           setEditConflictCheck(conflictResult);

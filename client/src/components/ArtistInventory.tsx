@@ -1,3 +1,5 @@
+import TechnicalCatalog from "./TechnicalCatalog";
+import { TECHNICAL_CATALOG_2026 } from "@shared/technicalCatalog2026";
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
@@ -16,6 +18,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Plus, Package, Users } from "lucide-react";
 
 type Form = {
+  technicalCatalogIndex?: number;
   name: string;
   owner: string;
   unit: string;
@@ -41,6 +44,7 @@ export default function ArtistInventory() {
   const artistsQuery = trpc.artists.list.useQuery();
   const artists = artistsQuery.data ?? [];
   const materials = inventory.data ?? [];
+  const [view, setView] = useState("stock");
   const [owner, setOwner] = useState("all");
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<Form | null>(null);
@@ -148,6 +152,7 @@ export default function ArtistInventory() {
     } else
       create.mutate({
         ...fields,
+        technicalCatalogIndex: form.technicalCatalogIndex,
         ownerArtistId: form.owner === "studio" ? null : Number(form.owner),
         currentQuantity: form.currentQuantity.replace(",", "."),
       });
@@ -183,6 +188,13 @@ export default function ArtistInventory() {
           <Plus className="mr-2 h-4 w-4" /> Novo material
         </Button>
       </div>
+      <div className="flex gap-2"><Button variant={view === "stock" ? "default" : "outline"} onClick={() => setView("stock")}>Estoque operacional</Button><Button variant={view === "catalog" ? "default" : "outline"} onClick={() => setView("catalog")}>Catálogo técnico</Button></div>
+      {view === "catalog" && <TechnicalCatalog onSelect={index => {
+        const item = TECHNICAL_CATALOG_2026[index];
+        setEditingId(null);
+        setForm({ ...emptyForm(manager ? (owner === "all" ? "studio" : owner) : String(user?.artistId)), name: item.name, unit: item.baseUnit, technicalCatalogIndex: index });
+      }} />}
+      <div hidden={view !== "stock"} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <Label htmlFor="inventory-owner">Proprietário do estoque</Label>
@@ -373,6 +385,7 @@ export default function ArtistInventory() {
           );
         })}
       </div>
+      </div>
       <Dialog
         open={form != null}
         onOpenChange={open => {
@@ -387,6 +400,7 @@ export default function ArtistInventory() {
           </DialogHeader>
           {form && (
             <form onSubmit={submit} className="space-y-4">
+              {form.technicalCatalogIndex != null && <p className="rounded-md border border-orange-500/40 p-3 text-sm">{TECHNICAL_CATALOG_2026[form.technicalCatalogIndex].brandName} · {TECHNICAL_CATALOG_2026[form.technicalCatalogIndex].lineName}. Informe o saldo e o custo por {form.unit}. Uma embalagem contém {TECHNICAL_CATALOG_2026[form.technicalCatalogIndex].unitsPerPackage} {form.unit}. Confirme os dados do produto antes da compra.</p>}
               <div>
                 <Label htmlFor="material-owner">Este material pertence a</Label>
                 <select

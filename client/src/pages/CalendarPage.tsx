@@ -191,16 +191,19 @@ export default function CalendarPage() {
     const adjustedHour = Math.floor(Math.max(0, totalMinutes) / 60);
     const adjustedMinute = Math.round((Math.max(0, totalMinutes) % 60) / 30) * 30; // snap 30min
     const newDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), adjustedHour, adjustedMinute, 0);
-    const originalDate = new Date(draggedApt.date);
+    const originalDate = new Date(draggedApt.date.replace(" ", "T"));
     if (originalDate.getTime() === newDate.getTime()) { setDraggedApt(null); setDragOverSlot(null); return; }
     updateAppointmentDate.mutate({ id: draggedApt.id, data: { date: toLocalDateString(newDate) } });
   };
 
-  // Inicializar calendários visíveis
+  const knownCalendars = useRef(new Set<number>());
   useEffect(() => {
-    if (calendars.length > 0 && visibleCalendars.length === 0) {
-      setVisibleCalendars((calendars as any[]).map((c) => c.id));
-    }
+    const added = calendars.filter(c => !knownCalendars.current.has(c.id) && c.isVisible !== 0).map(c => c.id);
+    setVisibleCalendars(previous => {
+      const remaining = previous.filter(id => calendars.some(c => c.id === id));
+      return !added.length && remaining.length === previous.length ? previous : [...remaining, ...added];
+    });
+    knownCalendars.current = new Set(calendars.map(c => c.id));
   }, [calendars]);
 
   // Linha de hora atual

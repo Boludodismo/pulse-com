@@ -1,3 +1,4 @@
+import { appointmentInstant, appointmentsOverlap } from "../shared/appointmentTime";
 import { eq, desc, and, gte, lte, or, like, sql, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { 
@@ -405,6 +406,8 @@ export async function listAppointments(studioId?: number | null, artistId?: numb
       signalStatus: appointments.signalStatus,
       paymentStatus: appointments.paymentStatus,
       paymentMethod: appointments.paymentMethod,
+      procedureType: appointments.procedureType,
+      procedureTypeOther: appointments.procedureTypeOther,
       createdAt: appointments.createdAt,
       updatedAt: appointments.updatedAt,
       studioId: appointments.studioId,
@@ -496,18 +499,15 @@ export async function checkAppointmentConflicts(
   artist: string,
   date: Date | string,
   duration: number,
-  excludeId?: number
+  excludeId?: number,
+  studioId?: number
 ) {
   const db = await getDb();
   if (!db) return { hasConflict: false, conflicts: [] };
-  // Calcular horário de início e fim do novo agendamento
-  const startTime = new Date(typeof date === 'string' ? date : date);
-  const endTime = new Date(startTime.getTime() + duration * 60000); // duration em minutos
-  // Buscar todos os agendamentos do mesmo artista no mesmo dia
-  const dayStart = new Date(startTime);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(startTime);
-  dayEnd.setHours(23, 59, 59, 999);
+  if (!studioId) throw new Error("Estúdio obrigatório para verificar disponibilidade.");
+  const startTime = appointmentInstant(date);
+  if (!Number.isFinite(startTime.getTime())) throw new Error("Data inválida.");
+  const endTime = new Date(startTime.getTime() + duration * 60000);
   let query = db
     .select({
       id: appointments.id,
@@ -522,8 +522,9 @@ export async function checkAppointmentConflicts(
     .where(
       and(
         eq(appointments.artist, artist),
-        gte(appointments.date, toDateStr(dayStart)),
-        lte(appointments.date, toDateStr(dayEnd)),
+        eq(appointments.studioId, studioId),
+        lte(appointments.date, toDateStr(endTime)),
+        sql`DATE_ADD(${appointments.date}, INTERVAL ${appointments.duration} MINUTE) > ${toDateStr(startTime)}`,
         ne(appointments.status, "cancelado") // Ignorar agendamentos cancelados
       )
     );
@@ -532,12 +533,7 @@ export async function checkAppointmentConflicts(
   const conflicts = existingAppointments.filter(apt => {
     // Excluir o próprio agendamento ao editar
     if (excludeId && apt.id === excludeId) return false;
-    const aptStart = new Date(apt.date);
-    const aptEnd = new Date(aptStart.getTime() + apt.duration * 60000);
-
-    // Verificar sobreposição de intervalos
-    // Há conflito se: (startTime < aptEnd) && (endTime > aptStart)
-    return startTime < aptEnd && endTime > aptStart;
+    return appointmentsOverlap(date, duration, apt.date, apt.duration);
   });
 
   return {

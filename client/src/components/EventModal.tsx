@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -351,15 +351,20 @@ export function EventModal({
     },
   });
 
-  // Preencher formulário ao editar
+  const initializedForm = useRef<string | null>(null);
+  // Initialize once per opening; background refetches must not erase edits.
   useEffect(() => {
+    if (!isOpen) { initializedForm.current = null; return; }
+    const key = eventId ? `edit:${eventId}` : "new";
+    if (initializedForm.current === key || (eventId && !existingEvent)) return;
+    initializedForm.current = key;
     if (existingEvent) {
       setClientId(existingEvent.clientId.toString());
       setCalendarId(existingEvent.calendarId?.toString() || "");
       
       // CORREÇÃO TZ-1: usar split direto na string do banco (YYYY-MM-DD HH:mm:ss)
       // evita conversão UTC que pode dar dia errado em fusos UTC+
-      const [datePart, timePart] = existingEvent.date.split(" ");
+      const [datePart, timePart] = existingEvent.date.split(/[ T]/);
       setDate(datePart || "");
       const startH = timePart ? timePart.slice(0, 5) : "09:00";
       setStartTime(startH);
@@ -371,6 +376,7 @@ export function EventModal({
       const endM = String(totalEnd % 60).padStart(2, "0");
       setEndTime(`${endH}:${endM}`);
       
+      setSessionDuration(existingEvent.duration);
       setService(existingEvent.service);
       setArtist(existingEvent.artist);
       const resolvedArtistId = (existingEvent as any).artistId ?? artists.find((item) => item.name === existingEvent.artist)?.id;
@@ -389,15 +395,20 @@ export function EventModal({
     } else if (initialDate || initialClientId) {
       // Preencher com dados iniciais ao criar
       if (initialDate) {
-        setDate(initialDate.toISOString().split("T")[0]);
+        setDate(`${initialDate.getFullYear()}-${String(initialDate.getMonth() + 1).padStart(2, "0")}-${String(initialDate.getDate()).padStart(2, "0")}`);
       }
       setStartTime(initialStartTime || "09:00");
-      setEndTime(initialEndTime || "10:00");
+      const initialStart = initialStartTime || "09:00";
+      const [ih, im] = initialStart.split(":").map(Number);
+      const end = initialEndTime || `${String((ih + 1) % 24).padStart(2, "0")}:${String(im).padStart(2, "0")}`;
+      setEndTime(end);
+      const [eh, em] = end.split(":").map(Number);
+      setSessionDuration(((eh * 60 + em - ih * 60 - im) + 1440) % 1440 || 60);
       if (initialClientId) {
         setClientId(initialClientId.toString());
       }
     }
-  }, [existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, artists]);
+  }, [isOpen, eventId, existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, artists]);
 
   const resetForm = () => {
     setSelectedStudioId("");
@@ -406,6 +417,7 @@ export function EventModal({
     setDate("");
     setStartTime("");
     setEndTime("");
+    setSessionDuration(60);
     setService("");
     setArtist("");
     setArtistId("");
@@ -556,20 +568,12 @@ export function EventModal({
   };
 
   const handleSubmit = async () => {
-    if (!clientId || !date || !startTime || !endTime || !service || !artist) {
+    if (!clientId || !date || !startTime || !service || !artist) {
       toast.error("Preencha todos os campos obrigatórios");
       return;
     }
 
-    // Calcular duração em minutos
-    const [startHour, startMin] = startTime.split(":").map(Number);
-    const [endHour, endMin] = endTime.split(":").map(Number);
-    const duration = (endHour * 60 + endMin) - (startHour * 60 + startMin);
-
-    if (duration <= 0) {
-      toast.error("Hora final deve ser maior que hora inicial");
-      return;
-    }
+    const duration = sessionDuration;
 
     // Formatar como string local YYYY-MM-DD HH:mm:ss (sem conversão UTC)
     const eventDateTime = `${date} ${startTime}:00`;
@@ -637,6 +641,8 @@ export function EventModal({
     if (eventId) {
       // Ao editar, incluir clientId se foi alterado
       const updateData: any = {
+        clientId: Number(clientId),
+        calendarId: calendarId ? Number(calendarId) : null,
         date: eventDateTime,  // String local: YYYY-MM-DD HH:mm:ss
         service,
         artist,

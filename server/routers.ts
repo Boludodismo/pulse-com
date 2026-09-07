@@ -623,7 +623,7 @@ export const appRouter = router({
         }
 
         // Verificar conflitos antes de criar (operação atômica)
-        const conflictCheck = await db.checkAppointmentConflicts(input.artist, input.date, input.duration);
+        const conflictCheck = await db.checkAppointmentConflicts(input.artist, input.date, input.duration, undefined, studioId);
         if (conflictCheck.hasConflict) {
           throw new TRPCError({
             code: "CONFLICT",
@@ -769,7 +769,8 @@ export const appRouter = router({
       .input(z.object({
         id: z.number(),
         data: z.object({
-          calendarId: z.number().optional(),
+          calendarId: z.number().nullable().optional(),
+          clientId: z.number().int().positive().optional(),
           date: z.string().optional(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
           duration: z.number().min(1).optional(),
           service: z.string().min(1).optional(),
@@ -801,6 +802,15 @@ export const appRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "O agendamento não pertence à empresa ativa." });
         }
         
+        if (input.data.clientId) {
+          const client = await db.getClientById(input.data.clientId);
+          if (!client || client.studioId !== activeStudioId) throw new TRPCError({ code: "FORBIDDEN", message: "Cliente não pertence ao estúdio." });
+        }
+        if (input.data.artistId && !await db.getArtistById(input.data.artistId, activeStudioId)) throw new TRPCError({ code: "FORBIDDEN", message: "Artista não pertence ao estúdio." });
+        if ((input.data.date || input.data.duration || input.data.artist || input.data.artistId) && (input.data.status ?? appointmentBefore.status) !== "cancelado") {
+          const availability = await db.checkAppointmentConflicts(input.data.artist ?? appointmentBefore.artist, input.data.date ?? appointmentBefore.date, input.data.duration ?? appointmentBefore.duration, input.id, activeStudioId);
+          if (availability.hasConflict) throw new TRPCError({ code: "CONFLICT", message: "Este artista já possui um agendamento neste horário." });
+        }
         const { depositPaid, recordWhatsAppConsent, ...restData } = input.data;
         let resolvedArtistId = restData.artistId;
         if (!resolvedArtistId && restData.artist && appointmentBefore?.studioId) {
@@ -905,8 +915,9 @@ export const appRouter = router({
         duration: z.number(),
         excludeId: z.number().optional(), // Para excluir o próprio agendamento ao editar
       }))
-      .query(async ({ input }) => {
-        return await db.checkAppointmentConflicts(input.artist, input.date, input.duration, input.excludeId);
+      .query(async ({ ctx, input }) => {
+        if (!ctx.user.studioId) throw new TRPCError({ code: "FORBIDDEN", message: "Selecione o estúdio." });
+        return await db.checkAppointmentConflicts(input.artist, input.date, input.duration, input.excludeId, ctx.user.studioId);
       }),
 
     uploadImage: protectedProcedure

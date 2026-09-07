@@ -1,3 +1,4 @@
+import { TECHNICAL_CATALOG_2026, canAddCatalogItemToOperationalStock } from "../../shared/technicalCatalog2026";
 import { assertOwnArtist, canUseMaterial, isInventoryManager, requireInventoryArtist, requireMaterialForArtist, requireOwnedMaterial, type InventoryDatabase, type InventoryContext } from "../inventoryAccess";
 import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
@@ -230,6 +231,7 @@ export const podSaasRouter = router({
 
     create: tenantProcedure.input(z.object({
       ownerArtistId: z.number().int().positive().nullable().default(null),
+      technicalCatalogIndex: z.number().int().min(0).max(TECHNICAL_CATALOG_2026.length - 1).optional(),
       catalogItemId: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(255).optional(),
       category: z.string().trim().max(120).optional(),
@@ -246,9 +248,12 @@ export const podSaasRouter = router({
       expiresAt: dateTimeSchema,
       notes: z.string().trim().max(4_000).optional(),
     }).superRefine((input, refinement) => {
-      if (!input.catalogItemId && !input.name) refinement.addIssue({ code: "custom", message: "Selecione um item do catálogo ou informe o nome do material.", path: ["name"] });
+      if (!input.catalogItemId && input.technicalCatalogIndex == null && !input.name) refinement.addIssue({ code: "custom", message: "Selecione um item do catálogo ou informe o nome do material.", path: ["name"] });
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "stock", true);
+      const technical = input.technicalCatalogIndex == null ? undefined : TECHNICAL_CATALOG_2026[input.technicalCatalogIndex];
+      if (technical && !canAddCatalogItemToOperationalStock(technical)) throw new TRPCError({ code: "BAD_REQUEST", message: "Este item está bloqueado no catálogo técnico." });
+      if (technical && input.catalogItemId) throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione apenas um catálogo." });
       const database = await requireDatabase();
       assertOwnArtist(ctx, input.ownerArtistId);
       if (input.ownerArtistId) await requireInventoryArtist(database, ctx.studioId, input.ownerArtistId);
@@ -263,21 +268,21 @@ export const podSaasRouter = router({
         studioId: ctx.studioId,
         ownerArtistId: input.ownerArtistId,
         catalogItemId: catalogItem?.id ?? null,
-        name: catalogItem?.name ?? input.name!,
-        category: input.category ?? catalogItem?.subcategory ?? null,
-        unit: input.unit ?? catalogItem?.defaultUnit ?? "unidade",
-        brand: input.brand ?? null,
-        line: input.line ?? null,
-        model: input.model ?? null,
-        configuration: input.configuration ?? catalogItem?.configuration ?? null,
-        diameter: input.diameter ?? catalogItem?.diameter ?? null,
+        name: technical?.name ?? catalogItem?.name ?? input.name!,
+        category: technical?.category ?? input.category ?? catalogItem?.subcategory ?? null,
+        unit: technical?.baseUnit ?? input.unit ?? catalogItem?.defaultUnit ?? "unidade",
+        brand: technical?.brandName ?? input.brand ?? null,
+        line: technical?.lineName ?? input.line ?? null,
+        model: technical?.sku ?? input.model ?? null,
+        configuration: technical?.format ?? input.configuration ?? catalogItem?.configuration ?? null,
+        diameter: technical?.needleDiameter != null ? String(technical.needleDiameter) : input.diameter ?? catalogItem?.diameter ?? null,
         currentQuantity: scaledToDecimal(decimalToScaled(input.currentQuantity, 3), 3),
         minimumQuantity: scaledToDecimal(decimalToScaled(input.minimumQuantity, 3), 3),
         unitCost: scaledToDecimal(decimalToScaled(input.unitCost, 4), 4),
         supplierId: null,
         lot: input.lot ?? null,
         expiresAt: input.expiresAt ? input.expiresAt.slice(0, 19).replace("T", " ") : null,
-        notes: input.notes ?? null,
+        notes: technical ? JSON.stringify({ catalog: "2026-09-07", ...technical }) : input.notes ?? null,
         createdByUserId: ctx.user.id,
       });
       const materialId = insertId(inserted);

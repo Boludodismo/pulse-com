@@ -67,7 +67,7 @@ export function CalendarView({ visibleCalendars }: CalendarViewProps) {
     .filter((apt) => !apt.calendarId || visibleCalendars.includes(apt.calendarId))
     .map((apt) => {
       const calendar = calendars.find((c) => c.id === apt.calendarId);
-      const startDate = new Date(apt.date);
+      const startDate = new Date(apt.date.replace(" ", "T"));
       const endDate = new Date(startDate.getTime() + apt.duration * 60 * 1000);
 
       return {
