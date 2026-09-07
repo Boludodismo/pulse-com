@@ -9,8 +9,8 @@ import { dispatchTemplateMessage } from "./service";
  * - "1" → confirma agendamento
  * - "2" → solicita remarcação
  */
-export async function handleWebhookReply(phone: string, message: string, studioId?: number) {
-  if (studioId && await recordCareWhatsappReply(studioId,phone,message)) return;
+export async function handleWebhookReply(phone: string, message: string, studioId?: number, eventKey?: string) {
+  if (studioId && await recordCareWhatsappReply(studioId,phone,message,eventKey)) return;
   const db = await getDb();
   if (!db) return;
 

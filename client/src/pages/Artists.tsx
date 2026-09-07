@@ -1,3 +1,4 @@
+import ArtistCardEditor from '@/components/ArtistCardEditor';
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useState } from "react";
 import { trpc } from "../lib/trpc";
@@ -290,6 +291,7 @@ export default function Artists() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        <ArtistCardEditor artistId={artist.id} name={artist.name}/>
                         <Button
                           variant="ghost"
                           size="icon"

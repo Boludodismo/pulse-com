@@ -1,3 +1,4 @@
+import {AuthorizeQuoteSupplier} from '@/components/ProcurementPanel';
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -378,6 +379,7 @@ export default function Suppliers() {
                         <a href={`mailto:${s.email}`} className="hover:text-orange-400 truncate">{s.email}</a>
                       </p>
                     )}
+                    <AuthorizeQuoteSupplier supplierId={s.id}/>
                     {s.notes && <p className="text-xs text-muted-foreground italic mt-1">{s.notes}</p>}
                     <Button size="sm" variant="outline" className="w-full mt-2 border-orange-500/50 text-orange-400 hover:bg-orange-500/10"
                       onClick={() => handleNewOrder(s)}>

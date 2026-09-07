@@ -17,7 +17,7 @@ export async function ensureStagingMessagingSchema() {
    if(!columns.length) throw new Error('Missing base messaging table: '+table);
    for(const [name,type] of Object.entries(fields)) if(!columns.some(r=>r.COLUMN_NAME===name)) await c.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${name}\` ${type}`);
   }
-  for(const filename of ['0044_botconversa_phase1_foundation.sql','0047_botconversa_automatic_reminders.sql','0053_customer_care.sql']) {
+  for(const filename of ['0044_botconversa_phase1_foundation.sql','0047_botconversa_automatic_reminders.sql','0053_customer_care.sql','0054_studio_relations.sql']) {
    const source=await readFile(resolve(process.cwd(),'drizzle',filename),'utf8');
    const statements=source.split('\n').filter(l=>!l.trimStart().startsWith('--')).join('\n').split(';');
    for(let statement of statements) if(/^CREATE TABLE /i.test(statement.trim())) { statement=statement.trim().replace(/^CREATE TABLE (?!IF NOT EXISTS)/i,'CREATE TABLE IF NOT EXISTS ');await c.query(statement); }

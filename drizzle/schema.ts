@@ -906,3 +906,5 @@ export type IntegrationEvent = typeof integrationEvents.$inferSelect;
 export type InsertIntegrationEvent = typeof integrationEvents.$inferInsert;
 export type IntegrationSchedule = typeof integrationSchedules.$inferSelect;
 export type InsertIntegrationSchedule = typeof integrationSchedules.$inferInsert;
+
+export * from './studioRelationsSchema';

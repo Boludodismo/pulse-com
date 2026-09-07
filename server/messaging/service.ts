@@ -339,7 +339,12 @@ export async function dispatchTemplateMessage(params: {
   const template = await getTemplate(params.trigger, params.recipientType, params.studioId);
   if (!template) return { success: false, error: "Template não encontrado" };
 
+  let cardLink = "";
+  if (params.studioId && params.appointmentId && params.recipientType === "client" && ["appointment_created", "appointment_reminder_24h", "appointment_reminder_1h"].includes(params.trigger)) {
+    try { cardLink = await (await import("./studioRelations")).artistCardLink(params.studioId, params.appointmentId); } catch { /* optional card must not block appointment confirmation */ }
+  }
   const cleanedTemplate = removeLegacyNumericReplyInstruction(template);
+  params.vars = {...params.vars, link_cartao_artista: cardLink};
   const interpolated = interpolateTemplate(cleanedTemplate, params.vars);
   const links = params.vars.__appointment_action_links as unknown as AppointmentActionLinks | undefined;
   const actionPlaceholders: Array<[keyof AppointmentActionLinks, string]> = [
@@ -351,10 +356,11 @@ export async function dispatchTemplateMessage(params: {
   const missingActions = links
     ? actionPlaceholders.filter(([, placeholder]) => !cleanedTemplate.includes(placeholder)).map(([action]) => action)
     : [];
-  const message = links && missingActions.length
+  let message = links && missingActions.length
     ? `${interpolated}\n\n${formatAppointmentActionLinks(links, missingActions)}`
     : interpolated;
 
+  if (cardLink && !cleanedTemplate.includes("{link_cartao_artista}")) message += `\n\nConheça o artista e seus trabalhos: ${cardLink}`;
   return sendAndLog({
     studioId: params.studioId,
     recipientPhone: params.recipientPhone,

@@ -1,3 +1,4 @@
+import ProcurementPanel from '@/components/ProcurementPanel';
 import ArtistInventory from "@/components/ArtistInventory";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -249,7 +250,8 @@ export default function Stock() {
     <DashboardLayout>
       <Tabs defaultValue="owners" className="space-y-6">
         <TabsList><TabsTrigger value="owners">Estúdio e artistas</TabsTrigger><TabsTrigger value="general">Materiais gerais</TabsTrigger></TabsList>
-        <TabsContent value="owners"><ArtistInventory /></TabsContent>
+        <TabsContent value="owners"><ProcurementPanel/>
+      <ArtistInventory /></TabsContent>
         <TabsContent value="general">
       <div className="space-y-6">
         {/* Header */}

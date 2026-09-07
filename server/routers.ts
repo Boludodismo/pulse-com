@@ -1,3 +1,4 @@
+import {studioRelationsRouter} from './routers/studioRelations';
 import { customerCareRouter } from "./routers/customerCare";
 import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
 import { assertOwnArtist, isInventoryManager } from "./inventoryAccess";
@@ -66,6 +67,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 
 export const appRouter = router({
   customerCare: customerCareRouter,
+  studioRelations: studioRelationsRouter,
   system: systemRouter,
   
   // Quick consume endpoint para registrar insumos rapidamente
@@ -738,6 +740,7 @@ export const appRouter = router({
           const { dispatchTemplateMessage } = await import("./messaging/service");
           if (!autoReminder && client?.phone) {
             await dispatchTemplateMessage({
+              studioId,
               trigger: "appointment_created",
               recipientType: "client",
               recipientPhone: client.phone,

@@ -58,10 +58,17 @@ export async function runCustomerCareCycle() {
 }
 // A free-text WhatsApp reply is attached only when the latest outbound message
 // is an identified care request. Other replies retain their existing workflow.
-export async function recordCareWhatsappReply(studioId:number,phone:string,text:string) {
+export async function recordCareWhatsappReply(studioId:number,phone:string,text:string,eventKey?:string) {
  const db=await getDb();if(!db)return false;
  const recent=await db.select().from(messageQueue).where(and(eq(messageQueue.studioId,studioId),eq(messageQueue.recipientType,'client'),eq(messageQueue.recipientPhone,normalizeBrazilianPhone(phone)))).orderBy(desc(messageQueue.sentAt),desc(messageQueue.id)).limit(1);
  const message=recent[0];if(!message||message.trigger!=='customer_care'||!message.sentAt)return false;
+ const open=await db.select().from(careEvents).where(and(eq(careEvents.studioId,studioId),eq(careEvents.clientId,message.clientId!),eq(careEvents.status,'queued'),isNull(careEvents.feedback),gte(careEvents.dueDate,careDueDate(new Date().toISOString().slice(0,10),-90,'days'))));
+ const sources=new Set(open.map(e=>`${e.appointmentId??'none'}:${e.artistId??'none'}`));
+ if(sources.size>1){
+  const key=createHash('sha256').update(`feedback:${studioId}:${eventKey||randomBytes(16).toString('hex')}`).digest('hex');
+  await db.insert(careEvents).values({studioId,ruleId:0,clientId:message.clientId!,artistId:null,appointmentId:null,dueDate:new Date().toISOString().slice(0,10),occurrenceKey:key,token:randomBytes(32).toString('hex'),message:'Resposta recebida pelo WhatsApp. Há mais de uma sessão em acompanhamento; o estúdio precisa confirmar a qual atendimento ela se refere.',status:'responded',feedback:text.slice(0,4000),feedbackAt:new Date().toISOString().slice(0,19).replace('T',' ')}).onDuplicateKeyUpdate({set:{occurrenceKey:key}});
+  return true;
+ }
  const event=(await db.select().from(careEvents).where(and(eq(careEvents.studioId,studioId),eq(careEvents.clientId,message.clientId!),eq(careEvents.message,message.message))).limit(1))[0];if(!event||Date.now()-Date.parse(message.sentAt.replace(' ','T')+'Z')>90*86400000)return false;
  await db.update(careEvents).set({feedback:((event.feedback?event.feedback+'\n\n':'')+text).slice(-12000),feedbackAt:new Date().toISOString().slice(0,19).replace('T',' '),readAt:null,status:'responded'}).where(eq(careEvents.id,event.id));return true;
 }

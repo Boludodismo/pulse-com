@@ -70,7 +70,7 @@ export async function receiveBotConversaWebhook(input: {
   }
 
   try {
-    await handleWebhookReply(inbound.phone, inbound.text, integration.studioId);
+    await handleWebhookReply(inbound.phone, inbound.text, integration.studioId, idempotencyKey);
     await db.update(integrationEvents).set({ status: "processed", processedAt: new Date().toISOString().slice(0, 19).replace("T", " ") })
       .where(eq(integrationEvents.idempotencyKey, idempotencyKey));
     return { accepted: true, duplicate: false };

@@ -1,3 +1,4 @@
+import PublicArtistCard from './pages/PublicArtistCard';
 import CustomerFeedback from "./pages/CustomerFeedback";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -42,6 +43,7 @@ import AcceptInvitation from "./pages/AcceptInvitation";
 function Router() {
   return (
     <Switch>
+      <Route path="/artista/:token" component={PublicArtistCard} />
       <Route path="/feedback/:token" component={CustomerFeedback} />
       <Route path="/" component={() => (
         <DashboardLayout>

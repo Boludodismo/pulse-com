@@ -1,3 +1,4 @@
+import {runProcurementCycle} from './messaging/studioRelations';
 import { runCustomerCareCycle } from "./messaging/customerCare";
 /**
  * scheduler.ts
@@ -355,6 +356,7 @@ export async function runLegacyNotificationCycle() {
   // origem cria jobs próprios, idempotentes e escopados, que o Heartbeat entrega
   // posteriormente pela integração ativa do respectivo estúdio.
   await runCustomerCareCycle();
+  await runProcurementCycle();
   const automatic = await runAutomaticMessageCycle();
   const individual = await enqueueDueIndividualReminders();
   console.log("[Scheduler] Ciclo automático BotConversa", { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped });

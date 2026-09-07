@@ -379,6 +379,13 @@
       "when": 1788825600000,
       "tag": "0053_customer_care",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "5",
+      "when": 1788825660000,
+      "tag": "0054_studio_relations",
+      "breakpoints": true
     }
   ]
 }
