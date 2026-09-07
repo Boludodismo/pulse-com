@@ -326,7 +326,6 @@ export function EventModal({
       } else {
         toast.success("Evento criado com sucesso!");
       }
-      notifySync("agendamento");
       // Invalidar cache para sincronização imediata
       utils.appointments.list.invalidate();
       onSuccess?.();
@@ -342,7 +341,6 @@ export function EventModal({
     onSuccess: (result) => {
       if (result.warnings?.length) result.warnings.forEach(message => toast.warning(message, { duration: 10000 }));
       else toast.success("Evento atualizado com sucesso!");
-      notifySync("agendamento");
       // Invalidar cache para sincronização imediata
       utils.appointments.list.invalidate();
       onSuccess?.();
