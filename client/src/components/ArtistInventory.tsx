@@ -428,6 +428,7 @@ export default function ArtistInventory() {
                   minLength={2}
                   maxLength={255}
                   id="material-name"
+                  readOnly={form.technicalCatalogIndex != null}
                   value={form.name}
                   onChange={e => setField("name", e.target.value)}
                 />
@@ -440,6 +441,7 @@ export default function ArtistInventory() {
                   required
                   maxLength={50}
                   id="material-unit"
+                  readOnly={form.technicalCatalogIndex != null}
                   value={form.unit}
                   onChange={e => setField("unit", e.target.value)}
                 />

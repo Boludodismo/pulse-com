@@ -933,6 +933,7 @@ export default function CalendarPage() {
               <ExternalLink className="h-3.5 w-3.5 mr-1" />
               Ver Cliente
             </Button>
+            <Button size="sm" onClick={() => { setDetailsOpen(false); openEditApt(selectedApt); }}>Editar agendamento</Button>
             <Button size="sm" variant="ghost" className="text-gray-400 text-xs ml-auto"
               onClick={() => setDetailsOpen(false)}>
               Fechar
