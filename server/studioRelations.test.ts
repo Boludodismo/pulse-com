@@ -1,5 +1,5 @@
 import {describe,it,expect,vi,beforeEach} from 'vitest';
-import {renderQuote,safePublicUrl,QUOTE_MODELS} from '../shared/studioRelations';
+import {renderQuote,safePublicUrl,QUOTE_MODELS,normalizeCardLinks} from '../shared/studioRelations';
 const mocks=vi.hoisted(()=>({getDb:vi.fn(),storagePut:vi.fn()}));
 vi.mock('./db',()=>({getDb:mocks.getDb}));vi.mock('./storage',()=>({storagePut:mocks.storagePut}));vi.mock('./saas',()=>({isUserAccessActive:vi.fn(async()=>true)}));
 import {studioRelationsRouter} from './routers/studioRelations';
@@ -15,4 +15,23 @@ describe('Cartões e reposição',()=>{
  it('mantém o rascunho sem envio quando não há integração',async()=>{const writes=database([[{id:4,status:'draft',message:'Orçamento revisado',recipientPhone:'5531999999999'}],[]]);await expect(studioRelationsRouter.createCaller(ctx).approve({id:4,message:'Orçamento revisado',phone:'5531999999999'})).rejects.toMatchObject({code:'BAD_REQUEST'});expect(writes).toEqual([]);});
  it('exige vínculo de fornecimento para avisar o artista',async()=>{const writes=database([[{id:2,studioId:10}],[]]);await expect(studioRelationsRouter.createCaller(ctx).notification({materialId:2,artistId:8,enabled:false})).rejects.toMatchObject({code:'BAD_REQUEST'});expect(writes).toEqual([]);});
  it('não cria orçamento com fornecedor não autorizado',async()=>{const writes=database([[{id:2,studioId:10}],[]]);await expect(studioRelationsRouter.createCaller(ctx).draft({materialId:2,supplierId:9,quantity:2,body:'Olá, gostaria de um orçamento.',variables:{}})).rejects.toMatchObject({code:'BAD_REQUEST'});expect(writes).toEqual([]);});
+ it('aceita nome vazio com link, ignora linha vazia e explica link incompleto',()=>{
+ expect(normalizeCardLinks([{label:'',url:'https://www.instagram.com/artista'},{label:' ',url:' '}])).toEqual([{label:'Instagram',url:'https://www.instagram.com/artista'}]);
+ expect(()=>normalizeCardLinks([{label:'Instagram',url:''}])).toThrow('Informe o link');
+ expect(()=>normalizeCardLinks([{label:'',url:'https://www.'}])).toThrow('endereço completo');
+ });
+ it('salva cartão com o nome da rede inferido do endereço',async()=>{
+ const writes=database([[{id:6,studioId:10}]]);
+ await studioRelationsRouter.createCaller(ctx).saveCard({artistId:6,headline:'Teste',description:'',links:[{label:'',url:'https://www.instagram.com/artista'}],published:false});
+ expect(JSON.parse(writes[0].links)).toEqual([{label:'Instagram',url:'https://www.instagram.com/artista'}]);
+ });
+ it('permite primeiro upload criando apenas rascunho, sem publicar nem alterar textos existentes',async()=>{
+ const writes=database([[{id:6,studioId:10}],[{id:9,images:'[]'}],[{id:9,images:'[]'}]]);
+ mocks.storagePut.mockResolvedValue({url:'/api/storage?teste'});
+ await studioRelationsRouter.createCaller(ctx).uploadWork({artistId:6,caption:'Teste',mimeType:'image/png',imageBase64:Buffer.from([137,80,78,71,13,10,26,10]).toString('base64')});
+ expect(writes[0]).toMatchObject({artistId:6,published:0,images:'[]'});
+ expect(JSON.parse(writes[1].images)[0]).toMatchObject({caption:'Teste',url:'/api/storage?teste'});
+ expect(Object.keys(writes[1])).toEqual(['images']);
+ });
+
 });
