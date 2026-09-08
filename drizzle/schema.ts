@@ -200,6 +200,7 @@ export const reportTemplates = mysqlTable("reportTemplates", {
 });
 
 export const studioSettings = mysqlTable("studioSettings", {
+	studioId: int().unique(),
 	id: int().autoincrement().notNull(),
 	studioName: varchar({ length: 255 }),
 	address: varchar({ length: 500 }),

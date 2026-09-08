@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { invitationExpiresAt, isUserAccessActive, SAAS_MODULES } from "./saas";
+import { parseAccessExpiry, invitationExpiresAt, isUserAccessActive, SAAS_MODULES } from "./saas";
 
 describe("SaaS access controls", () => {
   it("creates invitation expiry exactly seven days ahead by default", () => {
     const before = Date.now() + 7 * 24 * 60 * 60 * 1000;
-    const expiry = new Date(invitationExpiresAt()).getTime();
+    const expiry = parseAccessExpiry(invitationExpiresAt());
     const after = Date.now() + 7 * 24 * 60 * 60 * 1000;
     expect(expiry).toBeGreaterThanOrEqual(before - 1000);
     expect(expiry).toBeLessThanOrEqual(after + 1000);

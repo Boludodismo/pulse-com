@@ -1,3 +1,4 @@
+import { ensureStudioSettingsScope } from "./studioSettingsScope";
 import {ensureStagingArtistInvitationSchema} from './stagingArtistInvitationSchema';
 import {ensureStagingIntelligentInboxSchema} from './stagingIntelligentInboxSchema';
 import { ensureStagingMessagingSchema } from "./stagingMessagingSchema";
@@ -28,6 +29,7 @@ async function startServer() {
   await ensureStagingMessagingSchema();
   await ensureStagingIntelligentInboxSchema();
   await ensureStagingArtistInvitationSchema();
+  await ensureStudioSettingsScope();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {
     await checkS3Storage();
@@ -112,6 +114,10 @@ async function startServer() {
         return;
       }
 
+      if (!user.studioId || appointment.studioId !== user.studioId || (user.role === "collaborator" && appointment.artistId !== user.artistId)) {
+        res.status(403).json({ error: "Agendamento fora da sua empresa ou agenda." });
+        return;
+      }
       // Buscar cliente
       const client = await db.getClientById(appointment.clientId);
       if (!client) {
@@ -120,7 +126,7 @@ async function startServer() {
       }
 
       // Buscar configurações do estúdio
-      const studioSettings = await db.getStudioSettings();
+      const studioSettings = await db.getStudioSettings(appointment.studioId);
 
       // Buscar anamnese mais recente do cliente
       const anamnesisRecords = await db.getAnamnesisByClientId(appointment.clientId);
@@ -182,7 +188,7 @@ async function startServer() {
         rawBody,
         signature,
       });
-      return res.status(200).json(result);
+      return res.status(result.accepted ? 200 : 409).json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao processar webhook.";
       const status = message.includes("Assinatura") || message.includes("não encontrada") ? 401 : 400;
@@ -192,41 +198,8 @@ async function startServer() {
   });
 
   // ── Webhook WhatsApp legado (recebe respostas dos clientes) ───────────────
-  app.post("/api/webhook/whatsapp", async (req, res) => {
-    try {
-      const body = req.body;
-      // Suporte a BotConversa, Z-API e Meta
-      // Extrai número e mensagem independente do provedor
-      let phone: string | undefined;
-      let message: string | undefined;
-
-      // BotConversa
-      if (body?.subscriber?.phone && body?.last_message?.text) {
-        phone = body.subscriber.phone;
-        message = body.last_message.text?.trim();
-      }
-      // Z-API
-      else if (body?.phone && body?.text?.message) {
-        phone = body.phone;
-        message = body.text.message?.trim();
-      }
-      // Meta Cloud API
-      else if (body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
-        const msg = body.entry[0].changes[0].value.messages[0];
-        phone = msg.from;
-        message = msg.text?.body?.trim();
-      }
-
-      if (phone && message) {
-        const { handleWebhookReply } = await import("../messaging/webhook");
-        await handleWebhookReply(phone, message);
-      }
-
-      res.status(200).json({ ok: true });
-    } catch (err) {
-      console.error("[Webhook] Erro:", err);
-      res.status(200).json({ ok: true }); // Sempre 200 para não retentar
-    }
+  app.post("/api/webhook/whatsapp", (_req, res) => {
+    return res.status(410).json({ ok: false, error: "Use a URL autenticada exclusiva da integração." });
   });
 
   // Meta webhook verification (GET)

@@ -10,7 +10,8 @@ import { dispatchTemplateMessage } from "./service";
  * - "2" → solicita remarcação
  */
 export async function handleWebhookReply(phone: string, message: string, studioId?: number, eventKey?: string) {
-  if (studioId && await recordCareWhatsappReply(studioId,phone,message,eventKey)) return;
+  if (!studioId) throw new Error("Empresa obrigatória para receber mensagens.");
+  if (await recordCareWhatsappReply(studioId,phone,message,eventKey)) return;
   const db = await getDb();
   if (!db) return;
 
@@ -45,7 +46,7 @@ export async function handleWebhookReply(phone: string, message: string, studioI
     .limit(1);
 
   const apt = aptRows[0];
-  if (!apt) return;
+  if (!apt || apt.studioId !== studioId) return;
 
   const aptDate = new Date(apt.date.replace(" ", "T"));
   const dataFormatada = aptDate.toLocaleDateString("pt-BR");

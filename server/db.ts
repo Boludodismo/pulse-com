@@ -189,14 +189,14 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-export async function listAllUsers() {
+export async function listAllUsers(studioId?: number) {
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot list users: database not available");
     return [];
   }
 
-  const result = await db.select().from(users).orderBy(desc(users.createdAt));
+  const result = await db.select().from(users).where(studioId ? eq(users.studioId, studioId) : undefined).orderBy(desc(users.createdAt));
   return result;
 }
 
@@ -1003,7 +1003,7 @@ export async function getFinancialSummary(startDate: string, endDate: string, st
 }
 
 // ============ SEARCH FUNCTIONS ============
-export async function searchAppointments(term: string, startDate?: Date, endDate?: Date) {
+export async function searchAppointments(term: string, startDate?: Date, endDate?: Date, studioId?: number, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1017,6 +1017,9 @@ export async function searchAppointments(term: string, startDate?: Date, endDate
     )
   ];
   
+  if (!studioId) return [];
+  conditions.push(eq(appointments.studioId, studioId));
+  if (artistId != null) conditions.push(eq(appointments.artistId, artistId));
   // Adicionar filtro de período se fornecido
   if (startDate) {
     conditions.push(gte(appointments.date, toDateStr(startDate)));
@@ -1045,7 +1048,7 @@ export async function searchAppointments(term: string, startDate?: Date, endDate
   return result;
 }
 
-export async function searchTransactions(term: string, startDate?: Date, endDate?: Date) {
+export async function searchTransactions(term: string, startDate?: Date, endDate?: Date, studioId?: number, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1059,6 +1062,9 @@ export async function searchTransactions(term: string, startDate?: Date, endDate
     )
   ];
   
+  if (!studioId) return [];
+  conditions.push(eq(transactions.studioId, studioId));
+  if (artistId != null) conditions.push(sql`EXISTS (SELECT 1 FROM appointments a WHERE a.id = ${transactions.appointmentId} AND a.studioId = ${studioId} AND a.artistId = ${artistId})`);
   // Adicionar filtro de período se fornecido
   if (startDate) {
     conditions.push(gte(transactions.date, toDateStr(startDate)));
@@ -1366,32 +1372,36 @@ export async function logWhatsAppReminder({
 }
 
 // ============ STUDIO SETTINGS FUNCTIONS ============
-export async function getStudioSettings() {
-  const db = await getDb();
-  if (!db) return null;
-
-  const result = await db.select().from(studioSettings).limit(1);
-  return result.length > 0 ? result[0] : null;
+export async function getStudioSettings(studioId?: number | null) {
+  const database = await getDb();
+  if (!database) return null;
+  // Legacy scheduled tasks may only use settings when exactly one studio exists.
+  if (!studioId) {
+    const tenants = await database.select({ id: studios.id }).from(studios).limit(2);
+    if (tenants.length !== 1) return null;
+    studioId = tenants[0].id;
+  }
+  const rows = await database.select().from(studioSettings).where(eq(studioSettings.studioId, studioId)).limit(1);
+  return rows[0] ?? null;
 }
 
-export async function updateStudioSettings(settings: Partial<InsertStudioSettings>) {
-  const db = await getDb();
-  if (!db) return null;
-
-  const existing = await getStudioSettings();
-  
-  if (existing) {
-    await db.update(studioSettings)
-      .set({ ...settings, updatedAt: toDateStr(new Date()) })
-      .where(eq(studioSettings.id, existing.id));
-    
-    const updated = await getStudioSettings();
-    return updated;
-  } else {
-    const [inserted] = await db.insert(studioSettings).values(settings);
-    const newSettings = await getStudioSettings();
-    return newSettings;
-  }
+export async function updateStudioSettings(settings: Partial<InsertStudioSettings>, studioId: number) {
+  const database = await getDb();
+  if (!database) throw new Error("Banco de dados indisponível");
+  const { id: _id, studioId: _studioId, ...values } = settings;
+  await database.transaction(async tx => {
+    const owner = await tx.select({ id: studios.id }).from(studios).where(eq(studios.id, studioId)).for("update");
+    if (!owner.length) throw new Error("Estúdio não encontrado");
+    const existing = await tx.select({ id: studioSettings.id }).from(studioSettings).where(eq(studioSettings.studioId, studioId)).limit(1);
+    if (existing.length) await tx.update(studioSettings).set(values).where(eq(studioSettings.studioId, studioId));
+    else await tx.insert(studioSettings).values({ ...values, studioId });
+    const identity = {
+      name: values.studioName || undefined, phone: values.phone, email: values.email,
+      address: values.address, city: values.city, state: values.state, zipCode: values.zipCode,
+    };
+    if (Object.values(identity).some(v => v !== undefined)) await tx.update(studios).set(identity).where(eq(studios.id, studioId));
+  });
+  return getStudioSettings(studioId);
 }
 
 // ============ ARTISTS FUNCTIONS ============

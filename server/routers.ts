@@ -1,3 +1,4 @@
+import { assertManagedUser, safeUser } from "./userAccess";
 import { legacyArchiveRouter } from './routers/legacyArchive';
 import {artistInvitationsRouter} from './routers/artistInvitations';
 import {intelligentInboxRouter} from './routers/intelligentInbox';
@@ -606,7 +607,7 @@ export const appRouter = router({
         }
         
         // Validar horário comercial
-        const settings = await db.getStudioSettings();
+        const settings = await db.getStudioSettings(studioId);
         if (settings?.businessHours) {
           try {
             const businessHours = JSON.parse(settings.businessHours) as Record<string, { open: string; close: string; closed: boolean }>;
@@ -1083,16 +1084,17 @@ export const appRouter = router({
     }),
 
     // ── Links de exportação para calendários e WhatsApp ──────────────────────
-    getCalendarLinks: protectedProcedure
+    getCalendarLinks: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ ctx, input }) => {
         const appointment = await db.getAppointmentById(input.id);
         if (!appointment) throw new TRPCError({ code: "NOT_FOUND", message: "Agendamento não encontrado" });
+        if (appointment.studioId !== ctx.studioId || (ctx.artistId != null && appointment.artistId !== ctx.artistId)) throw new TRPCError({ code: "FORBIDDEN" });
 
         const client = await db.getClientById(appointment.clientId);
         if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
 
-        const studioSettings = await db.getStudioSettings();
+        const studioSettings = await db.getStudioSettings(appointment.studioId);
         const anamnesisRecords = await db.getAnamnesisByClientId(appointment.clientId);
         const latestAnamnesis = anamnesisRecords.length > 0 ? anamnesisRecords[0] : null;
 
@@ -1681,17 +1683,17 @@ export const appRouter = router({
 
   // ============ SEARCH ROUTER ============
   search: router({
-    global: protectedProcedure
+    global: tenantProcedure
       .input(z.object({ 
         term: z.string().min(1),
         startDate: z.date().optional(),
         endDate: z.date().optional(),
       }))
-      .query(async ({ input }) => {
+      .query(async ({ ctx, input }) => {
         const [clients, appointments, transactions] = await Promise.all([
-          db.searchClients(input.term, input.startDate, input.endDate),
-          db.searchAppointments(input.term, input.startDate, input.endDate),
-          db.searchTransactions(input.term, input.startDate, input.endDate),
+          db.searchClients(input.term, input.startDate, input.endDate, ctx.studioId),
+          db.searchAppointments(input.term, input.startDate, input.endDate, ctx.studioId, ctx.artistId),
+          db.searchTransactions(input.term, input.startDate, input.endDate, ctx.studioId, ctx.artistId),
         ]);
 
         return {
@@ -1861,11 +1863,11 @@ export const appRouter = router({
 
   // ============ SETTINGS ROUTER ============
   settings: router({
-    get: protectedProcedure.query(async () => {
-      return await db.getStudioSettings();
+    get: tenantProcedure.query(async ({ ctx }) => {
+      return await db.getStudioSettings(ctx.studioId);
     }),
 
-    update: protectedProcedure
+    update: tenantProcedure
       .input(z.object({
         studioName: z.string().optional(),
         address: z.string().optional(),
@@ -1889,8 +1891,9 @@ export const appRouter = router({
         reminderResend: z.number().optional(),
         reminderResendTime: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
-        return await db.updateStudioSettings(input);
+      .mutation(async ({ ctx, input }) => {
+        if (!["admin", "superadmin"].includes(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN" });
+        return await db.updateStudioSettings(input, ctx.studioId);
       }),
   }),
 
@@ -1992,7 +1995,8 @@ export const appRouter = router({
       if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
       }
-      return await db.listAllUsers();
+      if (ctx.user.role !== "superadmin" && !ctx.user.studioId) throw new TRPCError({ code: "FORBIDDEN" });
+      return (await db.listAllUsers(ctx.user.role === "superadmin" ? undefined : ctx.user.studioId!)).map(safeUser);
     }),
 
     getById: protectedProcedure
@@ -2001,7 +2005,9 @@ export const appRouter = router({
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
-        return await db.getUserById(input.id);
+        const target = await db.getUserById(input.id);
+        assertManagedUser(ctx.user, target);
+        return safeUser(target!);
       }),
 
     create: protectedProcedure
@@ -2017,6 +2023,7 @@ export const appRouter = router({
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
+        assertManagedUser(ctx.user, undefined, input, true);
         const result = await db.createUser(input);
         
         // Registrar auditoria
@@ -2057,7 +2064,9 @@ export const appRouter = router({
         
         // Buscar dados antes da atualização
         const userBefore = await db.getUserById(input.id);
+        assertManagedUser(ctx.user, userBefore);
         
+        assertManagedUser(ctx.user, userBefore, input);
         const { id, ...data } = input;
         const result = await db.updateUser(id, data);
         
@@ -2083,8 +2092,8 @@ export const appRouter = router({
           entityId: input.id,
           entityName: userAfter?.name || userBefore?.name || "Usuário",
           details: {
-            before: userBefore,
-            after: userAfter,
+            before: userBefore ? safeUser(userBefore) : undefined,
+            after: userAfter ? safeUser(userAfter) : undefined,
             changes: data,
           },
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
@@ -2103,6 +2112,7 @@ export const appRouter = router({
         
         // Buscar dados antes da exclusão
         const userBefore = await db.getUserById(input.id);
+        assertManagedUser(ctx.user, userBefore);
         
         const result = await db.deleteUser(input.id);
         
@@ -2115,7 +2125,7 @@ export const appRouter = router({
           entityId: input.id,
           entityName: userBefore?.name || "Usuário",
           details: {
-            deletedUser: userBefore,
+            deletedUser: userBefore ? safeUser(userBefore) : undefined,
           },
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
@@ -2138,6 +2148,7 @@ export const appRouter = router({
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
+        assertManagedUser(ctx.user, undefined, input, true);
         // Verificar se e-mail já existe
         const existing = await db.getUserByEmail(input.email);
         if (existing) {
@@ -2211,6 +2222,7 @@ export const appRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
         }
         const { hashPassword } = await import("./_core/localAuth");
+        assertManagedUser(ctx.user, await db.getUserById(input.id));
         const passwordHash = await hashPassword(input.password);
         await db.updateUser(input.id, { passwordHash });
         return { success: true };
@@ -2219,7 +2231,7 @@ export const appRouter = router({
 
   // ============ AUDIT ROUTER (Admin only) ============
   audit: router({
-    list: protectedProcedure
+    list: superAdminProcedure
       .input(z.object({
         action: z.string().optional(),
         entity: z.string().optional(),
@@ -2235,7 +2247,7 @@ export const appRouter = router({
         return await db.listAuditLogs(input);
       }),
 
-    search: protectedProcedure
+    search: superAdminProcedure
       .input(z.object({ term: z.string() }))
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
@@ -2244,7 +2256,7 @@ export const appRouter = router({
         return await db.searchAuditLogs(input.term);
       }),
 
-    statistics: protectedProcedure
+    statistics: superAdminProcedure
       .input(z.object({
         startDate: z.date().optional(),
         endDate: z.date().optional(),
@@ -2256,7 +2268,7 @@ export const appRouter = router({
         return await db.getAuditStatistics(input?.startDate, input?.endDate);
       }),
 
-    actionsByDay: protectedProcedure
+    actionsByDay: superAdminProcedure
       .input(z.object({
         startDate: z.date(),
         endDate: z.date(),
@@ -2268,7 +2280,7 @@ export const appRouter = router({
         return await db.getAuditActionsByDay(input.startDate, input.endDate);
       }),
 
-    actionsByType: protectedProcedure
+    actionsByType: superAdminProcedure
       .input(z.object({
         startDate: z.date().optional(),
         endDate: z.date().optional(),
@@ -2280,7 +2292,7 @@ export const appRouter = router({
         return await db.getAuditActionsByType(input?.startDate, input?.endDate);
       }),
 
-    actionsByEntity: protectedProcedure
+    actionsByEntity: superAdminProcedure
       .input(z.object({
         startDate: z.date().optional(),
         endDate: z.date().optional(),
@@ -2292,7 +2304,7 @@ export const appRouter = router({
         return await db.getAuditActionsByEntity(input?.startDate, input?.endDate);
       }),
 
-    topActiveUsers: protectedProcedure
+    topActiveUsers: superAdminProcedure
       .input(z.object({
         limit: z.number().optional(),
         startDate: z.date().optional(),
@@ -2305,7 +2317,7 @@ export const appRouter = router({
         return await db.getTopActiveUsers(input?.limit, input?.startDate, input?.endDate);
       }),
 
-    heatmap: protectedProcedure
+    heatmap: superAdminProcedure
       .input(z.object({
         startDate: z.date().optional(),
         endDate: z.date().optional(),
@@ -2317,7 +2329,7 @@ export const appRouter = router({
         return await db.getAuditHeatmap(input?.startDate, input?.endDate);
       }),
 
-    exportPDF: protectedProcedure
+    exportPDF: superAdminProcedure
       .input(z.object({
         startDate: z.date(),
         endDate: z.date(),

@@ -48,9 +48,12 @@ export async function receiveBotConversaWebhook(input: {
   const inbound = extractInboundMessage(payload);
   const payloadHash = hashIntegrationPayload(input.rawBody);
   const idempotencyKey = hashIntegrationPayload(`inbound:${integration.id}:${inbound.eventId ?? payloadHash}`);
-  const known = await db.select({ id: integrationEvents.id }).from(integrationEvents)
+  const known = await db.select({ id: integrationEvents.id, status: integrationEvents.status }).from(integrationEvents)
     .where(eq(integrationEvents.idempotencyKey, idempotencyKey)).limit(1);
-  if (known[0]) return { accepted: true, duplicate: true };
+  if (known[0]?.status === "processed") return { accepted: true, duplicate: true };
+  if (known[0]?.status === "ignored") return { accepted: true, ignored: true };
+  if (known[0]?.status === "failed") return { accepted: false, failed: true, error: "O processamento anterior falhou. Consulte o histórico antes de reenviar." };
+  if (known[0]) return { accepted: false, processing: true };
 
   await db.insert(integrationEvents).values({
     studioId: integration.studioId,

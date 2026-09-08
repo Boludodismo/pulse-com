@@ -9,6 +9,7 @@ export type SaasModule = (typeof SAAS_MODULES)[number];
 export type InvitationRole = "admin" | "collaborator";
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
+export const parseAccessExpiry = (value: string | Date) => value instanceof Date ? value.getTime() : Date.parse(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? value.replace(" ", "T") + "Z" : value);
 const nowSql = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
 export function invitationExpiresAt(days = 7) {
@@ -59,7 +60,7 @@ export async function claimStudioInvitation(token: string, userId: number) {
   const invitation = (await database.select().from(studioInvitations).where(eq(studioInvitations.tokenHash, hashToken(token))).limit(1))[0];
   if (!invitation || invitation.artistId) return { ok: false as const, reason: "not_found" as const };
   if (invitation.status !== "pending") return { ok: false as const, reason: invitation.status as "accepted" | "revoked" | "expired" };
-  if (new Date(invitation.expiresAt).getTime() <= Date.now()) {
+  if (parseAccessExpiry(invitation.expiresAt) <= Date.now()) {
     await database.update(studioInvitations).set({ status: "expired" }).where(eq(studioInvitations.id, invitation.id));
     return { ok: false as const, reason: "expired" as const };
   }
@@ -79,7 +80,7 @@ export async function claimStudioInvitation(token: string, userId: number) {
 export async function isUserAccessActive(user: { role: string; isActive: number; accessStatus?: string | null; accessExpiresAt?: string | null }) {
   if (user.isActive === 0 || user.accessStatus === "suspended") return false;
   if (user.role === "superadmin") return true;
-  if (user.accessExpiresAt && new Date(user.accessExpiresAt).getTime() <= Date.now()) return false;
+  if (user.accessExpiresAt && parseAccessExpiry(user.accessExpiresAt) <= Date.now()) return false;
   return user.accessStatus !== "expired";
 }
 
@@ -144,14 +145,14 @@ export function summarizeSaasMetrics(input: SaasMetricsInput) {
     activeTrialAccesses: activeMembers.filter((user) => Boolean(user.accessExpiresAt)).length,
     accessExpiringSoon: activeMembers.filter((user) => {
       if (!user.accessExpiresAt) return false;
-      const expiresAt = new Date(user.accessExpiresAt).getTime();
+      const expiresAt = parseAccessExpiry(user.accessExpiresAt);
       return expiresAt > now && expiresAt <= sevenDaysFromNow;
     }).length,
     invitations: {
-      pending: input.invitations.filter((invitation) => invitation.status === "pending" && new Date(invitation.expiresAt).getTime() > now).length,
+      pending: input.invitations.filter((invitation) => invitation.status === "pending" && parseAccessExpiry(invitation.expiresAt) > now).length,
       accepted: input.invitations.filter((invitation) => invitation.status === "accepted").length,
       revoked: input.invitations.filter((invitation) => invitation.status === "revoked").length,
-      expired: input.invitations.filter((invitation) => invitation.status === "expired" || (invitation.status === "pending" && new Date(invitation.expiresAt).getTime() <= now)).length,
+      expired: input.invitations.filter((invitation) => invitation.status === "expired" || (invitation.status === "pending" && parseAccessExpiry(invitation.expiresAt) <= now)).length,
     },
     billingEnabled: false,
   };

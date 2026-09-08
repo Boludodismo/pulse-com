@@ -26,6 +26,7 @@ export default function Settings() {
     onSuccess: () => {
       toast.success("Configurações salvas com sucesso!");
       utils.settings.get.invalidate();
+      utils.saas.studios.invalidate();
     },
     onError: () => {
       toast.error("Erro ao salvar configurações");

@@ -12,7 +12,7 @@ export class BotConversaProvider implements WhatsAppProvider {
   private readonly timeoutMs = 10_000;
 
   constructor(config: ProviderConfig) {
-    this.apiToken = config.apiToken;
+    this.apiToken = config.apiToken.trim();
   }
 
   private async request(path: string, init: RequestInit): Promise<Response> {
@@ -34,7 +34,7 @@ export class BotConversaProvider implements WhatsAppProvider {
   }
 
   private toSafeError(status: number): string {
-    if (status === 401 || status === 403) return "Não foi possível autenticar a integração BotConversa.";
+    if (status === 401 || status === 403) return `BotConversa recusou a chave de API (HTTP ${status}). Confira o API Token da conta em Configurações > Integrações no BotConversa. O segredo do webhook é uma credencial separada.`;
     if (status === 429) return "O limite temporário do BotConversa foi atingido; a operação será tentada novamente.";
     if (status >= 500) return "O BotConversa está temporariamente indisponível.";
     return `A operação foi recusada pelo BotConversa (HTTP ${status}).`;
