@@ -131,6 +131,7 @@ export const clientNotes = mysqlTable("clientNotes", {
 });
 
 export const clients = mysqlTable("clients", {
+	isArchived: tinyint().default(0).notNull(),
 	artistId: int(),
 	id: int().autoincrement().notNull(),
 	name: varchar({ length: 255 }).notNull(),

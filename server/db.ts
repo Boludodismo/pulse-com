@@ -268,7 +268,7 @@ export async function deleteUser(id: number) {
 export async function listClients(studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [];
+  const conditions = [eq(clients.isArchived, 0)];
   if (studioId !== null && studioId !== undefined) {
     conditions.push(eq(clients.studioId, studioId));
   }
@@ -292,6 +292,7 @@ export async function searchClients(term: string, startDate?: Date, endDate?: Da
   const searchTerm = `%${term}%`;
   
   const conditions = [
+    eq(clients.isArchived, 0),
     or(
       like(clients.name, searchTerm),
       like(clients.email, searchTerm),
@@ -783,6 +784,7 @@ export async function getTopClients(limit: number = 5) {
   const result = await db
     .select()
     .from(clients)
+    .where(eq(clients.isArchived, 0))
     .orderBy(desc(clients.totalSpent))
     .limit(limit);
   
@@ -801,7 +803,7 @@ export async function getUpcomingBirthdays(daysAhead: number = 30) {
   const allClients = await db
     .select()
     .from(clients)
-    .where(sql`${clients.birthDate} IS NOT NULL`);
+    .where(and(eq(clients.isArchived, 0), sql`${clients.birthDate} IS NOT NULL`));
   
   // Filtrar clientes com aniversário nos próximos N dias
   const upcomingBirthdays = allClients.filter(client => {
@@ -844,7 +846,7 @@ export async function getDashboardMetrics() {
   };
   
   // Total de clientes
-  const clientsCount = await db.select({ count: sql<number>`count(*)` }).from(clients);
+  const clientsCount = await db.select({ count: sql<number>`count(*)` }).from(clients).where(eq(clients.isArchived, 0));
   const totalClients = clientsCount[0]?.count || 0;
   
   // Total de agendamentos
