@@ -393,6 +393,13 @@
       "when": 1788825720000,
       "tag": "0055_intelligent_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "5",
+      "when": 1788825780000,
+      "tag": "0056_inbox_rbac_foundation",
+      "breakpoints": true
     }
   ]
 }

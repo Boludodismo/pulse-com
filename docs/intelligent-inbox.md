@@ -12,7 +12,7 @@ Extensão do CRM existente, publicada exclusivamente em `amused-youthfulness / s
 - Logs futuros: reutilizar `integration_events.type`, com nomes definidos em `INBOX_EVENTS`. Nenhum evento de operação externa inexistente é inserido agora.
 - Jobs: o scheduler, Heartbeat e filas existentes não são modificados. A nova Central não é registrada neles.
 - Configuração: `ENV`, com `INTELLIGENT_INBOX_ENABLED=false` por padrão. Valor também definido explicitamente no Railway de homologação.
-- Migrations: histórico existente é preservado. A base importada de homologação não tem controle histórico e pula o replay; um helper restrito aos IDs exatos do serviço/ambiente aplica somente a migration nova, sob lock MySQL.
+- Migrations: histórico existente é preservado. A base importada de homologação não tem controle histórico e pula o replay; um helper restrito aos IDs exatos do serviço/ambiente aplica somente as migrations novas, sob lock MySQL.
 
 ## Estado entregue
 
@@ -24,12 +24,14 @@ A tela consulta somente as permissões da sessão ao abrir. Não consulta as tab
 
 - `shared/intelligentInbox.ts`: permissões, nomes, classificações extensíveis, prioridades, intenções, tipos de mensagens, eventos e indicadores.
 - `drizzle/0055_intelligent_inbox.sql`: migration nova e aditiva.
+- `drizzle/0056_inbox_rbac_foundation.sql`: recria apenas a tabela RBAC existente quando ausente na base importada, sem grants.
 - `drizzle/intelligentInboxSchema.ts`: definições Drizzle das quatro tabelas, índices e FKs compostas.
 - `server/_core/stagingIntelligentInboxSchema.ts`: aplicação isolada na base importada de homologação.
 - `server/intelligentInbox/contracts.ts`: interfaces futuras, sem implementação externa.
 - `server/intelligentInbox/service.ts`: estado desconectado e operações bloqueadas.
 - `server/routers/intelligentInbox.ts`: endpoints autenticados, autorizados e inativos.
 - `server/intelligentInbox.test.ts`: 15 testes de segurança, inatividade e schema.
+- `server/intelligentInboxMigration.test.ts`: 2 testes de recuperação do RBAC ausente e restrição ao staging.
 - `client/src/pages/IntelligentInbox.tsx`: página responsiva, navegação interna e configuração futura.
 - `docs/intelligent-inbox.md`: este relatório e guia de expansão.
 
@@ -39,7 +41,7 @@ A tela consulta somente as permissões da sessão ao abrir. Não consulta as tab
 - `client/src/components/DashboardLayout.tsx`: apenas acrescenta o item Central Inteligente ao menu. Não adiciona consultas globais.
 - `client/src/pages/SaaSAdmin.tsx`: acrescenta rótulos das permissões ao final da matriz existente.
 - `client/src/pages/SaaSAdmin.labels.test.ts`: expectativa ampliada para os novos rótulos; mantém os anteriores.
-- `drizzle/meta/_journal.json`: acrescenta a entrada 55, sem alterar migrations aplicadas.
+- `drizzle/meta/_journal.json`: acrescenta as entradas 55 e 56, sem alterar migrations aplicadas.
 - `drizzle/schema.ts`: exporta o schema novo e amplia o enum de módulos RBAC sem remover valores.
 - `server/_core/env.ts`: flag específica, false por padrão.
 - `server/_core/index.ts`: chamada do helper aditivo de schema na inicialização, sem timer.
@@ -91,7 +93,7 @@ Não existe endpoint de webhook da Central. Listagens são contratos inativos: n
 
 ## Tabelas, relacionamentos e escala
 
-Quatro tabelas novas. `studio_id` obrigatório em todas. Não há novas colunas nas tabelas antigas; apenas ampliação compatível do enum `user_module_permissions.module`.
+Quatro entidades novas. Na base importada foi encontrada também a ausência de `user_module_permissions`; a migration 0056 cria essa tabela já prevista na arquitetura, vazia, antes da ampliação do enum. Não é um novo sistema de permissões. `studio_id` obrigatório em todas. Não há novas colunas nas tabelas antigas; apenas ampliação compatível do enum `user_module_permissions.module`.
 
 - `inbox_sync_state`: configuração futura, vínculo opcional com `whatsapp_integrations.id`, cursores e marcas de processamento. Sem tokens.
 - `inbox_conversations`: relacionamento lógico com `clients.id`, `artists.id`, `users.id` e `integration_contacts.id`; FK composta `(studio_id,sync_state_id)` para a configuração do mesmo estúdio.
@@ -124,9 +126,9 @@ Excluir tabelas ou reduzir o enum não é necessário para desativar o recurso. 
 
 - TypeScript: aprovado, sem erros.
 - Build Vite/esbuild: aprovado. Aviso existente de tamanho de bundle permanece.
-- Testes novos: 15/15 aprovados.
+- Testes novos: 17/17 aprovados (15 de serviço/schema e 2 da recuperação de migration).
 - Suíte antes: 316 aprovados, 50 falharam, 14 ignorados (380 testes).
-- Suíte depois: 331 aprovados, 50 falharam, 14 ignorados (395 testes).
+- Suíte completa após a extensão: 331 aprovados, 50 falharam, 14 ignorados (395 testes). Depois da correção da migration, os 17 testes específicos foram executados novamente e passaram.
 - Comparação por nome: nenhuma falha nova, nenhuma falha anterior ocultada. Dois testes de expectativa fixa de módulos foram atualizados para a extensão intencional do RBAC.
 - As 50 falhas anteriores incluem testes que dependem de banco/configuração e um teste de data/fuso do SaaS. Não foram corrigidas por refatoração fora do escopo.
 - Migração: testes conferem quatro tabelas, tenant obrigatório, índices, FKs compostas e ausência de operações destrutivas. Aplicação real e status do deploy serão conferidos nos logs de homologação.
@@ -236,3 +238,7 @@ Excluir tabelas ou reduzir o enum não é necessário para desativar o recurso. 
 | `processed_at` | `DATETIME` |
 | `created_at` | `TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 
+
+## Incidente encontrado no deploy e correção
+
+O primeiro deployment foi marcado SUCCESS pelo Railway, mas os logs mostraram que `user_module_permissions` não existia e a inicialização não havia terminado. O status isolado não foi considerado prova de funcionamento. A migration nova 0056 restaura somente essa tabela conforme o CREATE já existente na 0043, com os módulos adicionais, sem INSERT e sem atribuir direitos. O helper de homologação executa essa criação idempotente antes da 0055. As migrations 0043 e 0055 não foram alteradas. Os campos `id`, `userId`, `studioId`, `module`, `canRead`, `canWrite`, `createdAt`, `updatedAt` são as colunas da tabela restaurada; os padrões Ler/Editar permanecem zero.

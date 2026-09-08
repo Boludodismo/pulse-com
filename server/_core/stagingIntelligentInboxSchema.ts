@@ -17,6 +17,10 @@ export async function ensureStagingIntelligentInboxSchema() {
     );
     if (Number(lock[0]?.acquired) !== 1)
       throw new Error("Inbox schema lock unavailable.");
+    const foundation = await readFile(resolve(process.cwd(), 'drizzle/0056_inbox_rbac_foundation.sql'), 'utf8');
+    const createPermissions = foundation.split('\n').filter(line => !line.startsWith('--')).join('\n').trim();
+    if (!createPermissions.startsWith('CREATE TABLE IF NOT EXISTS `user_module_permissions`')) throw new Error('Unexpected RBAC foundation statement.');
+    await c.query(createPermissions);
     const source = await readFile(
       resolve(process.cwd(), "drizzle/0055_intelligent_inbox.sql"),
       "utf8"
