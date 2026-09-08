@@ -1,0 +1,21 @@
+POD CRM 2026 — PACOTE LIMPO PARA GITHUB + RAILWAY
+Data: 06/09/2026
+
+Este pacote contém o código-fonte completo do CRM preparado para homologação.
+
+IMPORTANTE:
+- Não contém a pasta .git.
+- Não contém .manus.
+- Não contém .upload ou partes temporárias de transferência.
+- Não contém arquivo .env com credenciais.
+- Não contém dist antigo nem node_modules.
+- .env.example é apenas um modelo sem credenciais reais.
+- O diretório .github/workflows contém somente a validação CI do projeto.
+
+Validação sugerida após extrair:
+1. pnpm install --frozen-lockfile
+2. pnpm check
+3. pnpm build
+
+Para Railway, configurar as variáveis conforme .env.example e DEPLOY_RAILWAY_GITHUB.md.
+Não apontar o domínio de produção antes de validar o ambiente de homologação.

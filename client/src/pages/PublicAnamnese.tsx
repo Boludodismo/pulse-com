@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRoute } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { useSyncToast } from "@/hooks/useSyncToast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -69,6 +70,7 @@ export default function PublicAnamnese() {
   const [isCompleted, setIsCompleted] = useState(false);
   const [attemptedNext, setAttemptedNext] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [isReviewMode, setIsReviewMode] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
 
   const { data, isLoading, error } = trpc.anamnese.getRequestByToken.useQuery(
@@ -76,11 +78,14 @@ export default function PublicAnamnese() {
     { enabled: !!token, retry: false }
   );
 
+  const { notifySync } = useSyncToast();
+
   const submitMutation = trpc.anamnese.submitAnamnese.useMutation({
     onSuccess: () => {
       // setIsCompleted primeiro para desmontar o formulário, depois toast
       // no próximo tick para evitar o erro removeChild durante reconciliação do React
       setIsCompleted(true);
+      notifySync("anamnese");
       setTimeout(() => {
         toast.success("Anamnese enviada com sucesso!", {
           description: "Obrigado por preencher. O estúdio receberá suas informações.",
@@ -105,8 +110,9 @@ export default function PublicAnamnese() {
       ];
       const dateStr = `${today.getDate()} de ${months[today.getMonth()]} de ${today.getFullYear()}`;
 
-      if (data.isEditing && data.existingPayload) {
-        setIsEditMode(true);
+      if (data.existingPayload) {
+        setIsEditMode(Boolean(data.isEditing));
+        setIsReviewMode(Boolean(data.isReview));
         const payload = data.existingPayload as Record<string, any>;
         // Normalise date field in existing payload
         if (payload.client_dob) {
@@ -260,7 +266,7 @@ export default function PublicAnamnese() {
       token,
       payload: formData,
       // null (sem submissão anterior) deve virar undefined para não acionar o modo edição
-      submissionId: data?.existingSubmissionId != null ? data.existingSubmissionId : undefined,
+      submissionId: data?.isEditing && data.existingSubmissionId != null ? data.existingSubmissionId : undefined,
     });
   };
 
@@ -473,10 +479,12 @@ export default function PublicAnamnese() {
           {anamneseSchema.title}
         </h1>
         <p className="text-zinc-400 text-sm mt-1">{anamneseSchema.subtitle}</p>
-        {isEditMode && (
+        {(isEditMode || isReviewMode) && (
           <div className="mt-3 inline-flex items-center gap-2 bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs px-3 py-1.5 rounded-full">
             <span className="h-1.5 w-1.5 rounded-full bg-orange-400 animate-pulse" />
-            Modo Edição — seus dados estão pré-preenchidos. Corrija o que precisar e envie novamente.
+            {isEditMode
+              ? "Modo Edição — seus dados estão pré-preenchidos. Corrija o que precisar e envie novamente."
+              : "Revisão de ficha — seus dados anteriores foram carregados. Atualize somente o que mudou."}
           </div>
         )}
       </div>

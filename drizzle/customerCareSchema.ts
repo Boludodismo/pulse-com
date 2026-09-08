@@ -1,0 +1,9 @@
+import { mysqlTable, int, varchar, text, timestamp, tinyint } from 'drizzle-orm/mysql-core';
+export const careRules = mysqlTable('care_rules', {
+ id:int().autoincrement().primaryKey(), studioId:int('studio_id').notNull(), name:varchar({length:120}).notNull(), kind:varchar({length:20}).notNull(), amount:int().notNull().default(0), unit:varchar({length:10}).notNull().default('days'), sendTime:varchar('send_time',{length:5}).notNull().default('09:00'), body:text().notNull(), enabled:tinyint().notNull().default(0), createdAt:timestamp('created_at',{mode:'string'}).defaultNow().notNull(),
+});
+export const careEvents = mysqlTable('care_events', {
+ id:int().autoincrement().primaryKey(), studioId:int('studio_id').notNull(), ruleId:int('rule_id').notNull(), clientId:int('client_id').notNull(), appointmentId:int('appointment_id'), artistId:int('artist_id'), dueDate:varchar('due_date',{length:10}).notNull(), occurrenceKey:varchar('occurrence_key',{length:128}).notNull().unique(), token:varchar({length:64}).notNull().unique(), message:text().notNull(), queueId:int('queue_id'), status:varchar({length:20}).notNull().default('pending'), feedback:text(), feedbackAt:timestamp('feedback_at',{mode:'string'}), readAt:timestamp('read_at',{mode:'string'}), createdAt:timestamp('created_at',{mode:'string'}).defaultNow().notNull(),
+});
+export const careTags = mysqlTable('care_tags', { id:int().autoincrement().primaryKey(), studioId:int('studio_id').notNull(), clientId:int('client_id').notNull(), label:varchar({length:60}).notNull() });
+export const careSessions = mysqlTable('care_sessions', {id:int().autoincrement().primaryKey(),studioId:int('studio_id').notNull(),clientId:int('client_id').notNull(),artistId:int('artist_id'),appointmentId:int('appointment_id'),sourceKey:varchar('source_key',{length:80}).notNull().unique(),completedAt:varchar('completed_at',{length:19}).notNull()});

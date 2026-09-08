@@ -1,3 +1,5 @@
+import {runProcurementCycle} from './messaging/studioRelations';
+import { runCustomerCareCycle } from "./messaging/customerCare";
 /**
  * scheduler.ts
  * Cron jobs automáticos para lembretes de aniversário, agendamentos e WhatsApp.
@@ -8,8 +10,8 @@ import { createHash } from "crypto";
 import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
 import { normalizeWhatsAppNumber } from "../shared/const";
-import { buildPostSaleMessage } from "../shared/postSale";
-import { sendAndLog } from "./messaging/service";
+import { enqueueDueIndividualReminders, runAutomaticMessageCycle } from "./messaging/automaticReminders";
+import { processPendingIntegrationJobs } from "./messaging/service";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 interface WhatsAppSchedulerStatus {
@@ -79,8 +81,11 @@ function buildWhatsAppMessage(
     `Lembramos que você tem um agendamento:\n` +
     `📅 ${dateStr} às ${timeStr}\n` +
     `✏️ ${apt.service} com ${apt.artist}\n\n` +
-    `Responda sobre seu horário de forma rápida:\n${confirmUrl}\n\n` +
-    `Você poderá confirmar, avisar atraso, informar ausência ou solicitar reagendamento.`
+    `Por favor, confirme sua presença:\n` +
+    `✅ Confirmado: ${confirmUrl}&status=confirmado\n` +
+    `❌ Não confirmado: ${confirmUrl}&status=nao_confirmado\n` +
+    `⏰ Atraso: ${confirmUrl}&status=atraso\n` +
+    `🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada`
   );
 }
 
@@ -88,7 +93,8 @@ function buildWhatsAppMessage(
 function getBaseUrl(): string {
   // Em produção o servidor conhece seu próprio domínio pelo header Host
   // Como fallback usamos o domínio público do projeto
-  return process.env.PUBLIC_URL || "https://tatuei.com";
+  return process.env.PUBLIC_URL || process.env.APP_BASE_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "https://crm.tatuei.com");
 }
 
 // ── Lembrete WhatsApp Automático ──────────────────────────────────────────────
@@ -312,7 +318,10 @@ async function runIndividualReminders() {
           .replace(/\{horário\}/g, timeStr)
           .replace(/\{serviço\}/g, reminder.service)
           .replace(/\{artista\}/g, reminder.artist)
-          + `\n\nResponda sobre seu horário de forma rápida: ${confirmUrl}`;
+          + `\n\n✅ Confirmado: ${confirmUrl}&status=confirmado`
+          + `\n❌ Não confirmado: ${confirmUrl}&status=nao_confirmado`
+          + `\n⏰ Atraso: ${confirmUrl}&status=atraso`
+          + `\n🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada`;
 
         // Montar link WhatsApp
         const withCountry = normalizeWhatsAppNumber(reminder.clientPhone);
@@ -338,67 +347,42 @@ async function runIndividualReminders() {
   }
 }
 
-// ── Pós-venda automático ────────────────────────────────────────────────────
-async function runPostSaleFollowups() {
+/**
+ * Executada pelo callback autenticado do Heartbeat. Sem temporizadores em
+ * processo: o ambiente autoscalável pode suspender instâncias a qualquer momento.
+ */
+export async function runLegacyNotificationCycle() {
+  // A agenda e os aniversários não passam pela configuração de reenvio. Cada
+  // origem cria jobs próprios, idempotentes e escopados, que o Heartbeat entrega
+  // posteriormente pela integração ativa do respectivo estúdio.
+  await runCustomerCareCycle();
+  await runProcurementCycle();
+  const automatic = await runAutomaticMessageCycle();
+  const individual = await enqueueDueIndividualReminders();
+  console.log("[Scheduler] Ciclo automático BotConversa", { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped });
+  return { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped };
+}
+
+let standaloneSchedulerStarted = false;
+let standaloneSchedulerRunning = false;
+
+async function runStandaloneSchedulerCycle() {
+  if (standaloneSchedulerRunning) return;
+  standaloneSchedulerRunning = true;
   try {
-    const followups = await db.listDueAutomaticPostSaleFollowups();
-    for (const followup of followups) {
-      if (!followup.clientPhone) {
-        await db.updatePostSaleFollowup(followup.id, { status: "failed", lastError: "Cliente sem WhatsApp cadastrado" });
-        continue;
-      }
-      const message = followup.message || buildPostSaleMessage({
-        stage: followup.stage,
-        clientName: followup.clientName,
-        artistName: followup.artistName,
-        service: followup.service,
-        anniversaryYears: followup.anniversaryYears,
-      });
-      const result = await sendAndLog({
-        recipientPhone: followup.clientPhone,
-        recipientName: followup.clientName || undefined,
-        recipientType: "client",
-        message,
-        trigger: `post_sale_${followup.stage}`,
-        appointmentId: followup.appointmentId ?? undefined,
-        clientId: followup.clientId,
-      });
-      await db.updatePostSaleFollowup(followup.id, result.success ? {
-        status: "sent", sentAt: db.toDateStr(new Date()), lastError: null,
-      } : {
-        status: "failed", lastError: result.error || "Falha no envio automático",
-      });
-    }
+    await runLegacyNotificationCycle();
+    await processPendingIntegrationJobs(20);
   } catch (error) {
-    console.error("[Scheduler] Erro no pós-venda automático:", error);
+    console.error("[Scheduler] Falha no ciclo standalone:", error);
+  } finally {
+    standaloneSchedulerRunning = false;
   }
 }
 
-// ── Inicialização ────────────────────────────────────────────────────────────────────────────────────────
 export function startScheduler() {
-  console.log("[Scheduler] Iniciando cron jobs de notificações...");
-
-  // Executar imediatamente na inicialização (com delay de 10s para o servidor estar pronto)
-  setTimeout(() => {
-    runAppointmentReminders();
-    runBirthdayReminders();
-    checkWhatsAppSchedule();
-    runIndividualReminders();
-    db.backfillPostSaleFollowups()
-      .then(runPostSaleFollowups)
-      .catch((error) => console.error("[Scheduler] Erro ao preparar pós-venda:", error));
-  }, 10_000);
-
-  // Verificar WhatsApp a cada 5 minutos
-  setInterval(checkWhatsAppSchedule, 5 * 60 * 1000);
-
-  // Verificar lembretes individuais a cada minuto
-  setInterval(runIndividualReminders, 60 * 1000);
-
-  // Verificar aniversários e lembretes gerais a cada hora
-  setInterval(runAppointmentReminders, 60 * 60 * 1000);
-  setInterval(runBirthdayReminders, 60 * 60 * 1000);
-  setInterval(runPostSaleFollowups, 15 * 60 * 1000);
-
-  console.log("[Scheduler] Cron jobs registrados: WhatsApp (5min), pós-venda (15min), lembretes individuais (1min), lembretes (1h), aniversários (1h)");
+  if (standaloneSchedulerStarted) return;
+  standaloneSchedulerStarted = true;
+  console.log("[Scheduler] Iniciando processamento standalone a cada 60 segundos.");
+  setTimeout(() => void runStandaloneSchedulerCycle(), 10_000);
+  setInterval(() => void runStandaloneSchedulerCycle(), 60_000);
 }

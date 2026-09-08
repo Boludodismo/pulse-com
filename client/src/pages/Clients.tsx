@@ -4,23 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Plus, Search, Eye, Phone, Mail, Calendar, ArrowUpDown, Trash2 } from "lucide-react";
+import { Plus, Search, Eye, Phone, Mail, Calendar, ArrowUpDown } from "lucide-react";
 import { useLocation } from "wouter";
 import { useIsMobile } from "@/hooks/useMobile";
-import { useAuth } from "@/_core/hooks/useAuth";
-import { toast } from "sonner";
 
 const PAGE_SIZE = 50;
 
@@ -29,11 +18,16 @@ export default function Clients() {
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [clientToDelete, setClientToDelete] = useState<{ id: number; name: string } | null>(null);
   const isMobile = useIsMobile();
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
-  const utils = trpc.useUtils();
+  const { data: currentUser } = trpc.auth.me.useQuery();
+  const requiresStudioSelection = currentUser?.role === "superadmin" && !currentUser.studioId;
+  const [selectedStudioId, setSelectedStudioId] = useState("");
+  const { data: availableStudios = [] } = trpc.saas.studios.useQuery(undefined, { enabled: requiresStudioSelection });
+  const clientListInput = useMemo(
+    () => requiresStudioSelection && selectedStudioId ? { studioId: Number(selectedStudioId) } : undefined,
+    [requiresStudioSelection, selectedStudioId],
+  );
+  const canLoadClients = !requiresStudioSelection || Boolean(selectedStudioId);
 
   // Debounce: só dispara a query 300ms após parar de digitar
   useEffect(() => {
@@ -44,25 +38,11 @@ export default function Clients() {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
-  const { data: clients, isLoading } = trpc.clients.list.useQuery();
+  const { data: clients, isLoading } = trpc.clients.list.useQuery(clientListInput, { enabled: canLoadClients });
   const { data: searchResults, isLoading: searchLoading } = trpc.clients.search.useQuery(
-    { term: debouncedSearch },
-    { enabled: debouncedSearch.length > 0 }
+    { term: debouncedSearch, studioId: requiresStudioSelection ? Number(selectedStudioId) || undefined : undefined },
+    { enabled: debouncedSearch.length > 0 && canLoadClients }
   );
-
-  const deleteClient = trpc.clients.delete.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.clients.list.invalidate(),
-        utils.clients.search.invalidate(),
-      ]);
-      toast.success("Cliente excluído com sucesso.");
-      setClientToDelete(null);
-    },
-    onError: (error) => {
-      toast.error(`Não foi possível excluir o cliente: ${error.message}`);
-    },
-  });
 
   // Lista paginada para exibição sem busca (evita renderizar 5k+ linhas)
   const allClients = useMemo(() => clients ?? [], [clients]);
@@ -135,14 +115,30 @@ export default function Clients() {
         </div>
       </div>
 
+      {requiresStudioSelection && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="p-4">
+            <div className="max-w-md space-y-2">
+              <label className="text-sm font-medium">Empresa para consultar</label>
+              <Select value={selectedStudioId} onValueChange={(value) => { setSelectedStudioId(value); setSearchTerm(""); setPage(1); }}>
+                <SelectTrigger><SelectValue placeholder="Selecione a empresa" /></SelectTrigger>
+                <SelectContent>{availableStudios.map((studio: any) => <SelectItem key={studio.id} value={String(studio.id)}>{studio.name}</SelectItem>)}</SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Os clientes exibidos ficam restritos à empresa selecionada.</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
-          placeholder="Buscar por nome, email ou telefone..."
+          placeholder="Buscar por nome, email, telefone ou etiqueta..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="pl-10 h-10 sm:h-11"
+          disabled={!canLoadClients}
         />
       </div>
 
@@ -158,7 +154,9 @@ export default function Clients() {
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
-          {isLoading || isSearching ? (
+          {!canLoadClients ? (
+            <div className="p-6 text-sm text-muted-foreground">Selecione a empresa para carregar os clientes.</div>
+          ) : isLoading || isSearching ? (
             <div className="space-y-3 p-4 sm:p-0">
               {[...Array(5)].map((_, i) => (
                 <Skeleton key={i} className="h-16 w-full" />
@@ -203,24 +201,7 @@ export default function Clients() {
                         <span className="font-medium text-foreground">{formatCurrency(client.totalSpent)}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Eye className="h-4 w-4 text-muted-foreground" />
-                      {isAdmin && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 text-destructive hover:text-destructive"
-                          title="Excluir cliente"
-                          aria-label={`Excluir cliente ${client.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setClientToDelete({ id: client.id, name: client.name });
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
+                    <Eye className="h-4 w-4 text-muted-foreground shrink-0" />
                   </div>
                 ))}
               </div>
@@ -271,31 +252,14 @@ export default function Clients() {
                           <Badge variant="secondary">{client.appointmentCount}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => { e.stopPropagation(); setLocation(`/clients/${client.id}`); }}
-                            >
-                              <Eye className="h-4 w-4 mr-2" />
-                              Ver
-                            </Button>
-                            {isAdmin && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-9 w-9 text-destructive hover:text-destructive"
-                                title="Excluir cliente"
-                                aria-label={`Excluir cliente ${client.name}`}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setClientToDelete({ id: client.id, name: client.name });
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); setLocation(`/clients/${client.id}`); }}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            Ver
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -333,39 +297,6 @@ export default function Clients() {
           )}
         </CardContent>
       </Card>
-
-      <AlertDialog
-        open={clientToDelete !== null}
-        onOpenChange={(open) => !open && setClientToDelete(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir cliente?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Você está prestes a excluir permanentemente o cadastro
-              {clientToDelete ? ` de ${clientToDelete.name}` : " deste cliente"}.
-              Esta ação não pode ser desfeita.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteClient.isPending}>
-              Cancelar
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={!clientToDelete || deleteClient.isPending}
-              onClick={(event) => {
-                event.preventDefault();
-                if (clientToDelete) {
-                  deleteClient.mutate({ id: clientToDelete.id });
-                }
-              }}
-            >
-              {deleteClient.isPending ? "Excluindo..." : "Excluir definitivamente"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

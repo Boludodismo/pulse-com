@@ -1,0 +1,1 @@
+ALTER TABLE `collaboratorRates` MODIFY COLUMN `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP;
