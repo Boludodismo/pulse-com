@@ -1,3 +1,4 @@
+import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { ClientCare } from "@/components/CustomerCarePanel";
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
 import { trpc } from "@/lib/trpc";
@@ -22,16 +23,17 @@ import SendAnamneseDialog from "@/components/SendAnamneseDialog";
 import { AnamneseSubmissionView } from "@/pages/AnamneseView";
 
 export default function ClientProfile() {
+  const {invited,can}=useArtistAccess();
   const [, setLocation] = useLocation();
   const params = useParams<{ id: string }>();
   const clientId = parseInt(params.id || "0");
 
   const { data: client, isLoading } = trpc.clients.getById.useQuery({ id: clientId });
-  const { data: appointments } = trpc.appointments.getByClientId.useQuery({ clientId });
-  const { data: anamnesis } = trpc.anamnesis.getByClientId.useQuery({ clientId });
-  const { data: anamneseSubmissions } = trpc.anamnese.getRequestsByClientId.useQuery({ clientId });
-  const { data: transactions } = trpc.transactions.getByClientId.useQuery({ clientId });
-  const { data: availableMaterials } = trpc.stock.listMaterials.useQuery({ activeOnly: true });
+  const { data: appointments } = trpc.appointments.getByClientId.useQuery({ clientId },{enabled:can("appointments")});
+  const { data: anamnesis } = trpc.anamnesis.getByClientId.useQuery({ clientId },{enabled:can("anamnesis")});
+  const { data: anamneseSubmissions } = trpc.anamnese.getRequestsByClientId.useQuery({ clientId },{enabled:can("anamnesis")});
+  const { data: transactions } = trpc.transactions.getByClientId.useQuery({ clientId },{enabled:can("finance")});
+  const { data: availableMaterials } = trpc.stock.listMaterials.useQuery({ activeOnly: true },{enabled:!invited});
   const { data: gallery } = trpc.gallery.getByClientId.useQuery({ clientId });
   const { data: notes } = trpc.notes.getByClientId.useQuery({ clientId });
 
@@ -620,9 +622,9 @@ export default function ClientProfile() {
 
       {/* Tabs */}
       <ClientCare clientId={clientId} />
-      <Tabs defaultValue="appointments" className="w-full">
+      <Tabs defaultValue={can("appointments")?"appointments":"gallery"} className="w-full">
         <TabsList className="flex w-full bg-zinc-800 rounded-lg p-1 min-h-[44px] overflow-x-auto">
-          <TabsTrigger value="appointments" className="flex-1 min-w-fit text-xs sm:text-sm py-2">
+          {can("appointments") && <TabsTrigger value="appointments" className="flex-1 min-w-fit text-xs sm:text-sm py-2">
             <span className="hidden sm:inline">Agendamentos</span>
             <span className="sm:hidden text-[11px]">Agenda</span>
             {(appointments?.length ?? 0) > 0 && (
@@ -630,16 +632,16 @@ export default function ClientProfile() {
                 {appointments!.length > 99 ? '99+' : appointments!.length}
               </span>
             )}
-          </TabsTrigger>
-          <TabsTrigger value="anamnesis" className="flex-1 text-xs sm:text-sm py-2">
+          </TabsTrigger>}
+          {can("anamnesis") && <TabsTrigger value="anamnesis" className="flex-1 text-xs sm:text-sm py-2">
             Anamnese
             {((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0)) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
                 {Math.min((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0), 99)}
               </span>
             )}
-          </TabsTrigger>
-          <TabsTrigger value="transactions" className="flex-1 text-xs sm:text-sm py-2">
+          </TabsTrigger>}
+          {can("finance") && <TabsTrigger value="transactions" className="flex-1 text-xs sm:text-sm py-2">
             <span className="hidden sm:inline">Financeiro</span>
             <span className="sm:hidden">R$</span>
             {(transactions?.length ?? 0) > 0 && (
@@ -647,7 +649,7 @@ export default function ClientProfile() {
                 {transactions!.length > 99 ? '99+' : transactions!.length}
               </span>
             )}
-          </TabsTrigger>
+          </TabsTrigger>}
           <TabsTrigger value="gallery" className="flex-1 text-xs sm:text-sm py-2">
             Galeria
             {(gallery?.length ?? 0) > 0 && (
@@ -664,14 +666,14 @@ export default function ClientProfile() {
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="procedures" className="flex-1 text-xs sm:text-sm py-2">
+          {can("pod") && <TabsTrigger value="procedures" className="flex-1 text-xs sm:text-sm py-2">
             <span className="hidden sm:inline-flex items-center gap-1"><Stethoscope className="w-3 h-3" />POD</span>
             <span className="sm:hidden">POD</span>
-          </TabsTrigger>
+          </TabsTrigger>}
         </TabsList>
 
         {/* Agendamentos Tab */}
-        <TabsContent value="appointments">
+        {can("appointments") && <TabsContent value="appointments">
           <Card>
             <CardHeader>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
@@ -730,10 +732,10 @@ export default function ClientProfile() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
         {/* Anamnese Tab */}
-        <TabsContent value="anamnesis">
+        {can("anamnesis") && <TabsContent value="anamnesis">
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -1109,10 +1111,10 @@ export default function ClientProfile() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
         {/* Financeiro Tab */}
-        <TabsContent value="transactions">
+        {can("finance") && <TabsContent value="transactions">
           <Card>
             <CardHeader>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
@@ -1342,7 +1344,7 @@ export default function ClientProfile() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
         {/* Galeria Tab */}
         <TabsContent value="gallery">
@@ -1631,9 +1633,9 @@ export default function ClientProfile() {
         </TabsContent>
 
         {/* ── Prontuário Técnico (POD Session) ── */}
-        <TabsContent value="procedures">
+        {can("pod") && <TabsContent value="procedures">
           <ProceduresTab clientId={clientId} clientName={client?.name ?? ""} />
-        </TabsContent>
+        </TabsContent>}
       </Tabs>
 
       {/* Dialog de Edição de Ficha Manual */}

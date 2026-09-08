@@ -1,3 +1,4 @@
+import {artistInvitationsRouter} from './routers/artistInvitations';
 import {intelligentInboxRouter} from './routers/intelligentInbox';
 import {studioRelationsRouter} from './routers/studioRelations';
 import { customerCareRouter } from "./routers/customerCare";
@@ -67,6 +68,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  artistInvitations: artistInvitationsRouter,
   intelligentInbox: intelligentInboxRouter,
   customerCare: customerCareRouter,
   studioRelations: studioRelationsRouter,
@@ -197,7 +199,11 @@ export const appRouter = router({
   }),
 
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
+    me: publicProcedure.query(opts => {
+      if (!opts.ctx.user) return null;
+      const { passwordHash: _secret, ...safeUser } = opts.ctx.user;
+      return safeUser;
+    }),
     setActiveStudio: protectedProcedure
       .input(z.object({ studioId: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {

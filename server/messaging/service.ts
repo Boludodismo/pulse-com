@@ -27,10 +27,11 @@ export function getProvider(config: ProviderConfig): WhatsAppProvider {
 
 /** Busca a integração ativa no banco */
 export async function getActiveIntegration(studioId?: number | null, integrationId?: number) {
+  // Never borrow the first studio's WhatsApp when the caller omits its tenant.
+  if (!Number.isInteger(studioId) || !studioId || studioId < 1) return null;
   const db = await getDb();
   if (!db) return null;
-  const conditions = [eq(whatsappIntegrations.status, "ativo")];
-  if (studioId != null) conditions.push(eq(whatsappIntegrations.studioId, studioId));
+  const conditions = [eq(whatsappIntegrations.status, "ativo"), eq(whatsappIntegrations.isEnabled, 1), eq(whatsappIntegrations.studioId, studioId)];
   if (integrationId != null) conditions.push(eq(whatsappIntegrations.id, integrationId));
   const rows = await db
     .select()

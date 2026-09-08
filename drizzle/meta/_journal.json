@@ -400,6 +400,13 @@
       "when": 1788825780000,
       "tag": "0056_inbox_rbac_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "5",
+      "when": 1788825840000,
+      "tag": "0057_artist_invitations",
+      "breakpoints": true
     }
   ]
 }

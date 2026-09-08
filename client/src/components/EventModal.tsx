@@ -1,3 +1,4 @@
+import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
@@ -37,6 +38,7 @@ export function EventModal({
 }: EventModalProps) {
   const { notifySync } = useSyncToast();
   const { data: currentUser } = trpc.auth.me.useQuery();
+  const {can:canAccess}=useArtistAccess();
   const requiresStudioSelection = currentUser?.role === "superadmin" && !currentUser.studioId;
   const [selectedStudioId, setSelectedStudioId] = useState<string>("");
   const utils = trpc.useUtils();
@@ -157,7 +159,7 @@ export function EventModal({
     { appointmentId: eventId! },
     { enabled: !!eventId && isOpen }
   );
-  const { data: tenantMaterials = [] } = trpc.pod.inventory.list.useQuery(undefined, { enabled: isOpen });
+  const { data: tenantMaterials = [] } = trpc.pod.inventory.list.useQuery(undefined, { enabled: isOpen && canAccess("stock") });
   const { data: existingPlannedMaterials = [], refetch: refetchPlannedMaterials } = trpc.pod.planning.listByAppointment.useQuery(
     { appointmentId: eventId ?? 0 },
     { enabled: Boolean(eventId) && isOpen },

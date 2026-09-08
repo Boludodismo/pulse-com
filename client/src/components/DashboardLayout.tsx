@@ -1,3 +1,7 @@
+import {trpc} from '@/lib/trpc';
+import {isInvitedArtist,artistRouteModule} from '@shared/artistInvitations';
+import InvitedArtistHome from './InvitedArtistHome';
+import ArtistInventory from './ArtistInventory';
 import { CareNotice } from "./CustomerCarePanel";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -137,6 +141,13 @@ function DashboardLayoutContent({
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { user, logout } = useAuth();
+  const invited = isInvitedArtist(user);
+  const access = trpc.artistInvitations.access.useQuery(undefined,{enabled:invited});
+  const canVisit = (path:string) => {
+    if (!invited) return true;
+    const module = artistRouteModule(path);
+    return module==='self' || !!(module && access.data?.some(p=>p.module===module && !!p.canRead));
+  };
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar, openMobile, setOpenMobile } = useSidebar();
   const isCollapsed = state === "collapsed";
@@ -256,7 +267,7 @@ function DashboardLayoutContent({
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-1">
               {menuItems
-                .filter(item => !user || item.roles.includes(user.role))
+                .filter(item => invited ? canVisit(item.path) : !user || item.roles.includes(user.role))
                 .map(item => {
                   const isActive = location === item.path;
                   return (
@@ -376,6 +387,7 @@ function DashboardLayoutContent({
             onClick={() => setSearchOpen(true)}
             className="h-9 w-9 flex-shrink-0 touch-manipulation"
             aria-label="Buscar"
+            disabled={invited}
           >
             <Search className="h-4 w-4" />
           </Button>
@@ -383,12 +395,12 @@ function DashboardLayoutContent({
 
         {/* Conteúdo principal com padding responsivo */}
         <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0 overflow-x-hidden">
-          <CareNotice />
-          {children}
+          {!invited && <CareNotice />}
+          {invited && access.isLoading ? <p>Carregando permissões…</p> : !canVisit(location) ? <p role="alert">Esta área não está liberada para sua conta. Solicite acesso ao proprietário.</p> : invited && location==='/' ? <InvitedArtistHome/> : invited && location==='/stock' ? <ArtistInventory/> : children}
         </main>
       </SidebarInset>
 
-      <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
+      {!invited && <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />}
       <ChangePasswordModal open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
     </>
   );

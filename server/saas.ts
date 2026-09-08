@@ -57,7 +57,7 @@ export async function claimStudioInvitation(token: string, userId: number) {
   const database = await getDb();
   if (!database) throw new Error("Banco de dados indisponível");
   const invitation = (await database.select().from(studioInvitations).where(eq(studioInvitations.tokenHash, hashToken(token))).limit(1))[0];
-  if (!invitation) return { ok: false as const, reason: "not_found" as const };
+  if (!invitation || invitation.artistId) return { ok: false as const, reason: "not_found" as const };
   if (invitation.status !== "pending") return { ok: false as const, reason: invitation.status as "accepted" | "revoked" | "expired" };
   if (new Date(invitation.expiresAt).getTime() <= Date.now()) {
     await database.update(studioInvitations).set({ status: "expired" }).where(eq(studioInvitations.id, invitation.id));

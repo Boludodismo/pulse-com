@@ -1,3 +1,7 @@
+import {useAuth} from './_core/hooks/useAuth';
+import {isInvitedArtist} from '@shared/artistInvitations';
+import ArtistInventory from './components/ArtistInventory';
+import AcceptArtistInvitation from './pages/AcceptArtistInvitation';
 import IntelligentInbox from './pages/IntelligentInbox';
 import PublicArtistCard from './pages/PublicArtistCard';
 import CustomerFeedback from "./pages/CustomerFeedback";
@@ -40,6 +44,11 @@ import MessagingCenter from "./pages/MessagingCenter";
 import SaaSAdmin from "./pages/SaaSAdmin";
 import SaaSMetrics from "./pages/SaaSMetrics";
 import AcceptInvitation from "./pages/AcceptInvitation";
+
+function StockEntry(){
+  const {user}=useAuth();
+  return isInvitedArtist(user)?<DashboardLayout><ArtistInventory/></DashboardLayout>:<Stock/>;
+}
 
 function Router() {
   return (
@@ -151,7 +160,7 @@ function Router() {
         </DashboardLayout>
       )} />
       
-      <Route path="/stock" component={Stock} />
+      <Route path="/stock" component={StockEntry} />
       
       <Route path="/suppliers" component={Suppliers} />
       
@@ -165,6 +174,7 @@ function Router() {
       
       <Route path="/messaging" component={MessagingCenter} />
       
+      <Route path="/convite-artista/:token" component={AcceptArtistInvitation} />
       <Route path="/convite/:token" component={AcceptInvitation} />
 
       {/* Rotas públicas sem layout */}

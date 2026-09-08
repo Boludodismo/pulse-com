@@ -1,6 +1,6 @@
 import {INBOX_MODULES} from '../shared/intelligentInbox';
 export { careRules, careEvents, careSessions, careTags } from "./customerCareSchema";
-import { mysqlTable, mysqlSchema, AnyMySqlColumn, index, uniqueIndex, int, bigint, varchar, mysqlEnum, timestamp, datetime, text, tinyint, decimal } from "drizzle-orm/mysql-core"
+import { mysqlTable, mysqlSchema, AnyMySqlColumn, index, uniqueIndex, json, int, bigint, varchar, mysqlEnum, timestamp, datetime, text, tinyint, decimal } from "drizzle-orm/mysql-core"
 import { sql } from "drizzle-orm"
 
 export const anamneseRequests = mysqlTable("anamnese_requests", {
@@ -279,6 +279,8 @@ export const users = mysqlTable("users", {
 // ============ SAAS: CONVITES E PERMISSÕES ============
 
 export const studioInvitations = mysqlTable("studio_invitations", {
+	artistId: int(),
+	permissionSnapshot: json().$type<import("../shared/artistInvitations").ArtistPermission[]>(),
 	id: int().autoincrement().notNull(),
 	studioId: int().notNull(),
 	email: varchar({ length: 320 }).notNull(),

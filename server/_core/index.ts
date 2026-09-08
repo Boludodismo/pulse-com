@@ -1,3 +1,4 @@
+import {ensureStagingArtistInvitationSchema} from './stagingArtistInvitationSchema';
 import {ensureStagingIntelligentInboxSchema} from './stagingIntelligentInboxSchema';
 import { ensureStagingMessagingSchema } from "./stagingMessagingSchema";
 import { ensureStagingInventorySchema } from "./stagingInventorySchema";
@@ -26,6 +27,7 @@ async function startServer() {
   await ensureStagingInventorySchema();
   await ensureStagingMessagingSchema();
   await ensureStagingIntelligentInboxSchema();
+  await ensureStagingArtistInvitationSchema();
 
   const app = express();
   const server = createServer(app);

@@ -38,13 +38,13 @@ type TriggerType =
 const PROVIDER_LABELS: Record<Provider, string> = {
   botconversa: "BotConversa",
   zapi: "Z-API",
-  meta: "WhatsApp Business (Meta)",
+  meta: "WhatsApp Business (API da Meta)",
 };
 
 const PROVIDER_DESCRIPTIONS: Record<Provider, string> = {
-  botconversa: "Integração simples via API REST. Recomendado para começar.",
-  zapi: "Baseado em WhatsApp Web. Sem aprovação da Meta.",
-  meta: "API oficial do WhatsApp Business. Exige aprovação da Meta e CNPJ.",
+  botconversa: "Use a conta e a chave de API do próprio estúdio.",
+  zapi: "Use a instância e o token Z-API do próprio estúdio.",
+  meta: "Use a configuração de API WhatsApp Business do próprio estúdio.",
 };
 
 const TRIGGER_LABELS: Record<TriggerType, string> = {
@@ -370,7 +370,7 @@ export default function MessagingCenter() {
           {/* ── ABA PROVEDORES ─────────────────────────────────────────────── */}
           <TabsContent value="integrations" className="space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
-              <p className="text-zinc-400 text-xs sm:text-sm">Conecte o número do estúdio a um provedor de WhatsApp.</p>
+              <p className="text-zinc-400 text-xs sm:text-sm">Cada estúdio escolhe seu provedor e usa seu próprio número e credenciais. As opções disponíveis são WhatsApp Business (API da Meta), BotConversa e Z-API. Outros bots precisam de uma integração compatível antes de serem conectados.</p>
               <Button onClick={openNewIntegration} className="bg-orange-600 hover:bg-orange-700 text-white w-full sm:w-auto text-xs sm:text-sm">
                 <Plus className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" /><span className="hidden sm:inline">Nova Integração</span><span className="sm:hidden">Nova</span>
               </Button>

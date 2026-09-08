@@ -1,3 +1,4 @@
+import ArtistInvitationDialog from '@/components/ArtistInvitationDialog';
 import ArtistCardEditor from '@/components/ArtistCardEditor';
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useState } from "react";
@@ -292,6 +293,7 @@ export default function Artists() {
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         <ArtistCardEditor artistId={artist.id} name={artist.name}/>
+                        {isManager && <ArtistInvitationDialog artistId={artist.id} name={artist.name}/>}
                         <Button
                           variant="ghost"
                           size="icon"

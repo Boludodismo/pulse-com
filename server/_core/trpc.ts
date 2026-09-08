@@ -1,3 +1,4 @@
+import {assertInvitedArtistAccess} from '../invitedArtistAccess';
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
@@ -21,6 +22,8 @@ const requireUser = t.middleware(async opts => {
   if (!(await isUserAccessActive(ctx.user))) {
     throw new TRPCError({ code: "FORBIDDEN", message: "Acesso suspenso ou expirado." });
   }
+
+  await assertInvitedArtistAccess(ctx.user, opts.path, opts.type, await opts.getRawInput());
 
   return next({
     ctx: {
@@ -101,7 +104,7 @@ export const adminProcedure = t.procedure.use(
 );
 
 // Middleware para COLABORADOR (acesso restrito aos próprios dados)
-export const collaboratorProcedure = t.procedure.use(
+export const collaboratorProcedure = protectedProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
@@ -134,7 +137,7 @@ export const collaboratorProcedure = t.procedure.use(
 
 // Middleware legado: artistProcedure agora aceita admin e collaborator
 // Admin vê tudo do estúdio, collaborator vê apenas seus dados
-export const artistProcedure = t.procedure.use(
+export const artistProcedure = protectedProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
