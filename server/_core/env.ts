@@ -13,6 +13,13 @@ export const ENV = {
   localAdminEmail: process.env.LOCAL_ADMIN_EMAIL ?? "admin@podcrm.local",
   localAdminPassword: process.env.LOCAL_ADMIN_PASSWORD ?? "admin123",
   localAdminName: process.env.LOCAL_ADMIN_NAME ?? "Admin",
-  // Storage provider: "s3" or "disabled"
+  appBaseUrl: (process.env.APP_BASE_URL ?? "").replace(/\/+$/, ""),
+  s3Endpoint: process.env.AWS_ENDPOINT_URL ?? "",
+  s3AccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "",
+  s3SecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
+  s3Bucket: process.env.AWS_S3_BUCKET_NAME ?? "",
+  s3Region: process.env.AWS_DEFAULT_REGION ?? "auto",
+  s3UrlStyle: (process.env.AWS_S3_URL_STYLE ?? "path").toLowerCase(),
+  // Storage provider: "s3", "manus" or "disabled"
   storageProvider: process.env.STORAGE_PROVIDER ?? "s3",
 };
