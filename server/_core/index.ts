@@ -1,3 +1,4 @@
+import {ensureStagingIntelligentInboxSchema} from './stagingIntelligentInboxSchema';
 import { ensureStagingMessagingSchema } from "./stagingMessagingSchema";
 import { ensureStagingInventorySchema } from "./stagingInventorySchema";
 import "dotenv/config";
@@ -24,6 +25,7 @@ async function startServer() {
   await runStartupMigrations();
   await ensureStagingInventorySchema();
   await ensureStagingMessagingSchema();
+  await ensureStagingIntelligentInboxSchema();
 
   const app = express();
   const server = createServer(app);

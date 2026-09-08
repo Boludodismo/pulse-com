@@ -20,7 +20,7 @@ describe("SaaS access controls", () => {
     await expect(isUserAccessActive({ role: "admin", isActive: 1, accessExpiresAt: "2000-01-01 00:00:00" })).resolves.toBe(false);
   });
 
-  it("defines the seven modules used by the permission matrix", () => {
-    expect(SAAS_MODULES).toEqual(["clients", "appointments", "stock", "finance", "anamnesis", "pod", "reports"]);
+  it("preserves existing modules and adds isolated inbox permissions", () => {
+    expect(SAAS_MODULES).toEqual(["clients", "appointments", "stock", "finance", "anamnesis", "pod", "reports", "intelligent_inbox", "inbox_conversations", "inbox_summaries", "inbox_priorities", "inbox_opportunities", "inbox_settings", "inbox_suggestions"]);
   });
 });

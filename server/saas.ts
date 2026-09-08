@@ -1,9 +1,10 @@
+import {INBOX_MODULES} from '../shared/intelligentInbox';
 import { createHash, randomBytes } from "node:crypto";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { getDb } from "./db";
 import { studioInvitations, userModulePermissions, users } from "../drizzle/schema";
 
-export const SAAS_MODULES = ["clients", "appointments", "stock", "finance", "anamnesis", "pod", "reports"] as const;
+export const SAAS_MODULES = ["clients", "appointments", "stock", "finance", "anamnesis", "pod", "reports", ...INBOX_MODULES] as const;
 export type SaasModule = (typeof SAAS_MODULES)[number];
 export type InvitationRole = "admin" | "collaborator";
 

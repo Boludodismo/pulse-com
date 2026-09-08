@@ -16,6 +16,13 @@ describe("rótulos do painel SaaS em português", () => {
       "Anamnese",
       "POD",
       "Relatórios",
+      "Central Inteligente",
+      "Central: conversas",
+      "Central: resumos",
+      "Central: prioridades",
+      "Central: oportunidades",
+      "Central: integração",
+      "Central: respostas sugeridas",
     ]);
   });
 

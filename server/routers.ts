@@ -1,3 +1,4 @@
+import {intelligentInboxRouter} from './routers/intelligentInbox';
 import {studioRelationsRouter} from './routers/studioRelations';
 import { customerCareRouter } from "./routers/customerCare";
 import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
@@ -66,6 +67,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  intelligentInbox: intelligentInboxRouter,
   customerCare: customerCareRouter,
   studioRelations: studioRelationsRouter,
   system: systemRouter,

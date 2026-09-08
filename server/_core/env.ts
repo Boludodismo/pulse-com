@@ -22,6 +22,7 @@ const detectedStorageProvider = hasCompleteS3Config
     (process.env.BUILT_IN_FORGE_API_KEY ? "manus" : "disabled");
 
 export const ENV = {
+  intelligentInboxEnabled: process.env.INTELLIGENT_INBOX_ENABLED === "true",
   appId: process.env.VITE_APP_ID ?? "",
   cookieSecret: process.env.JWT_SECRET ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",

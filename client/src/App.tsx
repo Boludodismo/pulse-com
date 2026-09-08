@@ -1,3 +1,4 @@
+import IntelligentInbox from './pages/IntelligentInbox';
 import PublicArtistCard from './pages/PublicArtistCard';
 import CustomerFeedback from "./pages/CustomerFeedback";
 import { Toaster } from "@/components/ui/sonner";
@@ -43,6 +44,7 @@ import AcceptInvitation from "./pages/AcceptInvitation";
 function Router() {
   return (
     <Switch>
+      <Route path="/intelligent-inbox" component={() => <DashboardLayout><IntelligentInbox/></DashboardLayout>} />
       <Route path="/artista/:token" component={PublicArtistCard} />
       <Route path="/feedback/:token" component={CustomerFeedback} />
       <Route path="/" component={() => (

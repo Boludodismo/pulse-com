@@ -1,3 +1,4 @@
+import {INBOX_MODULES} from '../shared/intelligentInbox';
 export { careRules, careEvents, careSessions, careTags } from "./customerCareSchema";
 import { mysqlTable, mysqlSchema, AnyMySqlColumn, index, uniqueIndex, int, bigint, varchar, mysqlEnum, timestamp, datetime, text, tinyint, decimal } from "drizzle-orm/mysql-core"
 import { sql } from "drizzle-orm"
@@ -300,7 +301,7 @@ export const userModulePermissions = mysqlTable("user_module_permissions", {
 	id: int().autoincrement().notNull(),
 	userId: int().notNull(),
 	studioId: int().notNull(),
-	module: mysqlEnum(['clients','appointments','stock','finance','anamnesis','pod','reports']).notNull(),
+	module: mysqlEnum(['clients','appointments','stock','finance','anamnesis','pod','reports',...INBOX_MODULES]).notNull(),
 	canRead: tinyint().default(0).notNull(),
 	canWrite: tinyint().default(0).notNull(),
 	createdAt: timestamp({ mode: 'string' }).default('CURRENT_TIMESTAMP').notNull(),
@@ -908,3 +909,5 @@ export type IntegrationSchedule = typeof integrationSchedules.$inferSelect;
 export type InsertIntegrationSchedule = typeof integrationSchedules.$inferInsert;
 
 export * from './studioRelationsSchema';
+
+export * from './intelligentInboxSchema';

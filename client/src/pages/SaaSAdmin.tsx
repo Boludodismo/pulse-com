@@ -1,3 +1,4 @@
+import {INBOX_MODULE_LABELS} from '../../../shared/intelligentInbox';
 import { useMemo, useState } from "react";
 import { Copy, Link2, ShieldCheck, UserPlus, Ban, Building2 } from "lucide-react";
 import { toast } from "sonner";
@@ -17,6 +18,7 @@ export const moduleLabels = {
   anamnesis: "Anamnese",
   pod: "POD",
   reports: "Relatórios",
+  ...INBOX_MODULE_LABELS,
 } as const;
 
 export const roleLabels = {
