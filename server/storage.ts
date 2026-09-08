@@ -1,7 +1,7 @@
 // Storage helpers for Manus proxy and standalone S3-compatible providers.
 
-import { createHmac, timingSafeEqual } from "crypto";
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { createHmac, timingSafeEqual, randomUUID } from "crypto";
+import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
 
@@ -196,4 +196,20 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
     key,
     url: await buildManusDownloadUrl(baseUrl, key, apiKey),
   };
+}
+
+// Fail startup before receiving traffic if the dedicated bucket is misconfigured.
+export async function checkS3Storage(): Promise<void> {
+  if (ENV.storageProvider !== "s3") throw new Error("S3 is required for storage validation");
+  ensureSecretConfigured();
+  const { client, bucket } = getS3Config();
+  const key = `_healthcheck/${randomUUID()}.txt`;
+  const marker = `crm-storage-check:${randomUUID()}`;
+  await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: marker, ContentType: "text/plain" }));
+  try {
+    const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (await result.Body?.transformToString() !== marker) throw new Error("S3 read verification failed");
+  } finally {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+  }
 }

@@ -40,6 +40,7 @@ import { Button } from "./ui/button";
 import GlobalSearch from "./GlobalSearch";
 
 const menuItems = [
+  { icon: FileText, label: "Históricos anteriores", path: "/historicos-anteriores", roles: ["superadmin"] },
   { icon: MessageSquare, label: "Central Inteligente", path: "/intelligent-inbox", roles: ["superadmin", "admin", "collaborator"] },
   { icon: LayoutDashboard, label: "Dashboard", path: "/", roles: ["superadmin", "admin", "collaborator"] },
   { icon: Users, label: "Clientes", path: "/clients", roles: ["superadmin", "admin", "collaborator"] },

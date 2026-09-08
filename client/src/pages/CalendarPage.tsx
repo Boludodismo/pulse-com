@@ -330,18 +330,21 @@ export default function CalendarPage() {
       concluido: "#8E8E93",
       cancelado: "#EF4444",
       reagendado: "#F97316",
+      reagendar: "#F97316",
       atraso: "#EAB308",
       nao_confirmado: "#EF4444",
     };
     const statusKey = apt.status === "cancelado"
       ? "cancelado"
-      : apt.confirmationStatus === "atraso"
-        ? "atraso"
-        : apt.confirmationStatus === "nao_confirmado"
-          ? "nao_confirmado"
-          : apt.confirmationStatus === "confirmado" || apt.status === "confirmado"
-            ? "confirmado"
-            : apt.status || "pendente";
+      : apt.confirmationStatus === "reagendar"
+        ? "reagendar"
+        : apt.confirmationStatus === "atraso"
+          ? "atraso"
+          : apt.confirmationStatus === "nao_confirmado"
+            ? "nao_confirmado"
+            : apt.confirmationStatus === "confirmado" || apt.status === "confirmado"
+              ? "confirmado"
+              : apt.status || "pendente";
     if (apt.calendarId) {
       const cal = (calendars as any[]).find((c) => c.id === apt.calendarId);
       if (cal) return cal.color;
@@ -353,6 +356,7 @@ export default function CalendarPage() {
 
   const getStatusIndicator = (apt: any) => {
     if (apt.status === "cancelado") return { label: "Cancelado", color: "#EF4444" };
+    if (apt.confirmationStatus === "reagendar") return { label: "Cliente solicitou reagendamento", color: "#F97316" };
     if (apt.confirmationStatus === "chegada_antecipada") return { label: "Cliente informou adiantamento", color: "#3B82F6" };
     if (apt.confirmationStatus === "atraso") return { label: "Cliente informou atraso", color: "#EAB308" };
     if (apt.confirmationStatus === "nao_confirmado") return { label: "Não confirmado", color: "#EF4444" };
@@ -365,6 +369,7 @@ export default function CalendarPage() {
   const requiresAttention = (apt: any) => (
     apt.status === "reagendado"
     || apt.status === "cancelado"
+    || apt.confirmationStatus === "reagendar"
     || apt.confirmationStatus === "chegada_antecipada"
     || apt.confirmationStatus === "nao_confirmado"
     || apt.confirmationStatus === "atraso"

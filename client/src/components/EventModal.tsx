@@ -1279,6 +1279,7 @@ export function EventModal({
               <div className="flex items-center gap-2">
                 {(existingEvent as any).confirmationStatus === 'confirmado' && <span className="text-green-600 font-semibold">✅ Confirmado</span>}
                 {(existingEvent as any).confirmationStatus === 'nao_confirmado' && <span className="text-red-600 font-semibold">❌ Não confirmado</span>}
+                {(existingEvent as any).confirmationStatus === 'reagendar' && <span className="text-orange-600 font-semibold">Cliente solicitou reagendamento</span>}
                 {(existingEvent as any).confirmationStatus === 'atraso' && <span className="text-yellow-600 font-semibold">⏰ Atraso</span>}
                 {(existingEvent as any).confirmationStatus === 'chegada_antecipada' && <span className="text-blue-600 font-semibold">🏃 Chegada antecipada</span>}
               </div>

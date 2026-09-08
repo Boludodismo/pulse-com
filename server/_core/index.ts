@@ -18,7 +18,7 @@ import * as db from "../db";
 import { processPendingIntegrationJobs } from "../messaging/service";
 import { receiveBotConversaWebhook } from "../messaging/secureWebhook";
 import { runStartupMigrations } from "./migrations";
-import { storageGet, verifyStorageAccessToken } from "../storage";
+import { storageGet, verifyStorageAccessToken, checkS3Storage } from "../storage";
 
 async function startServer() {
   // Keep schema synchronized on controlled standalone deployments.
@@ -29,6 +29,10 @@ async function startServer() {
   await ensureStagingIntelligentInboxSchema();
   await ensureStagingArtistInvitationSchema();
 
+  if (process.env.STORAGE_STARTUP_CHECK === "true") {
+    await checkS3Storage();
+    console.log("[Storage] S3 write/read/delete check passed");
+  }
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads

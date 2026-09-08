@@ -1,3 +1,4 @@
+import { legacyArchiveRouter } from './routers/legacyArchive';
 import {artistInvitationsRouter} from './routers/artistInvitations';
 import {intelligentInboxRouter} from './routers/intelligentInbox';
 import {studioRelationsRouter} from './routers/studioRelations';
@@ -68,6 +69,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  legacyArchive: legacyArchiveRouter,
   artistInvitations: artistInvitationsRouter,
   intelligentInbox: intelligentInboxRouter,
   customerCare: customerCareRouter,

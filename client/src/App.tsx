@@ -1,3 +1,4 @@
+import LegacyArchive from './pages/LegacyArchive';
 import {useAuth} from './_core/hooks/useAuth';
 import {isInvitedArtist} from '@shared/artistInvitations';
 import ArtistInventory from './components/ArtistInventory';
@@ -53,6 +54,7 @@ function StockEntry(){
 function Router() {
   return (
     <Switch>
+      <Route path="/historicos-anteriores" component={() => <DashboardLayout><LegacyArchive/></DashboardLayout>} />
       <Route path="/intelligent-inbox" component={() => <DashboardLayout><IntelligentInbox/></DashboardLayout>} />
       <Route path="/artista/:token" component={PublicArtistCard} />
       <Route path="/feedback/:token" component={CustomerFeedback} />
