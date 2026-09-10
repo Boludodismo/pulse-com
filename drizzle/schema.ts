@@ -319,6 +319,7 @@ export const userModulePermissions = mysqlTable("user_module_permissions", {
 // ============ ESTOQUE E FORNECEDORES ============
 
 export const suppliers = mysqlTable("suppliers", {
+	studioId: int(), // Legacy rows remain unassigned until ownership is verified.
 	id: int().autoincrement().notNull(),
 	name: varchar({ length: 255 }).notNull(),
 	cnpj: varchar({ length: 20 }),
@@ -334,6 +335,7 @@ export const suppliers = mysqlTable("suppliers", {
 });
 
 export const materials = mysqlTable("materials", {
+	studioId: int(), // Legacy rows remain unassigned until ownership is verified.
 	id: int().autoincrement().notNull(),
 	name: varchar({ length: 255 }).notNull(),
 	category: varchar({ length: 100 }),
@@ -525,6 +527,7 @@ export const procedureInventoryConsumptions = mysqlTable("procedure_inventory_co
 ]);
 
 export const purchaseOrders = mysqlTable("purchase_orders", {
+	studioId: int(), // Legacy rows remain unassigned until ownership is verified.
 	id: int().autoincrement().notNull(),
 	supplierId: int(),
 	status: mysqlEnum(['rascunho','enviado','confirmado','recebido','cancelado']).default('rascunho').notNull(),
