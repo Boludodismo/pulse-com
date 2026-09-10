@@ -30,7 +30,7 @@ export default function ClientProfile() {
   const clientId = parseInt(params.id || "0");
 
   const { data: client, isLoading } = trpc.clients.getById.useQuery({ id: clientId });
-  const { data: appointments } = trpc.appointments.getByClientId.useQuery({ clientId },{enabled:can("appointments")});
+  const { data: appointments, isLoading: appointmentsLoading, error: appointmentsError, refetch: retryAppointments } = trpc.appointments.getByClientId.useQuery({ clientId },{enabled:can("appointments")});
   const { data: anamnesis } = trpc.anamnesis.getByClientId.useQuery({ clientId },{enabled:can("anamnesis")});
   const { data: anamneseSubmissions } = trpc.anamnese.getRequestsByClientId.useQuery({ clientId },{enabled:can("anamnesis")});
   const { data: transactions } = trpc.transactions.getByClientId.useQuery({ clientId },{enabled:can("finance")});
@@ -702,7 +702,10 @@ export default function ClientProfile() {
               </div>
             </CardHeader>
             <CardContent>
-              {appointments && appointments.length > 0 ? (
+              {appointmentsError ? <div role="alert" className="space-y-3">
+                <p>Não foi possível carregar os agendamentos. {appointmentsError.message}</p>
+                <Button variant="outline" onClick={() => retryAppointments()}>Tentar novamente</Button>
+              </div> : appointmentsLoading ? <p>Carregando agendamentos…</p> : appointments && appointments.length > 0 ? (
                 <div className="space-y-4">
                   {appointments.map((appointment) => (
                     <Card key={appointment.id}>

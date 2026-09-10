@@ -1210,9 +1210,9 @@ export const appRouter = router({
           (cardLink ? `Conheça o artista e veja seus trabalhos:\n${cardLink}\n\n` : "") +
           `Qualquer dúvida, estamos à disposição! 🙏\n${studioName}`
         );
-        const whatsappPhone = client.phone?.replace(/\D/g, "") || "";
+        const whatsappPhone = client.phone ? normalizeBrazilianPhone(client.phone) : "";
         const whatsappLink = whatsappPhone
-          ? `https://wa.me/55${whatsappPhone}?text=${whatsappMessage}`
+          ? `https://wa.me/${whatsappPhone}?text=${whatsappMessage}`
           : `https://wa.me/?text=${whatsappMessage}`;
 
         return {
