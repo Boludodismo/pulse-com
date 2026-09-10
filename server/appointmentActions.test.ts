@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAppointmentActionLinks, isActionLinkUsable, shouldQueueAnamneseAfterAction } from "./appointmentActions";
+import { formatAppointmentActionLinks, isActionLinkUsable, selectArtistNotificationRecipient, shouldQueueAnamneseAfterAction } from "./appointmentActions";
 
 describe("links públicos de ação de agendamento", () => {
   const links = {
@@ -47,5 +47,23 @@ describe("links públicos de ação de agendamento", () => {
     expect(shouldQueueAnamneseAfterAction("early")).toBe(true);
     expect(shouldQueueAnamneseAfterAction("late")).toBe(true);
     expect(shouldQueueAnamneseAfterAction("reschedule_requested")).toBe(false);
+  });
+});
+
+describe("notificação do profissional", () => {
+  it("localiza com segurança o artista de agendamento antigo pelo nome", () => {
+    const artist = selectArtistNotificationRecipient("  Willian Cunha ", [
+      { name: "Willian Cúnha", phone: "31999999999" },
+      { name: "Outro Artista", phone: "31888888888" },
+    ]);
+    expect(artist?.phone).toBe("31999999999");
+  });
+
+  it("não escolhe destinatário quando o nome é ambíguo ou não há telefone", () => {
+    expect(selectArtistNotificationRecipient("Willian", [
+      { name: "Willian", phone: "31999999999" },
+      { name: "Willian", phone: "31888888888" },
+    ])).toBeUndefined();
+    expect(selectArtistNotificationRecipient("Willian", [{ name: "Willian", phone: null }])).toBeUndefined();
   });
 });
