@@ -3,16 +3,17 @@ import { integrationEvents, whatsappIntegrations } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { decryptIntegrationSecret, hashIntegrationPayload, isWebhookSignatureValid } from "./crypto";
 import { handleWebhookReply } from "./webhook";
+import { ingestReadonlyMessage } from "../intelligentInbox/service";
 
-type InboundMessage = { phone?: string; text?: string; eventId?: string };
+type InboundMessage = { phone?: string; text?: string; eventId?: string; clientName?: string; messageAt?: string };
 
 function extractInboundMessage(payload: unknown): InboundMessage {
   const body = payload as any;
   if (body?.subscriber?.phone && body?.last_message?.text) {
-    return { phone: String(body.subscriber.phone), text: String(body.last_message.text).trim(), eventId: body.id ? String(body.id) : undefined };
+    return { phone: String(body.subscriber.phone), text: String(body.last_message.text).trim(), eventId: body.last_message.id ? String(body.last_message.id) : body.id ? String(body.id) : undefined, clientName: body.subscriber.name ? String(body.subscriber.name) : undefined, messageAt: body.last_message.created_at ? String(body.last_message.created_at).slice(0, 19).replace("T", " ") : undefined };
   }
   if (body?.phone && body?.text?.message) {
-    return { phone: String(body.phone), text: String(body.text.message).trim(), eventId: body.messageId ? String(body.messageId) : undefined };
+    return { phone: String(body.phone), text: String(body.text.message).trim(), eventId: body.messageId ? String(body.messageId) : undefined, clientName: body.name ? String(body.name) : undefined, messageAt: body.createdAt ? String(body.createdAt).slice(0, 19).replace("T", " ") : undefined };
   }
   return { eventId: body?.id ? String(body.id) : undefined };
 }
@@ -74,6 +75,12 @@ export async function receiveBotConversaWebhook(input: {
 
   try {
     await handleWebhookReply(inbound.phone, inbound.text, integration.studioId, idempotencyKey);
+    try {
+      await ingestReadonlyMessage({ studioId: integration.studioId, integrationId: integration.id, eventId: inbound.eventId ?? payloadHash, phone: inbound.phone, text: inbound.text, clientName: inbound.clientName, messageAt: inbound.messageAt });
+    } catch (inboxError) {
+      // A Central apenas observa: sua falha nunca pode interromper confirmações existentes.
+      console.warn("[Central Inteligente] Mensagem não armazenada:", inboxError instanceof Error ? inboxError.message : "erro desconhecido");
+    }
     await db.update(integrationEvents).set({ status: "processed", processedAt: new Date().toISOString().slice(0, 19).replace("T", " ") })
       .where(eq(integrationEvents.idempotencyKey, idempotencyKey));
     return { accepted: true, duplicate: false };

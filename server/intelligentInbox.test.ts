@@ -31,13 +31,13 @@ beforeEach(() => {
   mocks.listUserPermissions.mockResolvedValue([]);
   mocks.hasModulePermission.mockResolvedValue(false);
 });
-describe("Central Inteligente inativa", () => {
-  it("retorna indicadores zerados sem consultar dados ou executar integração", async () => {
+describe("Central Inteligente somente leitura", () => {
+  it("retorna indicadores zerados quando não há banco ou integração", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const result = await intelligentInboxRouter.createCaller(ctx()).dashboard();
     expect(Object.values(result.metrics).every(v => v === 0)).toBe(true);
     expect(result.status.operational).toBe(false);
-    expect(mocks.getDb).not.toHaveBeenCalled();
+    expect(mocks.getDb).toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
@@ -113,11 +113,11 @@ describe("Central Inteligente inativa", () => {
         .generateSuggestedReply({ conversationId: 1 })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
-  it("nem administrador consegue ativar conexão ou gerar resposta nesta etapa", async () => {
+  it("nem administrador consegue configurar envio ou gerar resposta nesta etapa", async () => {
     const c = intelligentInboxRouter.createCaller(ctx());
     expect(await c.configure()).toMatchObject({
       accepted: false,
-      reason: "not_configured",
+      reason: "read_only",
     });
     expect(await c.generateSuggestedReply({ conversationId: 1 })).toMatchObject(
       { accepted: false }
@@ -133,7 +133,7 @@ describe("Central Inteligente inativa", () => {
     expect(await c.clientContext({ clientId: 999 })).toMatchObject({
       currentSummary: null,
     });
-    expect(mocks.getDb).not.toHaveBeenCalled();
+    expect(mocks.getDb).toHaveBeenCalled();
   });
   it("limita tamanho de página e busca", async () => {
     const c = intelligentInboxRouter.createCaller(ctx());
