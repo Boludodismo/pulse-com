@@ -326,7 +326,7 @@ export default function Reports() {
                     }}
                   />
                   <Legend />
-                  <Bar dataKey="revenue" fill="#a855f7" name="Receita" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="revenue" fill="var(--primary)" name="Receita" radius={[8, 8, 0, 0]} />
                   <Bar dataKey="expenses" fill="#ef4444" name="Despesas" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -477,7 +477,7 @@ export default function Reports() {
         <Card className="mt-4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5 text-violet-400" />
+              <Package className="h-5 w-5 text-primary" />
               Insumos por Artista
             </CardTitle>
             <CardDescription>Custo de materiais por artista no período selecionado</CardDescription>
@@ -495,7 +495,7 @@ export default function Reports() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
                   <div className="bg-muted/40 rounded-lg p-3 text-center">
                     <p className="text-xs text-muted-foreground">Total de Sessões</p>
-                    <p className="text-2xl font-bold text-violet-400">{consumableReport.totalSessions}</p>
+                    <p className="text-2xl font-bold text-primary">{consumableReport.totalSessions}</p>
                   </div>
                   <div className="bg-muted/40 rounded-lg p-3 text-center">
                     <p className="text-xs text-muted-foreground">Custo Total de Insumos</p>
@@ -521,8 +521,8 @@ export default function Reports() {
                       onClick={() => setExpandedArtist(expandedArtist === artist.artistName ? null : artist.artistName)}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-violet-500/20 flex items-center justify-center">
-                          <User className="h-4 w-4 text-violet-400" />
+                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
+                          <User className="h-4 w-4 text-primary" />
                         </div>
                         <div>
                           <p className="font-medium">{artist.artistName}</p>
