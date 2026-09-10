@@ -15,7 +15,7 @@ const actionLabels: Record<AppointmentAction, string> = {
 };
 
 function publicBaseUrl() {
-  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL.replace(/\/$/, "");
+  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL.replace(/\s+/g, "").replace(/\/$/, "");
   return process.env.NODE_ENV === "production" ? "https://tatuei.com" : "http://localhost:3000";
 }
 
@@ -88,15 +88,16 @@ export function isActionLinkUsable(input: { usedAt: string | Date | null; expire
   return !input.usedAt && saoPauloDateTime(input.expiresAt).getTime() > now.getTime();
 }
 
-/** Somente respostas que mantêm a sessão ativa recebem a ficha automaticamente. */
+/** Toda resposta do cliente mantém a anamnese acessível, inclusive remarcações. */
 export function shouldQueueAnamneseAfterAction(action: AppointmentAction) {
-  return action === "confirmed" || action === "early" || action === "late";
+  return APPOINTMENT_ACTIONS.includes(action);
 }
 
-async function queueAnamneseAfterCustomerAction(input: {
+export async function queueAnamneseAfterCustomerAction(input: {
   studioId: number;
   appointmentId: number;
   action: AppointmentAction;
+  actionEventKey: string;
 }) {
   if (!shouldQueueAnamneseAfterAction(input.action)) return { queued: false, reason: "not-applicable" as const };
 
@@ -109,19 +110,19 @@ async function queueAnamneseAfterCustomerAction(input: {
     .limit(1))[0];
   if (!appointment) return { queued: false, reason: "appointment-not-found" as const };
 
-  const client = (await db.select({ id: clients.id, name: clients.name, phone: clients.phone })
+  const client = (await db.select({ id: clients.id, name: clients.name, phone: clients.phone, email: clients.email })
     .from(clients)
     .where(eq(clients.id, appointment.clientId))
     .limit(1))[0];
-  if (!client?.phone) return { queued: false, reason: "client-without-phone" as const };
+  if (!client) return { queued: false, reason: "client-not-found" as const };
 
   const existingRequest = (await db.select({ id: anamneseRequests.id, token: anamneseRequests.token })
     .from(anamneseRequests)
     .where(and(
       eq(anamneseRequests.clientId, client.id),
       eq(anamneseRequests.appointmentId, appointment.id),
-      eq(anamneseRequests.sentVia, "whatsapp"),
       eq(anamneseRequests.statusRequest, "pendente"),
+      gt(anamneseRequests.expiresAt, sqlDate()),
     ))
     .limit(1))[0];
 
@@ -136,15 +137,19 @@ async function queueAnamneseAfterCustomerAction(input: {
     .orderBy(desc(anamnesisRecords.createdAt))
     .limit(1))[0];
   const token = existingRequest?.token ?? crypto.randomBytes(24).toString("base64url");
+  const anamneseUrl = `${publicBaseUrl()}/anamnese/${token}`;
   const requestId = existingRequest?.id ?? Number((await db.insert(anamneseRequests).values({
     clientId: client.id,
     appointmentId: appointment.id,
     token,
-    sentVia: "whatsapp",
-    sentTo: client.phone,
+    sentVia: client.phone ? "whatsapp" : "email",
+    sentTo: client.phone ?? client.email ?? "link_publico",
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     statusRequest: "pendente",
   }))[0].insertId);
+  if (!client.phone) {
+    return { queued: false, reason: "client-without-phone" as const, anamneseUrl, requestId };
+  }
   const { sendAndLog } = await import("./messaging/service");
   const delivery = await sendAndLog({
     studioId: input.studioId,
@@ -155,11 +160,16 @@ async function queueAnamneseAfterCustomerAction(input: {
     recipientType: "client",
     trigger: "appointment_anamnese_after_response",
     message: previousSubmission || previousLegacyRecord
-      ? `Olá, ${firstName(client.name)}! Recebemos sua resposta sobre o agendamento. Já temos sua ficha de anamnese cadastrada. Confira seus dados e atualize somente se houve alguma mudança: ${publicBaseUrl()}/anamnese/${token}`
-      : `Olá, ${firstName(client.name)}! Recebemos sua resposta sobre o agendamento. Para prosseguir, preencha sua ficha de anamnese: ${publicBaseUrl()}/anamnese/${token}`,
-    idempotencyKey: `appointment-anamnese:${requestId}`,
+      ? `Olá, ${firstName(client.name)}! Recebemos sua resposta sobre o agendamento. Já temos sua ficha de anamnese cadastrada. Confira seus dados e atualize somente se houve alguma mudança:\n\n${anamneseUrl}`
+      : `Olá, ${firstName(client.name)}! Recebemos sua resposta sobre o agendamento. Para prosseguir, preencha sua ficha de anamnese:\n\n${anamneseUrl}`,
+    idempotencyKey: `appointment-anamnese-action:${input.actionEventKey}`,
   });
-  return { queued: delivery.success && (delivery.queued || delivery.duplicate), reason: delivery.success ? "queued" as const : "delivery-rejected" as const };
+  return {
+    queued: delivery.success && (delivery.queued || delivery.duplicate),
+    reason: delivery.success ? "queued" as const : "delivery-rejected" as const,
+    anamneseUrl,
+    requestId,
+  };
 }
 
 async function queueArtistActionNotification(input: {
@@ -278,13 +288,17 @@ export async function consumeAppointmentActionLink(rawToken: string) {
     action,
   });
   let anamneseQueued = false;
+  let anamneseUrl: string | undefined;
   let artistQueued = false;
   try {
-    anamneseQueued = (await queueAnamneseAfterCustomerAction({
+    const anamnese = await queueAnamneseAfterCustomerAction({
       studioId: link.studioId,
       appointmentId: link.appointmentId,
       action,
-    })).queued;
+      actionEventKey: `link:${link.id}`,
+    });
+    anamneseQueued = anamnese.queued;
+    anamneseUrl = anamnese.anamneseUrl;
   } catch (error) {
     // A confirmação do cliente permanece válida mesmo que o provedor esteja indisponível.
     console.error("[AppointmentActions] Não foi possível enfileirar anamnese", error);
@@ -299,7 +313,7 @@ export async function consumeAppointmentActionLink(rawToken: string) {
   } catch (error) {
     console.error("[AppointmentActions] Não foi possível enfileirar aviso ao artista", error);
   }
-  return { action, appointmentId: link.appointmentId, anamneseQueued, artistQueued };
+  return { action, appointmentId: link.appointmentId, anamneseQueued, anamneseUrl, artistQueued };
 }
 
 export async function listAppointmentActionAlerts(studioId: number, limit = 8) {
