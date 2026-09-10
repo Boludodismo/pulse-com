@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 32698)
-Total output lines: 3083
-
 import { clientBirthDate, clientPersonalPrefill } from "../shared/clientPersonal";
 import { parseAnamneseExpiry } from "./anamneseTime";
 import { assertManagedUser, safeUser } from "./userAccess";
@@ -1320,7 +1317,274 @@ export const appRouter = router({
       }))
       .query(async ({ ctx, input }) => {
         if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "finance" })))) {
-          throw new TRPCError({ code: "FORBIDDEN", messa…2698 tokens truncated…Sem permissão para consultar relatórios." });
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar dados financeiros." });
+        }
+        return await db.getTransactionsByDateRange(input.startDate, input.endDate, ctx.studioId);
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        clientId: z.number().optional(),
+        appointmentId: z.number().optional(),
+        type: z.enum(["entrada", "saida"]),
+        category: z.string().min(1),
+        description: z.string().optional(),
+        amount: z.number().min(1),
+        paymentMethod: z.enum(["dinheiro", "pix", "credito", "debito", "transferencia"]),
+        date: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        // Determinar studioId
+        let studioId = ctx.user.studioId;
+        if (!studioId) {
+          if (ctx.user.role === 'superadmin') {
+            const firstStudio = await db.getFirstStudio();
+            if (!firstStudio) {
+              throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nenhum estúdio cadastrado no sistema." });
+            }
+            studioId = firstStudio.id;
+          } else {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Usuário não vinculado a um estúdio." });
+          }
+        }
+        
+        const transactionData = {
+          ...input,
+          studioId: studioId,
+          clientId: input.clientId || null,
+          appointmentId: input.appointmentId || null,
+          description: input.description || null,
+        };
+        const result = await db.createTransaction(transactionData);
+        
+        // Buscar nome do cliente se houver
+        const client = input.clientId 
+          ? await db.getClientById(input.clientId)
+          : null;
+        
+        // Registrar auditoria
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          userName: ctx.user.name || "Usuário sem nome",
+          action: "create",
+          entity: "transaction",
+          entityName: `${input.type === "entrada" ? "Entrada" : "Saída"} - ${input.category} - R$ ${input.amount.toFixed(2)}`,
+          details: {
+            ...transactionData,
+            clientName: client?.name,
+          },
+          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
+          userAgent: ctx.req.headers?.["user-agent"],
+        });
+        
+        return result;
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        data: z.object({
+          clientId: z.number().optional().nullable(),
+          appointmentId: z.number().optional().nullable(),
+          type: z.enum(["entrada", "saida"]).optional(),
+          category: z.string().min(1).optional(),
+          description: z.string().optional(),
+          amount: z.number().min(1).optional(),
+          paymentMethod: z.enum(["dinheiro", "pix", "credito", "debito", "transferencia"]).optional(),
+          date: z.string().optional(),
+        })
+      }))
+      .mutation(async ({ ctx, input }) => {
+        // Buscar dados antes da atualização
+        const transactionBefore = await db.getTransactionById(input.id);
+        
+        const result = await db.updateTransaction(input.id, input.data);
+        
+        // Buscar dados depois da atualização
+        const transactionAfter = await db.getTransactionById(input.id);
+        
+        // Buscar nome do cliente se houver
+        const client = transactionAfter?.clientId 
+          ? await db.getClientById(transactionAfter.clientId)
+          : null;
+        
+        // Registrar auditoria
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          userName: ctx.user.name || "Usuário sem nome",
+          action: "update",
+          entity: "transaction",
+          entityId: input.id,
+          entityName: `${transactionAfter?.type === "entrada" ? "Entrada" : "Saída"} - ${transactionAfter?.category || transactionBefore?.category || "Transação"}`,
+          details: {
+            before: transactionBefore,
+            after: transactionAfter,
+            changes: input.data,
+            clientName: client?.name,
+          },
+          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
+          userAgent: ctx.req.headers?.["user-agent"],
+        });
+        
+        return result;
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        // Buscar dados antes da exclusão
+        const transactionBefore = await db.getTransactionById(input.id);
+        
+        const result = await db.deleteTransaction(input.id);
+        
+        // Buscar nome do cliente se houver
+        const client = transactionBefore?.clientId 
+          ? await db.getClientById(transactionBefore.clientId)
+          : null;
+        
+        // Registrar auditoria
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          userName: ctx.user.name || "Usuário sem nome",
+          action: "delete",
+          entity: "transaction",
+          entityId: input.id,
+          entityName: `${transactionBefore?.type === "entrada" ? "Entrada" : "Saída"} - ${transactionBefore?.category || "Transação"}`,
+          details: {
+            deletedTransaction: transactionBefore,
+            clientName: client?.name,
+          },
+          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
+          userAgent: ctx.req.headers?.["user-agent"],
+        });
+        
+        return result;
+      }),
+
+    // Criar transação com baixa automática de materiais do estoque
+    createWithMaterials: protectedProcedure
+      .input(z.object({
+        clientId: z.number().optional(),
+        appointmentId: z.number().optional(),
+        type: z.enum(["entrada", "saida"]),
+        category: z.string().min(1),
+        description: z.string().optional(),
+        amount: z.number().min(1),
+        paymentMethod: z.enum(["dinheiro", "pix", "credito", "debito", "transferencia"]),
+        date: z.string(),
+        materials: z.array(z.object({
+          materialId: z.number(),
+          quantity: z.number().positive(),
+          reason: z.string().optional(),
+        })).optional().default([]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        // Determinar studioId
+        let studioId = ctx.user.studioId;
+        if (!studioId) {
+          if (ctx.user.role === 'superadmin') {
+            const firstStudio = await db.getFirstStudio();
+            if (!firstStudio) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nenhum estúdio cadastrado." });
+            studioId = firstStudio.id;
+          } else {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Usuário não vinculado a um estúdio." });
+          }
+        }
+
+        const { materials: materialItems, ...transactionInput } = input;
+
+        // Criar a transação financeira
+        const transactionData = {
+          ...transactionInput,
+          studioId,
+          clientId: transactionInput.clientId || null,
+          appointmentId: transactionInput.appointmentId || null,
+          description: transactionInput.description || null,
+        };
+        const transaction = await db.createTransaction(transactionData);
+
+        // Dar baixa nos materiais selecionados
+        const stockResults: Array<{ materialId: number; materialName: string; previousStock: number; newStock: number }> = [];
+        for (const item of materialItems) {
+          const mat = await db.getMaterialById(item.materialId);
+          if (!mat) continue;
+          const result = await db.addStockMovement({
+            materialId: item.materialId,
+            type: 'saida',
+            quantity: item.quantity,
+            reason: item.reason || `Baixa via transação financeira - ${transactionInput.category}`,
+            createdBy: ctx.user.id,
+          });
+          stockResults.push({
+            materialId: item.materialId,
+            materialName: mat.name,
+            previousStock: result.previousStock,
+            newStock: result.newStock,
+          });
+        }
+
+        // Registrar auditoria
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          userName: ctx.user.name || "Usuário sem nome",
+          action: "create",
+          entity: "transaction",
+          entityName: `${input.type === "entrada" ? "Entrada" : "Saída"} - ${input.category} - R$ ${(input.amount / 100).toFixed(2)}`,
+          details: { ...transactionData, stockMovements: stockResults },
+          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
+          userAgent: ctx.req.headers?.["user-agent"],
+        });
+
+        return { transaction, stockMovements: stockResults };
+      }),
+  }),
+
+  // ============ REPORTS ROUTER ============
+  reports: router({
+    monthlyRevenue: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "reports" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar relatórios." });
+        }
+        return await db.getMonthlyRevenue(input.startDate, input.endDate, ctx.studioId);
+      }),
+
+    categoryBreakdown: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "reports" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar relatórios." });
+        }
+        return await db.getCategoryBreakdown(input.startDate, input.endDate, ctx.studioId);
+      }),
+
+    paymentMethodBreakdown: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "reports" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar relatórios." });
+        }
+        return await db.getPaymentMethodBreakdown(input.startDate, input.endDate, ctx.studioId);
+      }),
+
+    summary: tenantProcedure
+      .input(z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "reports" })))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar relatórios." });
         }
         return await db.getFinancialSummary(input.startDate, input.endDate, ctx.studioId);
       }),
