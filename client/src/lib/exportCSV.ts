@@ -32,7 +32,7 @@ const typeLabel = (value: string) => value === "entrada" ? "Entrada" : "Saída";
 
 export function buildFinancialReportCSV(data: FinancialReportCsvData) {
   const rows: unknown[][] = [
-    ["POD CRM — Relatório Financeiro"],
+    ["tatuei.com — Relatório Financeiro"],
     ["Período", data.period],
     [],
     ["Resumo financeiro"],

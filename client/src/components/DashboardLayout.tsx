@@ -256,9 +256,9 @@ function DashboardLayoutContent({
               )}
               {(!isCollapsed || isMobile) ? (
                 <div className="flex items-center gap-2 min-w-0">
-                  <Palette className="h-5 w-5 text-primary shrink-0" />
+                  <img src="/tatuei-logo.png" alt="" className="h-9 w-9 object-contain shrink-0" />
                   <span className="font-semibold tracking-tight truncate text-base">
-                    POD CRM
+                    tatuei.com
                   </span>
                 </div>
               ) : null}
