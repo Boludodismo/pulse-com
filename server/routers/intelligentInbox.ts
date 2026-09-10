@@ -5,7 +5,11 @@ import { hasModulePermission, listUserPermissions } from "../saas";
 import { INBOX_MODULES, type InboxModule } from "../../shared/intelligentInbox";
 import {
   inboxStatus,
-  emptyInboxDashboard,
+  readonlyInboxStatus,
+  inboxDashboard,
+  listInboxConversations,
+  listInboxMessages,
+  inboxSettings,
   disabledInboxOperation,
 } from "../intelligentInbox/service";
 async function permit(ctx: any, module: InboxModule, write = false) {
@@ -65,11 +69,11 @@ export const intelligentInboxRouter = router({
       })),
     };
   }),
-  status: read("intelligent_inbox").query(() => inboxStatus()),
-  dashboard: read("intelligent_inbox").query(() => emptyInboxDashboard()),
+  status: read("intelligent_inbox").query(({ ctx }) => readonlyInboxStatus(ctx.studioId)),
+  dashboard: read("intelligent_inbox").query(({ ctx }) => inboxDashboard(ctx.studioId)),
   conversations: read("inbox_conversations")
     .input(page)
-    .query(() => emptyPage()),
+    .query(({ ctx, input }) => listInboxConversations(ctx.studioId, input)),
   messages: read("inbox_conversations")
     .input(
       z.strictObject({
@@ -78,7 +82,7 @@ export const intelligentInboxRouter = router({
         cursor: z.number().int().positive().optional(),
       })
     )
-    .query(() => emptyPage()),
+    .query(({ ctx, input }) => listInboxMessages(ctx.studioId, input.conversationId, input.limit, input.cursor)),
   summaries: read("inbox_summaries")
     .input(page)
     .query(() => emptyPage()),
@@ -101,19 +105,7 @@ export const intelligentInboxRouter = router({
       pendingActions: [],
       nextRecommendedAction: null,
     })),
-  settings: read("inbox_settings").query(() => ({
-    provider: "BotConversa",
-    name: null,
-    status: "not_configured",
-    externalId: null,
-    connectedAt: null,
-    lastSyncAt: null,
-    webhookConfigured: false,
-    syncActive: false,
-    intelligentSummaryActive: false,
-    summaryIntervalMinutes: 60,
-    editable: false,
-  })),
+  settings: read("inbox_settings").query(({ ctx }) => inboxSettings(ctx.studioId)),
   configure: read("inbox_settings").mutation(async ({ ctx }) => {
     await permit(ctx, "inbox_settings", true);
     return disabledInboxOperation();
