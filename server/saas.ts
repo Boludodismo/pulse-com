@@ -66,6 +66,9 @@ export async function claimStudioInvitation(token: string, userId: number) {
   }
   const currentUser = (await database.select().from(users).where(eq(users.id, userId)).limit(1))[0];
   if (!currentUser || (currentUser.email ?? "").trim().toLowerCase() !== invitation.email) return { ok: false as const, reason: "email_mismatch" as const };
+  if (currentUser.role === 'superadmin' || (currentUser.studioId != null && currentUser.studioId !== invitation.studioId)) {
+    return {ok:false as const,reason:'account_already_linked' as const};
+  }
   await database.update(users).set({
     studioId: invitation.studioId,
     role: invitation.role,

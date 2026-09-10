@@ -1,5 +1,6 @@
 import { clientBirthDate, clientPersonalPrefill } from "../shared/clientPersonal";
 import { parseAnamneseExpiry } from "./anamneseTime";
+import { issuePilotInvitation, inspectPilotInvitation, registerPilot, pilotToken, pilotRegistration } from "./pilotInvitations";
 import { assertManagedUser, safeUser } from "./userAccess";
 import { legacyArchiveRouter } from './routers/legacyArchive';
 import {artistInvitationsRouter} from './routers/artistInvitations';
@@ -123,6 +124,17 @@ export const appRouter = router({
     }),
   
   saas: router({
+    issuePilot: superAdminProcedure.input(z.object({email:z.string().trim().email().max(320),studioName:z.string().trim().min(2).max(255)}))
+      .mutation(({ctx,input}) => issuePilotInvitation({...input,invitedByUserId:ctx.user.id})),
+    inspectPilot: publicProcedure.input(z.object({token:pilotToken})).query(({input}) => inspectPilotInvitation(input.token)),
+    registerPilot: publicProcedure.input(pilotRegistration).mutation(async ({ctx,input}) => {
+      if (ctx.user) throw new TRPCError({code:'CONFLICT',message:'Abra o convite em uma janela privada ou saia da conta atual antes de cadastrar o estúdio.'});
+      try { return await registerPilot(input); }
+      catch (error) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({code:'INTERNAL_SERVER_ERROR',message:'Não foi possível concluir o cadastro. Nenhuma conta existente foi alterada. Solicite ajuda ao administrador.'});
+      }
+    }),
     studios: superAdminProcedure.query(async () => db.listStudios()),
 
     metrics: superAdminProcedure.query(async () => {

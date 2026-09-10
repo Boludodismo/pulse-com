@@ -50,6 +50,20 @@ export default function SaaSAdmin() {
   const invitations = trpc.saas.listStudioInvitations.useQuery(undefined, { enabled: canManage });
   const teamAccess = trpc.saas.teamAccess.useQuery(undefined, { enabled: canManage });
   const utils = trpc.useUtils();
+  const [pilotEmail,setPilotEmail] = useState('');
+  const [pilotName,setPilotName] = useState('');
+  const [pilotPhone,setPilotPhone] = useState('');
+  const [pilotLink,setPilotLink] = useState('');
+  const [pilotRecipient,setPilotRecipient] = useState('');
+  const issuePilot = trpc.saas.issuePilot.useMutation({
+    onSuccess: async data => {
+      setPilotLink(`${window.location.origin}/convite-estudio/${data.token}`);
+      setPilotRecipient(pilotPhone.replace(/\D/g,''));
+      toast.success('Convite criado. Use o botão WhatsApp para compartilhar; nada foi enviado automaticamente.');
+      await Promise.all([utils.saas.studios.invalidate(),utils.saas.listStudioInvitations.invalidate()]);
+    },
+    onError: error => toast.error(error.message),
+  });
   const createInvitation = trpc.saas.createInvitation.useMutation({
     onSuccess: async ({ token, expiresAt }) => {
       const link = `${window.location.origin}/convite/${token}`;
@@ -102,8 +116,23 @@ export default function SaaSAdmin() {
           <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" /><h1 className="text-2xl font-semibold">Gestão SaaS</h1></div>
           <p className="text-sm text-muted-foreground">Convites temporários e acesso isolado por empresa.</p>
         </div>
-        <Badge variant="outline">Teste gratuito · 7 dias</Badge>
+        <Badge variant="outline">Piloto gratuito · sem cobrança</Badge>
       </header>
+
+      {isSuperadmin && <Card><CardHeader><CardTitle>Convidar novo estúdio — piloto gratuito</CardTitle></CardHeader><CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">Cria um estúdio vazio e separado. O responsável cadastra sua própria senha pelo link. O convite vale sete dias; o acesso ao piloto não expira automaticamente.</p>
+        <form className="grid gap-4 sm:grid-cols-2" onSubmit={e=>{e.preventDefault();issuePilot.mutate({email:pilotEmail,studioName:pilotName});}}>
+          <div className="space-y-2"><Label htmlFor="new-studio">Nome do estúdio</Label><Input id="new-studio" required minLength={2} maxLength={255} value={pilotName} onChange={e=>setPilotName(e.target.value)} /></div>
+          <div className="space-y-2"><Label htmlFor="new-owner">E-mail do responsável (para login)</Label><Input id="new-owner" type="email" required value={pilotEmail} onChange={e=>setPilotEmail(e.target.value)} /></div>
+          <div className="space-y-2"><Label htmlFor="new-whatsapp">WhatsApp com DDD</Label><Input id="new-whatsapp" type="tel" required pattern="[0-9 ()+-]{10,20}" value={pilotPhone} onChange={e=>setPilotPhone(e.target.value)} placeholder="(31) 99999-9999" /></div>
+          <Button className="self-end" disabled={issuePilot.isPending}>{issuePilot.isPending?'Criando…':'Gerar convite do novo estúdio'}</Button>
+        </form>
+        {issuePilot.error && <p role="alert" className="text-sm text-destructive">{issuePilot.error.message}</p>}
+        {pilotLink && <div className="space-y-3"><Input aria-label="Link do convite piloto" readOnly value={pilotLink}/><div className="flex flex-wrap gap-2">
+          <Button asChild><a target="_blank" rel="noopener noreferrer" href={`https://wa.me/${pilotRecipient.length===10 || pilotRecipient.length===11 ? '55'+pilotRecipient : pilotRecipient}?text=${encodeURIComponent('Você foi convidado para testar gratuitamente o tatuei.com com seu próprio estúdio. Abra o link em uma janela privada, cadastre seu acesso e sua senha. O convite vale 7 dias. Não há cobrança.\n'+pilotLink)}`}>Compartilhar pelo WhatsApp</a></Button>
+          <Button variant="outline" onClick={async()=>{try{await navigator.clipboard.writeText(pilotLink);toast.success('Link copiado.');}catch{toast.error('Selecione e copie o link acima.');}}}>Copiar link</Button>
+        </div><p className="text-xs text-muted-foreground">O WhatsApp abrirá com a mensagem pronta; confirme o envio nele. Este link permite criar uma conta: compartilhe apenas com o convidado.</p></div>}
+      </CardContent></Card>}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
         <Card>
