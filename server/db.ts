@@ -569,6 +569,45 @@ export async function getAllAnamnesis() {
   return result;
 }
 
+/** Fontes de anamnese visíveis no tenant para a tela consolidada de riscos. */
+export async function getRiskAlertSources(studioId: number, artistId: number | null) {
+  const database = await getDb();
+  if (!database) return { submissions: [], legacy: [] };
+
+  const visibility = artistId == null
+    ? eq(clients.studioId, studioId)
+    : and(eq(clients.studioId, studioId), or(eq(clients.artistId, artistId), eq(appointments.artistId, artistId)));
+
+  const submissions = await database.select({
+    id: anamneseSubmissions.id,
+    clientId: anamneseSubmissions.clientId,
+    clientName: clients.name,
+    appointmentId: anamneseSubmissions.appointmentId,
+    payloadJson: anamneseSubmissions.payloadJson,
+    createdAt: anamneseSubmissions.createdAt,
+  }).from(anamneseSubmissions)
+    .innerJoin(clients, eq(clients.id, anamneseSubmissions.clientId))
+    .leftJoin(appointments, eq(appointments.id, anamneseSubmissions.appointmentId))
+    .where(visibility)
+    .orderBy(desc(anamneseSubmissions.createdAt));
+
+  const legacy = await database.select({
+    id: anamnesisRecords.id,
+    clientId: anamnesisRecords.clientId,
+    clientName: clients.name,
+    appointmentId: anamnesisRecords.appointmentId,
+    riskLevel: anamnesisRecords.riskLevel,
+    riskFactors: anamnesisRecords.riskFactors,
+    createdAt: anamnesisRecords.createdAt,
+  }).from(anamnesisRecords)
+    .innerJoin(clients, eq(clients.id, anamnesisRecords.clientId))
+    .leftJoin(appointments, eq(appointments.id, anamnesisRecords.appointmentId))
+    .where(visibility)
+    .orderBy(desc(anamnesisRecords.createdAt));
+
+  return { submissions, legacy };
+}
+
 export async function getAnamnesisByClientId(clientId: number) {
   const db = await getDb();
   if (!db) return [];

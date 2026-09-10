@@ -58,6 +58,7 @@ export function EventModal({
   const [service, setService] = useState<string>("");
   const [artist, setArtist] = useState<string>("");
   const [artistId, setArtistId] = useState<string>("");
+  const [includeArtistCard, setIncludeArtistCard] = useState(false);
   const [notes, setNotes] = useState<string>("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -148,6 +149,10 @@ export function EventModal({
   }, [clients, clientSearch]);
   const { data: calendars = [] } = trpc.calendars.list.useQuery();
   const { data: artists = [] } = trpc.artists.list.useQuery();
+  const { data: selectedArtistCard, isLoading: artistCardLoading } = trpc.studioRelations.card.useQuery(
+    { artistId: Number(artistId) },
+    { enabled: isOpen && Boolean(artistId) },
+  );
   // Buscar evento existente via lista (já está em cache)
   // CORREÇÃO 5: buscar apenas o agendamento específico em vez de carregar toda a lista
   // Reutiliza o cache já existente de appointments.list (sem nova requisição de rede)
@@ -398,6 +403,7 @@ export function EventModal({
       setArtist(existingEvent.artist);
       const resolvedArtistId = (existingEvent as any).artistId ?? artists.find((item) => item.name === existingEvent.artist)?.id;
       setArtistId(resolvedArtistId ? String(resolvedArtistId) : "");
+      setIncludeArtistCard((existingEvent as any).includeArtistCard === 1);
       setNotes(existingEvent.notes || "");
       setImagePreview(existingEvent.referenceImageUrl || null);
       // Propriedades financeiras (Bug 6: banco armazena em centavos → dividir por 100 ao exibir)
@@ -438,6 +444,7 @@ export function EventModal({
     setService("");
     setArtist("");
     setArtistId("");
+    setIncludeArtistCard(false);
     setNotes("");
     setImageFile(null);
     setImagePreview(null);
@@ -490,7 +497,8 @@ export function EventModal({
         `✅ Confirmado: ${confirmUrl}&status=confirmado\n` +
         `❌ Não confirmado: ${confirmUrl}&status=nao_confirmado\n` +
         `⏰ Atraso: ${confirmUrl}&status=atraso\n` +
-        `🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada`;
+        `🏃 Chegada antecipada: ${confirmUrl}&status=chegada_antecipada` +
+        (result.artistCardLink ? `\n\nConheça o artista e veja seus trabalhos:\n${result.artistCardLink}` : "");
       const link = buildWhatsAppLink(client.phone, msg);
       setWhatsAppLink(link);
       window.open(link, "_blank");
@@ -631,6 +639,7 @@ export function EventModal({
       service,
       artist,
       artistId: artistId ? Number(artistId) : undefined,
+      includeArtistCard,
       duration,
       notes: notes || undefined,
       status: "agendado" as const,
@@ -664,6 +673,7 @@ export function EventModal({
         service,
         artist,
         artistId: artistId ? Number(artistId) : undefined,
+        includeArtistCard,
         duration,
         notes: notes || undefined,
         depositPaid,
@@ -1055,6 +1065,7 @@ export function EventModal({
                   const selected = artists.find((item) => String(item.id) === value);
                   setArtistId(value);
                   setArtist(selected?.name ?? "");
+                  setIncludeArtistCard(false);
                 }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o artista" />
@@ -1080,12 +1091,31 @@ export function EventModal({
                   </SelectContent>
                 </Select>
                 <p className="mt-1 text-xs text-muted-foreground">O artista atribuído recebe o aviso automático uma hora antes, quando tiver telefone cadastrado.</p>
+                <label className={`mt-3 flex items-start gap-2 rounded-lg border p-3 text-sm ${selectedArtistCard?.published === 1 ? "cursor-pointer" : "opacity-60"}`}>
+                  <input
+                    type="checkbox"
+                    checked={includeArtistCard}
+                    disabled={artistCardLoading || selectedArtistCard?.published !== 1}
+                    onChange={(event) => setIncludeArtistCard(event.target.checked)}
+                    className="mt-0.5 rounded"
+                  />
+                  <span>
+                    <strong>Enviar cartão de apresentação do artista</strong>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {artistCardLoading
+                        ? "Verificando o cartão publicado…"
+                        : selectedArtistCard?.published === 1
+                          ? "Inclui na confirmação um link com foto, apresentação, trabalhos e redes sociais."
+                          : "Este artista ainda não possui um cartão publicado."}
+                    </span>
+                  </span>
+                </label>
               </>
             ) : (
               <Input
                 id="artist"
                 value={artist}
-                onChange={(e) => { setArtist(e.target.value); setArtistId(""); }}
+                onChange={(e) => { setArtist(e.target.value); setArtistId(""); setIncludeArtistCard(false); }}
                 placeholder="Nome do artista"
               />
             )}

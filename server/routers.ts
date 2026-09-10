@@ -584,6 +584,7 @@ export const appRouter = router({
         service: z.string().min(1),
         artist: z.string().min(1),
         artistId: z.number().optional(), // FK opcional para artists.id
+        includeArtistCard: z.boolean().optional(),
         status: z.enum(["agendado", "confirmado", "concluido", "cancelado", "reagendado"]).optional(),
         notes: z.string().optional(),
         referenceImageUrl: z.string().optional(),
@@ -683,6 +684,7 @@ export const appRouter = router({
         const appointmentData = {
           ...appointmentInput,
           artistId: resolvedArtistId,
+          includeArtistCard: input.includeArtistCard ? 1 : 0,
           studioId: studioId,
           status: input.status || "agendado" as const,
           notes: input.notes || null,
@@ -818,6 +820,7 @@ export const appRouter = router({
           service: z.string().min(1).optional(),
           artist: z.string().min(1).optional(),
           artistId: z.number().optional(), // FK opcional para artists.id
+          includeArtistCard: z.boolean().optional(),
           status: z.enum(["agendado", "confirmado", "concluido", "cancelado", "reagendado"]).optional(),
           confirmationStatus: z.enum(["pendente", "confirmado", "nao_confirmado", "atraso", "chegada_antecipada"]).optional(),
           notes: z.string().optional(),
@@ -853,7 +856,7 @@ export const appRouter = router({
           const availability = await db.checkAppointmentConflicts(input.data.artist ?? appointmentBefore.artist, input.data.date ?? appointmentBefore.date, input.data.duration ?? appointmentBefore.duration, input.id, activeStudioId);
           if (availability.hasConflict) throw new TRPCError({ code: "CONFLICT", message: "Este artista já possui um agendamento neste horário." });
         }
-        const { depositPaid, recordWhatsAppConsent, ...restData } = input.data;
+        const { depositPaid, recordWhatsAppConsent, includeArtistCard, ...restData } = input.data;
         let resolvedArtistId = restData.artistId;
         if (!resolvedArtistId && restData.artist && appointmentBefore?.studioId) {
           const resolvedArtist = (await db.listArtists(appointmentBefore.studioId)).find((candidate) => candidate.name === restData.artist);
@@ -862,6 +865,7 @@ export const appRouter = router({
         const updateData: Parameters<typeof db.updateAppointment>[1] = {
           ...restData,
           ...(resolvedArtistId ? { artistId: resolvedArtistId } : {}),
+          ...(includeArtistCard !== undefined ? { includeArtistCard: includeArtistCard ? 1 : 0 } : {}),
           ...(depositPaid !== undefined ? { depositPaid: depositPaid ? 1 : 0 } : {}),
         };
         const result = await db.updateAppointment(input.id, updateData);
@@ -1005,7 +1009,12 @@ export const appRouter = router({
           .update(`${input.id}:${appointment.date}:${secret}`)
           .digest("hex")
           .slice(0, 16);
-        return { token, date: appointment.date };
+        const { artistCardLink } = await import("./messaging/studioRelations");
+        return {
+          token,
+          date: appointment.date,
+          artistCardLink: await artistCardLink(appointment.studioId, appointment.id),
+        };
       }),
 
     // Rota pública para confirmação do cliente via link WhatsApp
@@ -1187,6 +1196,8 @@ export const appRouter = router({
           timeZone: "America/Sao_Paulo",
         });
         const studioName = studioSettings?.studioName || "Estúdio";
+        const { artistCardLink } = await import("./messaging/studioRelations");
+        const cardLink = await artistCardLink(appointment.studioId, appointment.id);
         const whatsappMessage = encodeURIComponent(
           `Olá ${client.name}! 🎨\n\n` +
           `Seu agendamento está confirmado:\n` +
@@ -1196,6 +1207,7 @@ export const appRouter = router({
           `• Duração: ${appointment.duration} minutos\n` +
           (studioSettings?.address ? `• Local: ${studioSettings.address}\n` : "") +
           `\nConfirme sua presença clicando no link:\n${confirmationLink}\n\n` +
+          (cardLink ? `Conheça o artista e veja seus trabalhos:\n${cardLink}\n\n` : "") +
           `Qualquer dúvida, estamos à disposição! 🙏\n${studioName}`
         );
         const whatsappPhone = client.phone?.replace(/\D/g, "") || "";
@@ -1208,6 +1220,7 @@ export const appRouter = router({
           googleCalendarUrl,
           confirmationLink,
           anamnesisLink,
+          artistCardLink: cardLink || null,
           whatsappLink,
           hasAnamnesis: !!latestAnamnesis,
           clientPhone: client.phone,
@@ -1217,6 +1230,62 @@ export const appRouter = router({
 
   // ============ ANAMNESIS ROUTER ============
   anamnesis: router({
+    riskAlerts: tenantProcedure
+      .query(async ({ ctx }) => {
+        const { assessPublicAnamnese } = await import("./riskAssessment");
+        const sources = await db.getRiskAlertSources(ctx.studioId, ctx.artistId);
+        const alerts: Array<{
+          id: string;
+          source: "public" | "legacy";
+          sourceId: number;
+          clientId: number;
+          clientName: string;
+          appointmentId: number | null;
+          createdAt: string | Date;
+          riskLevel: "low" | "medium" | "high" | "critical";
+          riskFactors: Array<{ category: string; description: string; severity: "low" | "medium" | "high" | "critical" }>;
+        }> = [];
+
+        for (const submission of sources.submissions) {
+          try {
+            const payload = JSON.parse(submission.payloadJson) as Record<string, unknown>;
+            const assessment = assessPublicAnamnese(payload);
+            alerts.push({
+              id: `public-${submission.id}`,
+              source: "public",
+              sourceId: submission.id,
+              clientId: submission.clientId,
+              clientName: submission.clientName,
+              appointmentId: submission.appointmentId,
+              createdAt: submission.createdAt,
+              ...assessment,
+            });
+          } catch {
+            // Uma ficha legada malformada não pode derrubar toda a central de alertas.
+          }
+        }
+
+        for (const record of sources.legacy) {
+          let riskFactors: typeof alerts[number]["riskFactors"] = [];
+          try { riskFactors = record.riskFactors ? JSON.parse(record.riskFactors) : []; } catch { /* mantém vazio */ }
+          alerts.push({
+            id: `legacy-${record.id}`,
+            source: "legacy",
+            sourceId: record.id,
+            clientId: record.clientId,
+            clientName: record.clientName,
+            appointmentId: record.appointmentId,
+            createdAt: record.createdAt,
+            riskLevel: record.riskLevel,
+            riskFactors,
+          });
+        }
+
+        // A prioridade atual de cada cliente é calculada pela ficha mais recente.
+        alerts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        return Array.from(new Map(alerts.map(alert => [alert.clientId, alert])).values());
+      }),
+
     getAll: protectedProcedure
       .query(async () => {
         return await db.getAllAnamnesis();
