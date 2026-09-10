@@ -42,11 +42,11 @@ describe("links públicos de ação de agendamento", () => {
     )).toBe(false);
   });
 
-  it("envia anamnese após ações que mantêm a sessão ativa", () => {
+  it("disponibiliza a anamnese após todas as respostas do cliente", () => {
     expect(shouldQueueAnamneseAfterAction("confirmed")).toBe(true);
     expect(shouldQueueAnamneseAfterAction("early")).toBe(true);
     expect(shouldQueueAnamneseAfterAction("late")).toBe(true);
-    expect(shouldQueueAnamneseAfterAction("reschedule_requested")).toBe(false);
+    expect(shouldQueueAnamneseAfterAction("reschedule_requested")).toBe(true);
   });
 });
 

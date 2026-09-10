@@ -1026,7 +1026,28 @@ export const appRouter = router({
           .slice(0, 16);
         if (input.token !== expected) throw new TRPCError({ code: "UNAUTHORIZED", message: "Link inválido" });
         await db.updateAppointment(input.id, { confirmationStatus: input.status });
-        return { success: true, status: input.status };
+        const legacyAction = {
+          confirmado: "confirmed",
+          nao_confirmado: "reschedule_requested",
+          atraso: "late",
+          chegada_antecipada: "early",
+        }[input.status] as import("./appointmentActions").AppointmentAction;
+        let anamneseUrl: string | undefined;
+        let anamneseQueued = false;
+        try {
+          const { queueAnamneseAfterCustomerAction } = await import("./appointmentActions");
+          const result = await queueAnamneseAfterCustomerAction({
+            studioId: appointment.studioId,
+            appointmentId: appointment.id,
+            action: legacyAction,
+            actionEventKey: `legacy:${appointment.id}:${input.status}:${expected}`,
+          });
+          anamneseUrl = result.anamneseUrl;
+          anamneseQueued = result.queued;
+        } catch (error) {
+          console.error("[Appointments] Não foi possível disponibilizar a anamnese após a confirmação legada", error);
+        }
+        return { success: true, status: input.status, anamneseUrl, anamneseQueued };
       }),
 
     /** Consome um link aleatório, expirável e de uso único enviado ao cliente. */
@@ -1035,7 +1056,13 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         try {
           const result = await consumeAppointmentActionLink(input.token);
-          return { success: true, action: result.action, appointmentId: result.appointmentId };
+          return {
+            success: true,
+            action: result.action,
+            appointmentId: result.appointmentId,
+            anamneseUrl: result.anamneseUrl,
+            anamneseQueued: result.anamneseQueued,
+          };
         } catch (error) {
           throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Não foi possível registrar esta ação." });
         }

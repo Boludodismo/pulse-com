@@ -22,13 +22,25 @@ export default function ConfirmAppointment() {
   const [done, setDone] = useState(false);
   const [completedAction, setCompletedAction] = useState("");
   const [error, setError] = useState("");
+  const [anamneseUrl, setAnamneseUrl] = useState("");
+  const [anamneseQueued, setAnamneseQueued] = useState(false);
 
   const confirm = trpc.appointments.confirm.useMutation({
-    onSuccess: () => { setCompletedAction(status); setDone(true); },
+    onSuccess: (result) => {
+      setCompletedAction(status);
+      setAnamneseUrl(result.anamneseUrl ?? "");
+      setAnamneseQueued(result.anamneseQueued ?? false);
+      setDone(true);
+    },
     onError: (err) => setError(err.message),
   });
   const consumeActionLink = trpc.appointments.consumeActionLink.useMutation({
-    onSuccess: (result) => { setCompletedAction(result.action); setDone(true); },
+    onSuccess: (result) => {
+      setCompletedAction(result.action);
+      setAnamneseUrl(result.anamneseUrl ?? "");
+      setAnamneseQueued(result.anamneseQueued ?? false);
+      setDone(true);
+    },
     onError: (err) => setError(err.message),
   });
 
@@ -67,6 +79,27 @@ export default function ConfirmAppointment() {
             <p className="text-muted-foreground text-sm">
               Sua resposta foi registrada com sucesso. O estúdio já foi notificado.
             </p>
+            {anamneseUrl && (
+              <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 text-left space-y-3">
+                <div>
+                  <p className="font-semibold">Próximo passo: ficha de anamnese</p>
+                  <p className="text-sm text-muted-foreground">
+                    Preencha ou confira sua ficha antes da sessão. Ela é necessária para o atendimento.
+                  </p>
+                </div>
+                <a
+                  href={anamneseUrl}
+                  className="block w-full rounded-lg bg-primary px-4 py-3 text-center font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+                >
+                  Abrir ficha de anamnese
+                </a>
+                <p className="text-xs text-muted-foreground text-center">
+                  {anamneseQueued
+                    ? "Também enviamos este link para o seu WhatsApp."
+                    : "Guarde este acesso; o envio automático pode estar indisponível."}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
