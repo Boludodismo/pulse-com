@@ -1,3 +1,4 @@
+import { anamneseExpiryForDatabase } from "./anamneseTime";
 import { appointmentInstant, appointmentsOverlap } from "../shared/appointmentTime";
 import { eq, desc, and, gte, lte, or, like, sql, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -2025,7 +2026,10 @@ export async function createAnamneseRequest(data: InsertAnamneseRequest) {
   if (!db) {
     throw new Error("Database not available");
   }
-  const result = await db.insert(anamneseRequests).values(data);
+  const result = await db.insert(anamneseRequests).values({
+    ...data,
+    expiresAt: anamneseExpiryForDatabase(data.expiresAt),
+  });
   return result[0].insertId;
 }
 

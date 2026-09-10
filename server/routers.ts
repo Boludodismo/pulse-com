@@ -1,3 +1,4 @@
+import { parseAnamneseExpiry } from "./anamneseTime";
 import { assertManagedUser, safeUser } from "./userAccess";
 import { legacyArchiveRouter } from './routers/legacyArchive';
 import {artistInvitationsRouter} from './routers/artistInvitations';
@@ -2557,7 +2558,7 @@ export const appRouter = router({
         if (!request) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido ou expirado" });
         }
-        if (new Date(request.expiresAt) < new Date() && !request.completedAt) {
+        if (parseAnamneseExpiry(request.expiresAt) < new Date() && !request.completedAt) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado" });
         }
         // Buscar dados do cliente
@@ -2624,7 +2625,7 @@ export const appRouter = router({
         }
         
         // Primeira submissão
-        if (new Date(request.expiresAt) < new Date()) {
+        if (parseAnamneseExpiry(request.expiresAt) < new Date()) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado" });
         }
         const submissionId = await db.createAnamneseSubmission({
