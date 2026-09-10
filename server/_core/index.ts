@@ -1,4 +1,5 @@
 import { ensureStudioSettingsScope } from "./studioSettingsScope";
+import { ensureAppointmentCardSchema } from "./appointmentCardSchema";
 import {ensureStagingArtistInvitationSchema} from './stagingArtistInvitationSchema';
 import {ensureStagingIntelligentInboxSchema} from './stagingIntelligentInboxSchema';
 import { ensureStagingMessagingSchema } from "./stagingMessagingSchema";
@@ -31,6 +32,7 @@ async function startServer() {
   await ensureStagingIntelligentInboxSchema();
   await ensureStagingArtistInvitationSchema();
   await ensureStudioSettingsScope();
+  await ensureAppointmentCardSchema();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {
     await checkS3Storage();

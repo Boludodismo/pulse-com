@@ -259,6 +259,8 @@ export function EventModal({
     onSuccess: () => {
       toast.success("Agendamento deletado com sucesso!");
       utils.appointments.list.invalidate();
+      utils.appointments.getByClientId.invalidate();
+      utils.appointments.getCalendarLinks.invalidate();
       onSuccess?.();
       onClose();
     },
@@ -349,6 +351,8 @@ export function EventModal({
       }
       // Invalidar cache para sincronização imediata
       utils.appointments.list.invalidate();
+      utils.appointments.getByClientId.invalidate();
+      utils.appointments.getCalendarLinks.invalidate();
       onSuccess?.();
       onClose();
       resetForm();
@@ -364,6 +368,8 @@ export function EventModal({
       else toast.success("Evento atualizado com sucesso!");
       // Invalidar cache para sincronização imediata
       utils.appointments.list.invalidate();
+      utils.appointments.getByClientId.invalidate();
+      utils.appointments.getCalendarLinks.invalidate();
       onSuccess?.();
       onClose();
       resetForm();
@@ -1748,11 +1754,15 @@ export function EventModal({
 
 // Componente separado para a aba de exportação
 function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; copiedLink: string | null; setCopiedLink: (v: string | null) => void }) {
-  const { data: links, isLoading } = trpc.appointments.getCalendarLinks.useQuery(
+  const { data: links, isLoading, error, refetch } = trpc.appointments.getCalendarLinks.useQuery(
     { id: eventId },
     { enabled: !!eventId }
   );
   const [isOpeningAppleCalendar, setIsOpeningAppleCalendar] = useState(false);
+  const sendViaApi = trpc.messaging.sendManual.useMutation({
+    onSuccess: () => toast.success("Mensagem encaminhada pela integração. Confira a entrega na Central de Mensagens."),
+    onError: (error) => toast.error(error.message),
+  });
 
   const openAppleCalendar = async () => {
     if (!links || isOpeningAppleCalendar) return;
@@ -1830,7 +1840,10 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
     );
   }
 
-  if (!links) return null;
+  if (error || !links) return <div role="alert" className="p-4 space-y-3">
+    <p>Não foi possível carregar o compartilhamento. {error?.message}</p>
+    <Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button>
+  </div>;
 
   return (
     <div className="space-y-4 pr-2 py-2">
@@ -1944,6 +1957,16 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
       </div>
 
       {/* Anamnese */}
+      <div className="rounded-lg border p-4 space-y-3">
+        <p className="text-sm font-semibold">Enviar pela API integrada</p>
+        <p className="text-xs text-muted-foreground">Usa o provedor configurado na Central de Mensagens, respeitando as permissões e regras de envio.</p>
+        <Button disabled={!links.clientPhone || sendViaApi.isPending} onClick={() => {
+          if (!links.clientPhone) return;
+          const message = new URL(links.whatsappLink).searchParams.get("text");
+          if (!message) return;
+          sendViaApi.mutate({recipientPhone: links.clientPhone, message, appointmentId: eventId});
+        }}>{sendViaApi.isPending ? "Enviando…" : "Enviar pela integração"}</Button>
+      </div>
       {links.hasAnamnesis && links.anamnesisLink ? (
         <div className="rounded-lg border p-4 space-y-3 border-amber-500/30 bg-amber-500/5">
           <p className="text-sm font-semibold flex items-center gap-2">
