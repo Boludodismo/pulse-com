@@ -1107,19 +1107,23 @@ export const appRouter = router({
 
     // ── Lembretes individuais por agendamento ──────────────────────────────────
     reminders: router({
-      list: protectedProcedure
+      list: tenantProcedure
         .input(z.object({ appointmentId: z.number() }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          const appointment = await db.getAppointmentById(input.appointmentId);
+          if (!appointment || appointment.studioId !== ctx.studioId) throw new TRPCError({code:'NOT_FOUND'});
           return await db.listRemindersByAppointment(input.appointmentId);
         }),
 
-      create: protectedProcedure
+      create: tenantProcedure
         .input(z.object({
           appointmentId: z.number(),
           scheduledAt: z.string(), // "YYYY-MM-DD HH:MM:SS"
           message: z.string().min(1),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          const appointment = await db.getAppointmentById(input.appointmentId);
+          if (!appointment || appointment.studioId !== ctx.studioId) throw new TRPCError({code:'NOT_FOUND'});
           return await db.createAppointmentReminder({
             appointmentId: input.appointmentId,
             scheduledAt: input.scheduledAt,
@@ -1127,22 +1131,22 @@ export const appRouter = router({
           });
         }),
 
-      update: protectedProcedure
+      update: tenantProcedure
         .input(z.object({
           id: z.number(),
           scheduledAt: z.string().optional(),
           message: z.string().optional(),
           status: z.enum(["pending", "sent", "failed"]).optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          return await db.updateAppointmentReminder(id, data);
+          return await db.updateAppointmentReminder(id, data, ctx.studioId);
         }),
 
-      delete: protectedProcedure
+      delete: tenantProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
-          await db.deleteAppointmentReminder(input.id);
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteAppointmentReminder(input.id, ctx.studioId);
           return { success: true };
         }),
     }),
@@ -1834,7 +1838,7 @@ export const appRouter = router({
       return await db.getUpcomingAppointments(ctx.studioId, ctx.artistId);
     }),
 
-    sendReminders: protectedProcedure.mutation(async () => {
+    sendReminders: superAdminProcedure.mutation(async () => {
       return await db.sendAppointmentReminders();
     }),
 
@@ -1929,20 +1933,20 @@ export const appRouter = router({
         return { success: failed === 0, sent, failed, details };
       }),
 
-    getNotificationLogs: protectedProcedure
+    getNotificationLogs: tenantProcedure
       .input(z.object({ limit: z.number().optional() }))
-      .query(async ({ input }) => {
-        return await db.getNotificationLogs(input.limit || 50);
+      .query(async ({ input, ctx }) => {
+        return await db.getNotificationLogs(input.limit || 50, ctx.studioId);
       }),
 
-    getWhatsAppSchedulerStatus: protectedProcedure.query(() => {
-      return whatsAppSchedulerStatus;
+    getWhatsAppSchedulerStatus: tenantProcedure.query(({ctx}) => {
+      return ctx.user.role === 'superadmin' ? whatsAppSchedulerStatus : null;
     }),
 
-    getWhatsAppLogs: protectedProcedure
+    getWhatsAppLogs: tenantProcedure
       .input(z.object({ limit: z.number().optional() }))
-      .query(async ({ input }) => {
-        return await db.getNotificationLogs(input.limit || 50);
+      .query(async ({ input, ctx }) => {
+        return await db.getNotificationLogs(input.limit || 50, ctx.studioId);
       }),
 
     // Listar todos os lembretes individuais pendentes (para exibir na tela de Notificações)
@@ -1965,22 +1969,22 @@ export const appRouter = router({
       }),
 
     // Atualizar data/hora de um lembrete individual
-    updateReminder: protectedProcedure
+    updateReminder: tenantProcedure
       .input(z.object({
         id: z.number(),
         scheduledAt: z.string(),
         message: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        return await db.updateAppointmentReminder(id, data);
+        return await db.updateAppointmentReminder(id, data, ctx.studioId);
       }),
 
     // Deletar um lembrete individual
-    deleteReminder: protectedProcedure
+    deleteReminder: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
-        await db.deleteAppointmentReminder(input.id);
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteAppointmentReminder(input.id, ctx.studioId);
         return { success: true };
       }),
   }),

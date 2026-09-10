@@ -1314,7 +1314,8 @@ export async function sendAppointmentReminders() {
   return { success: true, sent, failed, total: upcomingAppointments.length };
 }
 
-export async function getNotificationLogs(limit: number = 50) {
+export async function getNotificationLogs(limit: number, studioId: number) {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
 
@@ -1332,6 +1333,12 @@ export async function getNotificationLogs(limit: number = 50) {
     })
     .from(notificationLogs)
     .leftJoin(clients, eq(notificationLogs.clientId, clients.id))
+    .leftJoin(appointments, eq(notificationLogs.appointmentId, appointments.id))
+    .where(and(
+      or(eq(clients.studioId,studioId),eq(appointments.studioId,studioId)),
+      or(sql`${notificationLogs.clientId} IS NULL`,eq(clients.studioId,studioId)),
+      or(sql`${notificationLogs.appointmentId} IS NULL`,eq(appointments.studioId,studioId)),
+    ))
     .orderBy(desc(notificationLogs.sentAt))
     .limit(limit);
 
@@ -2762,20 +2769,30 @@ export async function createAppointmentReminder(data: InsertAppointmentReminder)
 /** Atualiza um lembrete existente */
 export async function updateAppointmentReminder(
   id: number,
-  data: Partial<InsertAppointmentReminder>
+  data: Partial<InsertAppointmentReminder>,
+  studioId: number
 ): Promise<AppointmentReminder | null> {
   const db = await getDb();
   if (!db) return null;
-  await db.update(appointmentReminders).set(data).where(eq(appointmentReminders.id, id));
-  const [updated] = await db.select().from(appointmentReminders).where(eq(appointmentReminders.id, id));
+  const condition = reminderStudioCondition(id,studioId);
+  const {scheduledAt,message,status} = data;
+  const result = await db.update(appointmentReminders).set({scheduledAt,message,status}).where(condition);
+  if (!result[0].affectedRows) throw new TRPCError({code:'NOT_FOUND',message:'Lembrete não encontrado neste estúdio.'});
+  const [updated] = await db.select().from(appointmentReminders).where(condition);
   return updated ?? null;
 }
 
 /** Remove um lembrete */
-export async function deleteAppointmentReminder(id: number): Promise<void> {
+export async function deleteAppointmentReminder(id: number, studioId: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.delete(appointmentReminders).where(eq(appointmentReminders.id, id));
+  const result = await db.delete(appointmentReminders).where(reminderStudioCondition(id,studioId));
+  if (!result[0].affectedRows) throw new TRPCError({code:'NOT_FOUND',message:'Lembrete não encontrado neste estúdio.'});
+}
+
+function reminderStudioCondition(id:number,studioId:number) {
+  requireDashboardStudio(studioId);
+  return and(eq(appointmentReminders.id,id),sql`EXISTS (SELECT 1 FROM ${appointments} WHERE ${appointments.id} = ${appointmentReminders.appointmentId} AND ${appointments.studioId} = ${studioId})`);
 }
 
 /**
@@ -2845,6 +2862,7 @@ export async function markReminderFailed(id: number): Promise<void> {
 
 /** Lista todos os lembretes individuais pendentes (para exibir na tela de Notificações) */
 export async function getAllPendingReminders(studioId: number): Promise<any[]> {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
 
@@ -2869,6 +2887,7 @@ export async function getAllPendingReminders(studioId: number): Promise<any[]> {
     .where(and(
       eq(appointmentReminders.status, "pending"),
       eq(appointments.studioId, studioId),
+      eq(clients.studioId, studioId),
     ))
     .orderBy(appointmentReminders.scheduledAt);
 
@@ -2894,7 +2913,7 @@ export async function releasePendingReminderNow(id: number, studioId: number): P
     hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   }).format(new Date()).replace(",", "");
   await db.update(appointmentReminders).set({ scheduledAt: now, status: "pending" })
-    .where(eq(appointmentReminders.id, id));
+    .where(and(reminderStudioCondition(id,studioId),eq(appointmentReminders.status,'pending')));
   return true;
 }
 
