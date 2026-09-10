@@ -407,6 +407,13 @@
       "when": 1788825840000,
       "tag": "0057_artist_invitations",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "5",
+      "when": 1789028452000,
+      "tag": "0058_appointment_artist_card_choice",
+      "breakpoints": true
     }
   ]
 }
