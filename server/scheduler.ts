@@ -11,7 +11,6 @@ import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
 import { normalizeWhatsAppNumber } from "../shared/const";
 import { enqueueDueIndividualReminders, runAutomaticMessageCycle } from "./messaging/automaticReminders";
-import { processPendingIntegrationJobs } from "./messaging/service";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 interface WhatsAppSchedulerStatus {
@@ -371,7 +370,6 @@ async function runStandaloneSchedulerCycle() {
   standaloneSchedulerRunning = true;
   try {
     await runLegacyNotificationCycle();
-    await processPendingIntegrationJobs(20);
   } catch (error) {
     console.error("[Scheduler] Falha no ciclo standalone:", error);
   } finally {

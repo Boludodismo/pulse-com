@@ -1,5 +1,5 @@
 import { getDb } from "../db";
-import { whatsappIntegrations, messageQueue, messageTemplates, integrationContacts, integrationEvents, integrationJobs, appointmentReminders } from "../../drizzle/schema";
+import { whatsappIntegrations, messageQueue, messageTemplates, integrationContacts, integrationEvents, integrationJobs, appointmentReminders, appointments } from "../../drizzle/schema";
 import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
 import type { ProviderConfig, WhatsAppProvider } from "./provider";
 import { interpolateTemplate } from "./provider";
@@ -87,6 +87,20 @@ type SendAndLogResult =
   | { success: false; error: string };
 
 const sqlDate = () => new Date().toISOString().slice(0, 19).replace("T", " ");
+
+class PermanentDeliveryError extends Error {}
+
+export function isExpiredAppointmentReminder(
+  trigger: string | null | undefined,
+  appointmentDate: string | null | undefined,
+  appointmentStatus: string | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!trigger?.startsWith("appointment_reminder_") || !appointmentDate) return false;
+  if (["cancelado", "concluido", "reagendado"].includes(appointmentStatus ?? "")) return true;
+  const timestamp = Date.parse(appointmentDate.includes("T") ? appointmentDate : appointmentDate.replace(" ", "T"));
+  return Number.isFinite(timestamp) && timestamp <= now;
+}
 
 /**
  * O driver MySQL retorna atualizações como uma tupla cujo primeiro item contém
@@ -205,7 +219,7 @@ function retryDelayMinutes(attempt: number): number {
   return [1, 5, 15, 60, 180][Math.min(attempt - 1, 4)] ?? 180;
 }
 
-/** Processa de forma limitada jobs prontos, podendo ser chamado somente pelo Heartbeat. */
+/** Processa de forma limitada jobs prontos. O claim atômico evita entrega concorrente. */
 export async function processPendingIntegrationJobs(limit = 10) {
   const db = await getDb();
   if (!db) return { processed: 0, completed: 0, retried: 0, failed: 0 };
@@ -232,6 +246,17 @@ export async function processPendingIntegrationJobs(limit = 10) {
         throw new Error("Integração inativa ou indisponível para este estúdio.");
       }
       payload = JSON.parse(job.payload) as MessageDeliveryPayload;
+      if (payload.messageQueueId) {
+        const queueItem = (await db.select({ trigger: messageQueue.trigger, appointmentId: messageQueue.appointmentId }).from(messageQueue)
+          .where(and(eq(messageQueue.id, payload.messageQueueId), eq(messageQueue.studioId, job.studioId))).limit(1))[0];
+        if (queueItem?.trigger?.startsWith("appointment_reminder_") && queueItem.appointmentId) {
+          const appointment = (await db.select({ date: appointments.date, status: appointments.status }).from(appointments)
+            .where(and(eq(appointments.id, queueItem.appointmentId), eq(appointments.studioId, job.studioId))).limit(1))[0];
+          if (!appointment || isExpiredAppointmentReminder(queueItem.trigger, appointment.date, appointment.status)) {
+            throw new PermanentDeliveryError("Lembrete não enviado porque o agendamento já passou ou não está mais ativo.");
+          }
+        }
+      }
       if (integration.sandboxMode) {
         if (!integration.sandboxTestPhone) throw new Error("Defina o telefone de teste antes de ativar a homologação.");
         if (normalizeBrazilianPhone(payload.recipientPhone) !== integration.sandboxTestPhone) {
@@ -270,7 +295,7 @@ export async function processPendingIntegrationJobs(limit = 10) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro não identificado no processamento.";
       const nextAttempt = job.attemptCount + 1;
-      const terminal = nextAttempt >= job.maxAttempts;
+      const terminal = error instanceof PermanentDeliveryError || nextAttempt >= job.maxAttempts;
       const nextAttemptAt = new Date(Date.now() + retryDelayMinutes(nextAttempt) * 60_000).toISOString().slice(0, 19).replace("T", " ");
       await db.update(integrationJobs).set({
         status: terminal ? "failed" : "retry",
