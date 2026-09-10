@@ -17,6 +17,7 @@ import { runLegacyNotificationCycle, startScheduler } from "../scheduler";
 import { sdk } from "./sdk";
 import * as db from "../db";
 import { processPendingIntegrationJobs } from "../messaging/service";
+import { startIntegrationJobWorker } from "../messaging/jobWorker";
 import { receiveBotConversaWebhook } from "../messaging/secureWebhook";
 import { runStartupMigrations } from "./migrations";
 import { storageGet, verifyStorageAccessToken, checkS3Storage } from "../storage";
@@ -258,6 +259,9 @@ async function startServer() {
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${port}`);
+    // A entrega da fila não depende do Heartbeat externo. O claim atômico no
+    // banco permite execução segura mesmo com mais de uma instância.
+    startIntegrationJobWorker();
     if (ENV.schedulerMode === "local") {
       startScheduler();
     } else {
