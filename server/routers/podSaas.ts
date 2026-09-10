@@ -1,13 +1,15 @@
 import { TECHNICAL_CATALOG_2026, canAddCatalogItemToOperationalStock } from "../../shared/technicalCatalog2026";
 import { assertOwnArtist, canUseMaterial, isInventoryManager, requireInventoryArtist, requireMaterialForArtist, requireOwnedMaterial, type InventoryDatabase, type InventoryContext } from "../inventoryAccess";
 import { TRPCError } from "@trpc/server";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { z } from "zod";
 import {
   appointmentPlannedMaterials,
   appointments,
   artists,
   clients,
+  inventoryKitItems,
+  inventoryKits,
   materialCatalogCategories,
   materialCatalogItems,
   procedureInventoryConsumptions,
@@ -16,10 +18,13 @@ import {
   tenantInventoryMovements,
   tenantMaterials,
   studioMaterialArtists,
+  studios,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { hasModulePermission, type SaasModule } from "../saas";
 import { router, superAdminProcedure, tenantProcedure } from "../_core/trpc";
+import { sendAndLog } from "../messaging/service";
+import { normalizeBrazilianPhone } from "../messaging/phone";
 
 const quantitySchema = z.string().regex(/^\d{1,9}(?:\.\d{1,3})?$/, "Informe uma quantidade positiva com até três casas decimais.");
 const costSchema = z.string().regex(/^\d{1,8}(?:\.\d{1,4})?$/, "Informe um custo não negativo com até quatro casas decimais.");
@@ -39,6 +44,12 @@ function scaledToDecimal(value: number, decimals: number): string {
   const sign = value < 0 ? "-" : "";
   const absolute = Math.abs(value);
   return `${sign}${Math.floor(absolute / divisor)}.${String(absolute % divisor).padStart(decimals, "0")}`;
+}
+
+function calculateProjectedStock(currentQuantity: string | number, plannedQuantities: Array<string | number>, minimumQuantity: string | number) {
+  const plannedDemand = plannedQuantities.reduce<number>((sum, quantity) => sum + Number(quantity), 0);
+  const projectedQuantity = Number(currentQuantity) - plannedDemand;
+  return { plannedDemand, projectedQuantity, critical: Number(minimumQuantity) > 0 && projectedQuantity <= Number(minimumQuantity) };
 }
 
 function incrementFixedDecimal(value: string, decimals: number): string {
@@ -95,6 +106,29 @@ async function requireModule(ctx: { user: { id: number; role: string }; studioId
   if (ctx.user.role === "superadmin" || ctx.user.role === "admin") return;
   const allowed = await hasModulePermission({ userId: ctx.user.id, studioId: ctx.studioId, module, write });
   if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: `Você não possui permissão para ${write ? "alterar" : "consultar"} este módulo.` });
+}
+
+async function forecastAppointmentMaterial(database: Awaited<ReturnType<typeof requireDatabase>>, studioId: number, appointmentId: number, tenantMaterialId: number) {
+  const appointment = (await database.select({ id: appointments.id, date: appointments.date, artistId: appointments.artistId, artist: appointments.artist }).from(appointments).where(and(eq(appointments.id, appointmentId), eq(appointments.studioId, studioId))).limit(1))[0];
+  const material = (await database.select().from(tenantMaterials).where(and(eq(tenantMaterials.id, tenantMaterialId), eq(tenantMaterials.studioId, studioId))).limit(1))[0];
+  if (!appointment || !material) return null;
+  const demandRows = await database.select({ quantity: appointmentPlannedMaterials.quantityPlanned }).from(appointmentPlannedMaterials)
+    .innerJoin(appointments, and(eq(appointments.id, appointmentPlannedMaterials.appointmentId), eq(appointments.studioId, studioId)))
+    .where(and(eq(appointmentPlannedMaterials.studioId, studioId), eq(appointmentPlannedMaterials.tenantMaterialId, tenantMaterialId), eq(appointmentPlannedMaterials.status, "planejado"), inArray(appointments.status, ["agendado", "confirmado", "reagendado"]), gte(appointments.date, nowSql()), lte(appointments.date, appointment.date)));
+  return { appointment, material, ...calculateProjectedStock(material.currentQuantity, demandRows.map(row => row.quantity), material.minimumQuantity) };
+}
+
+async function queueCriticalForecastAlerts(database: Awaited<ReturnType<typeof requireDatabase>>, studioId: number, appointmentId: number, tenantMaterialId: number) {
+  const forecast = await forecastAppointmentMaterial(database, studioId, appointmentId, tenantMaterialId);
+  if (!forecast?.critical) return forecast;
+  const studio = (await database.select({ name: studios.name, phone: studios.phone }).from(studios).where(eq(studios.id, studioId)).limit(1))[0];
+  const artist = forecast.appointment.artistId ? (await database.select({ name: artists.name, phone: artists.phone }).from(artists).where(and(eq(artists.id, forecast.appointment.artistId), eq(artists.studioId, studioId), eq(artists.active, 1))).limit(1))[0] : undefined;
+  const when = String(forecast.appointment.date).slice(0, 16).replace(/-/g, "/").replace(/[T ]/, " às ");
+  const message = `⚠️ Previsão crítica de estoque: ${forecast.material.name}. Considerando os agendamentos até ${when}, o saldo projetado é ${forecast.projectedQuantity.toFixed(3)} ${forecast.material.unit} (mínimo ${forecast.material.minimumQuantity}). Reponha o material para evitar falta na sessão.`;
+  const rawRecipients = [{ phone: studio?.phone, name: studio?.name || "Estúdio", suffix: "studio" }, { phone: artist?.phone, name: artist?.name || forecast.appointment.artist, suffix: `artist:${forecast.appointment.artistId}` }].filter(item => item.phone) as Array<{ phone: string; name: string; suffix: string }>;
+  const recipients = Array.from(new Map(rawRecipients.map(recipient => [normalizeBrazilianPhone(recipient.phone), recipient])).values());
+  await Promise.allSettled(recipients.map(recipient => sendAndLog({ studioId, recipientType: "artist", recipientPhone: normalizeBrazilianPhone(recipient.phone), recipientName: recipient.name, appointmentId, trigger: "inventory_forecast_critical", message, idempotencyKey: `inventory-forecast:${appointmentId}:${tenantMaterialId}:${recipient.suffix}` })));
+  return forecast;
 }
 
 async function requireProcedure(database: Awaited<ReturnType<typeof requireDatabase>>, procedureId: number, ctx: InventoryContext) {
@@ -397,6 +431,29 @@ export const podSaasRouter = router({
   }),
 
   planning: router({
+    kits: router({
+      list: tenantProcedure.query(async ({ ctx }) => {
+        await requireModule(ctx, "appointments"); const database = await requireDatabase();
+        const kits = await database.select().from(inventoryKits).where(and(eq(inventoryKits.studioId, ctx.studioId), eq(inventoryKits.isActive, 1))).orderBy(asc(inventoryKits.name));
+        const items = await database.select({ id: inventoryKitItems.id, kitId: inventoryKitItems.kitId, tenantMaterialId: inventoryKitItems.tenantMaterialId, quantity: inventoryKitItems.quantity, materialName: tenantMaterials.name, unit: tenantMaterials.unit }).from(inventoryKitItems).innerJoin(tenantMaterials, and(eq(tenantMaterials.id, inventoryKitItems.tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId))).where(eq(inventoryKitItems.studioId, ctx.studioId));
+        return kits.map(kit => ({ ...kit, items: items.filter(item => item.kitId === kit.id) }));
+      }),
+      create: tenantProcedure.input(z.object({ name: z.string().trim().min(2).max(160), description: z.string().trim().max(500).optional(), items: z.array(z.object({ tenantMaterialId: z.number().int().positive(), quantity: quantitySchema })).min(1).max(100) })).mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "appointments", true); const database = await requireDatabase(); const deduplicated = new Map<number, string>(); input.items.forEach(item => deduplicated.set(item.tenantMaterialId, item.quantity));
+        return database.transaction(async tx => {
+          for (const tenantMaterialId of Array.from(deduplicated.keys())) { const material = (await tx.select({ id: tenantMaterials.id }).from(tenantMaterials).where(and(eq(tenantMaterials.id, tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.isActive, 1))).limit(1))[0]; if (!material) throw new TRPCError({ code: "BAD_REQUEST", message: "Um material do kit não está disponível nesta empresa." }); }
+          const inserted = await tx.insert(inventoryKits).values({ studioId: ctx.studioId, name: input.name, description: input.description ?? null, createdByUserId: ctx.user.id }); const kitId = insertId(inserted); if (!kitId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar o kit." });
+          await tx.insert(inventoryKitItems).values(Array.from(deduplicated, ([tenantMaterialId, quantity]) => ({ studioId: ctx.studioId, kitId, tenantMaterialId, quantity: scaledToDecimal(decimalToScaled(quantity, 3), 3) }))); return { id: kitId };
+        });
+      }),
+      archive: tenantProcedure.input(z.object({ kitId: z.number().int().positive() })).mutation(async ({ ctx, input }) => { await requireModule(ctx, "appointments", true); const database = await requireDatabase(); const result = await database.update(inventoryKits).set({ isActive: 0 }).where(and(eq(inventoryKits.id, input.kitId), eq(inventoryKits.studioId, ctx.studioId), eq(inventoryKits.isActive, 1))); if (!isAffected(result)) throw new TRPCError({ code: "NOT_FOUND", message: "Kit não encontrado." }); return { id: input.kitId }; }),
+    }),
+    forecast: tenantProcedure.input(z.object({ appointmentId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      await requireModule(ctx, "appointments"); const database = await requireDatabase();
+      const planned = await database.select({ tenantMaterialId: appointmentPlannedMaterials.tenantMaterialId }).from(appointmentPlannedMaterials).where(and(eq(appointmentPlannedMaterials.studioId, ctx.studioId), eq(appointmentPlannedMaterials.appointmentId, input.appointmentId), eq(appointmentPlannedMaterials.status, "planejado")));
+      const ids = Array.from(new Set(planned.map(item => item.tenantMaterialId).filter((id): id is number => id != null)));
+      return Promise.all(ids.map(id => forecastAppointmentMaterial(database, ctx.studioId, input.appointmentId, id))).then(rows => rows.filter(Boolean));
+    }),
     listByAppointment: tenantProcedure.input(z.object({ appointmentId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       await requireModule(ctx, "appointments");
       const database = await requireDatabase();
@@ -444,7 +501,9 @@ export const podSaasRouter = router({
         quantityPlanned: scaledToDecimal(decimalToScaled(input.quantityPlanned, 3), 3),
         createdByUserId: ctx.user.id,
       });
-      return { id: insertId(inserted) };
+      const id = insertId(inserted);
+      const forecast = material ? await queueCriticalForecastAlerts(database, ctx.studioId, appointment.id, material.id) : null;
+      return { id, forecast: forecast ? { projectedQuantity: forecast.projectedQuantity, minimumQuantity: Number(forecast.material.minimumQuantity), critical: forecast.critical, materialName: forecast.material.name, unit: forecast.material.unit } : null };
     }),
 
     markUnused: tenantProcedure.input(z.object({ plannedMaterialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
@@ -682,4 +741,15 @@ export const podSaasRouter = router({
   }),
 });
 
-export const podSaasInternals = { calculateTiming, decimalToScaled, scaledToDecimal, multiplyQuantityByCost };
+export const podSaasInternals = { calculateTiming, decimalToScaled, scaledToDecimal, multiplyQuantityByCost, calculateProjectedStock };
+
+export async function runCriticalInventoryForecastCycle() {
+  const database = await getDb(); if (!database) return { checked: 0 };
+  const rows = await database.select({ studioId: appointmentPlannedMaterials.studioId, appointmentId: appointmentPlannedMaterials.appointmentId, tenantMaterialId: appointmentPlannedMaterials.tenantMaterialId }).from(appointmentPlannedMaterials)
+    .innerJoin(appointments, and(eq(appointments.id, appointmentPlannedMaterials.appointmentId), eq(appointments.studioId, appointmentPlannedMaterials.studioId)))
+    .where(and(eq(appointmentPlannedMaterials.status, "planejado"), inArray(appointments.status, ["agendado", "confirmado", "reagendado"]), gte(appointments.date, nowSql()))).orderBy(asc(appointments.date));
+  const unique = Array.from(new Map(rows.filter(row => row.tenantMaterialId != null).map(row => [`${row.studioId}:${row.appointmentId}:${row.tenantMaterialId}`, row] as const)).values());
+  const alertedMaterials = new Set<string>();
+  for (const row of unique) { const materialKey = `${row.studioId}:${row.tenantMaterialId}`; if (alertedMaterials.has(materialKey)) continue; const forecast = await queueCriticalForecastAlerts(database, row.studioId, row.appointmentId, row.tenantMaterialId!); if (forecast?.critical) alertedMaterials.add(materialKey); }
+  return { checked: unique.length };
+}

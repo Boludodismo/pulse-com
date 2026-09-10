@@ -535,6 +535,20 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
 	updatedAt: bigint({ mode: 'number' }).default(0).notNull(),
 });
 
+export const inventoryKits = mysqlTable("inventory_kits", {
+	id: int().autoincrement().notNull(), studioId: int().notNull(), name: varchar({ length: 160 }).notNull(),
+	description: varchar({ length: 500 }), isActive: tinyint().default(1).notNull(), createdByUserId: int(),
+	createdAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(), updatedAt: timestamp({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+}, (table) => [index("inventory_kits_studio_active_idx").on(table.studioId, table.isActive, table.name)]);
+
+export const inventoryKitItems = mysqlTable("inventory_kit_items", {
+	id: int().autoincrement().notNull(), studioId: int().notNull(), kitId: int().notNull(), tenantMaterialId: int().notNull(),
+	quantity: decimal({ precision: 12, scale: 3 }).notNull(),
+}, (table) => [
+	uniqueIndex("inventory_kit_items_material_unique").on(table.studioId, table.kitId, table.tenantMaterialId),
+	index("inventory_kit_items_kit_idx").on(table.studioId, table.kitId),
+]);
+
 export const purchaseOrderItems = mysqlTable("purchase_order_items", {
 	id: int().autoincrement().notNull(),
 	orderId: int().notNull(),

@@ -11,6 +11,7 @@ import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
 import { normalizeWhatsAppNumber } from "../shared/const";
 import { enqueueDueIndividualReminders, runAutomaticMessageCycle } from "./messaging/automaticReminders";
+import { runCriticalInventoryForecastCycle } from "./routers/podSaas";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 interface WhatsAppSchedulerStatus {
@@ -356,6 +357,7 @@ export async function runLegacyNotificationCycle() {
   // posteriormente pela integração ativa do respectivo estúdio.
   await runCustomerCareCycle();
   await runProcurementCycle();
+  await runCriticalInventoryForecastCycle();
   const automatic = await runAutomaticMessageCycle();
   const individual = await enqueueDueIndividualReminders();
   console.log("[Scheduler] Ciclo automático BotConversa", { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped });
