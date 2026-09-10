@@ -821,21 +821,28 @@ export async function deleteGalleryImage(id: number) {
 
 // ============ DASHBOARD HELPERS ============
 
-export async function getTopClients(limit: number = 5) {
+function requireDashboardStudio(studioId: number) {
+  if (!Number.isSafeInteger(studioId) || studioId <= 0) throw new TRPCError({code:'FORBIDDEN',message:'Selecione um estúdio para consultar o dashboard.'});
+}
+
+export async function getTopClients(limit: number, studioId: number) {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
   
   const result = await db
     .select()
     .from(clients)
-    .where(eq(clients.isArchived, 0))
+    .where(and(eq(clients.isArchived, 0), eq(clients.studioId, studioId)))
     .orderBy(desc(clients.totalSpent))
     .limit(limit);
   
   return result;
 }
 
-export async function getUpcomingBirthdays(daysAhead: number = 30) {
+export async function getUpcomingBirthdays(daysAhead: number, studioId: number | null) {
+  // null is reserved for the background birthday scheduler across studios.
+  if (studioId !== null) requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
   
@@ -847,7 +854,7 @@ export async function getUpcomingBirthdays(daysAhead: number = 30) {
   const allClients = await db
     .select()
     .from(clients)
-    .where(and(eq(clients.isArchived, 0), sql`${clients.birthDate} IS NOT NULL`));
+    .where(and(eq(clients.isArchived, 0), sql`${clients.birthDate} IS NOT NULL`, studioId === null ? undefined : eq(clients.studioId, studioId)));
   
   // Filtrar clientes com aniversário nos próximos N dias
   const upcomingBirthdays = allClients.filter(client => {
@@ -880,7 +887,8 @@ export async function getUpcomingBirthdays(daysAhead: number = 30) {
   return upcomingBirthdays;
 }
 
-export async function getDashboardMetrics() {
+export async function getDashboardMetrics(studioId: number) {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return {
     totalClients: 0,
@@ -890,22 +898,22 @@ export async function getDashboardMetrics() {
   };
   
   // Total de clientes
-  const clientsCount = await db.select({ count: sql<number>`count(*)` }).from(clients).where(eq(clients.isArchived, 0));
+  const clientsCount = await db.select({ count: sql<number>`count(*)` }).from(clients).where(and(eq(clients.isArchived, 0),eq(clients.studioId,studioId)));
   const totalClients = clientsCount[0]?.count || 0;
   
   // Total de agendamentos
-  const appointmentsCount = await db.select({ count: sql<number>`count(*)` }).from(appointments);
+  const appointmentsCount = await db.select({ count: sql<number>`count(*)` }).from(appointments).where(eq(appointments.studioId,studioId));
   const totalAppointments = appointmentsCount[0]?.count || 0;
   
   // Receita total (soma de todas as transações tipo "entrada")
   const revenueSum = await db
     .select({ sum: sql<number>`COALESCE(SUM(${transactions.amount}), 0)` })
     .from(transactions)
-    .where(eq(transactions.type, "entrada"));
+    .where(and(eq(transactions.type, "entrada"),eq(transactions.studioId,studioId)));
   const totalRevenue = revenueSum[0]?.sum || 0;
   
   // Aniversariantes nos próximos 30 dias
-  const birthdays = await getUpcomingBirthdays(30);
+  const birthdays = await getUpcomingBirthdays(30, studioId);
   const upcomingBirthdaysCount = birthdays.length;
   
   return {
@@ -2891,7 +2899,8 @@ export async function releasePendingReminderNow(id: number, studioId: number): P
 }
 
 /** Retorna agendamentos da semana atual (segunda-feira a domingo) no fuso America/Sao_Paulo */
-export async function getWeeklyAppointments() {
+export async function getWeeklyAppointments(studioId: number) {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
 
@@ -2928,10 +2937,11 @@ export async function getWeeklyAppointments() {
       totalAmount: appointments.totalAmount,
     })
     .from(appointments)
-    .leftJoin(clients, eq(clients.id, appointments.clientId))
+    .leftJoin(clients, and(eq(clients.id, appointments.clientId),eq(clients.studioId,studioId)))
     .where(
       and(
         gte(appointments.date, fmt(monday)),
+        eq(appointments.studioId, studioId),
         lte(appointments.date, fmtEnd(sunday))
       )
     )

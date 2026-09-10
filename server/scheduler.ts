@@ -269,7 +269,7 @@ async function runBirthdayReminders() {
     const settings = await db.getStudioSettings();
     if (!settings?.enableBirthdayReminders) return;
 
-    const upcoming = await db.getUpcomingBirthdays(0);
+    const upcoming = await db.getUpcomingBirthdays(0, null);
     if (upcoming.length === 0) {
       lastRun[key] = today;
       return;

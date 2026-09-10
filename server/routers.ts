@@ -1784,24 +1784,24 @@ export const appRouter = router({
 
   // ============ DASHBOARD ROUTER ============
   dashboard: router({
-    topClients: protectedProcedure
+    topClients: tenantProcedure
       .input(z.object({ limit: z.number().optional() }))
-      .query(async ({ input }) => {
-        return await db.getTopClients(input.limit || 5);
+      .query(async ({ input, ctx }) => {
+        return await db.getTopClients(input.limit || 5, ctx.studioId);
       }),
 
-    upcomingBirthdays: protectedProcedure
+    upcomingBirthdays: tenantProcedure
       .input(z.object({ daysAhead: z.number().optional() }))
-      .query(async ({ input }) => {
-        return await db.getUpcomingBirthdays(input.daysAhead || 30);
+      .query(async ({ input, ctx }) => {
+        return await db.getUpcomingBirthdays(input.daysAhead ?? 30, ctx.studioId);
       }),
 
-    metrics: protectedProcedure.query(async () => {
-      return await db.getDashboardMetrics();
+    metrics: tenantProcedure.query(async ({ctx}) => {
+      return await db.getDashboardMetrics(ctx.studioId);
     }),
 
-    weeklyAppointments: protectedProcedure.query(async () => {
-      return await db.getWeeklyAppointments();
+    weeklyAppointments: tenantProcedure.query(async ({ctx}) => {
+      return await db.getWeeklyAppointments(ctx.studioId);
     }),
   }),
 
