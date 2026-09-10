@@ -12,7 +12,7 @@ import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
 import { useSyncToast } from "../hooks/useSyncToast";
 import { shouldShowClientLoadError } from "../lib/appointmentClients";
-import { Bell, Plus, Trash2, Send, Clock, CheckCircle, XCircle, MessageSquare, ExternalLink, Loader2, Share2, Copy, CheckCheck, CalendarPlus, Download } from "lucide-react";
+import { Bell, Plus, Trash2, Send, Clock, CheckCircle, XCircle, MessageSquare, ExternalLink, Loader2, Share2, Copy, CheckCheck, CalendarPlus, Download, Boxes } from "lucide-react";
 import { buildWhatsAppLink } from "../../../shared/const";
 
 interface EventModalProps {
@@ -98,6 +98,8 @@ export function EventModal({
   const [plannedTenantMaterialId, setPlannedTenantMaterialId] = useState<string | undefined>();
   const [plannedQuantity, setPlannedQuantity] = useState("1");
   const [pendingPlannedMaterials, setPendingPlannedMaterials] = useState<Array<{ tenantMaterialId: number; name: string; unit: string; quantity: string }>>([]);
+  const [selectedInventoryKitId, setSelectedInventoryKitId] = useState<string | undefined>();
+  const [newInventoryKitName, setNewInventoryKitName] = useState("");
 
   const clientListInput = useMemo(
     () => requiresStudioSelection && selectedStudioId ? { studioId: Number(selectedStudioId) } : undefined,
@@ -164,6 +166,8 @@ export function EventModal({
     { appointmentId: eventId ?? 0 },
     { enabled: Boolean(eventId) && isOpen },
   );
+  const { data: inventoryKits = [], refetch: refetchInventoryKits } = trpc.pod.planning.kits.list.useQuery(undefined, { enabled: isOpen && canAccess("stock") });
+  const { data: inventoryForecast = [], refetch: refetchInventoryForecast } = trpc.pod.planning.forecast.useQuery({ appointmentId: eventId ?? 0 }, { enabled: Boolean(eventId) && isOpen && activeTab === "pod" });
 
   // Mutations de lembretes
   const createReminderMutation = trpc.appointments.reminders.create.useMutation({
@@ -195,14 +199,24 @@ export function EventModal({
   });
 
   const addPlannedMaterialMutation = trpc.pod.planning.add.useMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
       setPlannedTenantMaterialId(undefined);
       setPlannedQuantity("1");
       void refetchPlannedMaterials();
-      toast.success("Material previsto salvo. Nenhum saldo foi baixado.");
+      void refetchInventoryForecast();
+      if (result.forecast?.critical) toast.warning(`${result.forecast.materialName}: saldo projetado crítico (${result.forecast.projectedQuantity.toFixed(3)} ${result.forecast.unit}). Estúdio e artista foram avisados.`, { duration: 10000 });
+      else toast.success("Material previsto salvo. Nenhum saldo foi baixado.");
     },
     onError: (error) => toast.error(`Não foi possível salvar o material previsto: ${error.message}`),
   });
+
+  const createInventoryKitMutation = trpc.pod.planning.kits.create.useMutation({ onSuccess: () => { setNewInventoryKitName(""); void refetchInventoryKits(); toast.success("Kit salvo para os próximos agendamentos."); }, onError: error => toast.error(`Não foi possível salvar o kit: ${error.message}`) });
+  const applyInventoryKit = async () => {
+    const kit = inventoryKits.find(item => item.id === Number(selectedInventoryKitId)); if (!kit) return;
+    if (eventId) { const results = await Promise.allSettled(kit.items.map(item => addPlannedMaterialMutation.mutateAsync({ appointmentId: eventId, tenantMaterialId: item.tenantMaterialId, quantityPlanned: item.quantity }))); const failures = results.filter(result => result.status === "rejected").length; if (failures) toast.warning(`${failures} item(ns) do kit não puderam ser adicionados.`); }
+    else { setPendingPlannedMaterials(current => { const next = current.map(item => ({ ...item })); for (const item of kit.items) { const existing = next.find(entry => entry.tenantMaterialId === item.tenantMaterialId); if (existing) existing.quantity = String(Number(existing.quantity) + Number(item.quantity)); else next.push({ tenantMaterialId: item.tenantMaterialId, name: item.materialName, unit: item.unit, quantity: item.quantity }); } return next; }); toast.success(`Kit “${kit.name}” adicionado à preparação.`); }
+    setSelectedInventoryKitId(undefined);
+  };
 
   const markPlannedMaterialUnusedMutation = trpc.pod.planning.markUnused.useMutation({
     onSuccess: () => {
@@ -1408,6 +1422,21 @@ export function EventModal({
                 <p className="text-sm font-semibold text-primary">Preparação da sessão POD</p>
                 <p className="mt-1 text-xs text-muted-foreground">Planeje os materiais desta agenda. A seleção não reduz saldo; a baixa só acontece quando o consumo for confirmado na sessão POD.</p>
               </div>
+
+              <div className="space-y-2 rounded-lg border p-3">
+                <Label className="flex items-center gap-2 text-sm"><Boxes className="h-4 w-4 text-primary" />Kit de materiais (opcional)</Label>
+                {inventoryKits.length > 0 ? <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2"><Select value={selectedInventoryKitId} onValueChange={setSelectedInventoryKitId}><SelectTrigger><SelectValue placeholder="Escolher kit salvo" /></SelectTrigger><SelectContent>{inventoryKits.map(kit => <SelectItem key={kit.id} value={String(kit.id)}>{kit.name} · {kit.items.length} item(ns)</SelectItem>)}</SelectContent></Select><Button type="button" variant="outline" disabled={!selectedInventoryKitId} onClick={() => void applyInventoryKit()}>Adicionar</Button></div> : <p className="text-xs text-muted-foreground">Você ainda não possui kits salvos.</p>}
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-t pt-2">
+                  <Input value={newInventoryKitName} onChange={event => setNewInventoryKitName(event.target.value)} placeholder="Nome para salvar esta lista como kit" />
+                  <Button type="button" variant="secondary" disabled={!newInventoryKitName.trim() || createInventoryKitMutation.isPending || (eventId ? existingPlannedMaterials.filter(item => item.status === "planejado" && item.tenantMaterialId).length === 0 : pendingPlannedMaterials.length === 0)} onClick={() => createInventoryKitMutation.mutate({ name: newInventoryKitName.trim(), items: eventId ? existingPlannedMaterials.filter(item => item.status === "planejado" && item.tenantMaterialId).map(item => ({ tenantMaterialId: item.tenantMaterialId!, quantity: item.quantityPlanned })) : pendingPlannedMaterials.map(item => ({ tenantMaterialId: item.tenantMaterialId, quantity: item.quantity })) })}>Salvar kit</Button>
+                </div>
+              </div>
+
+              {eventId && inventoryForecast.length > 0 && <div className="space-y-1.5 rounded-lg border p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Previsão até a data deste agendamento</p>
+                {inventoryForecast.map((forecast: any) => <div key={forecast.material.id} className={`flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-xs ${forecast.critical ? "bg-destructive/10 text-destructive" : "bg-muted/30"}`}><span className="truncate">{forecast.material.name}</span><span className="shrink-0 font-medium">{forecast.projectedQuantity.toFixed(3)} {forecast.material.unit}{forecast.critical ? " · crítico" : ""}</span></div>)}
+                <p className="text-[11px] text-muted-foreground">A previsão considera os materiais planejados nos demais agendamentos. Ela não baixa nem reserva o saldo.</p>
+              </div>}
 
               {tenantMaterials.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">

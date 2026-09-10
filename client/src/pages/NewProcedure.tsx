@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ChevronLeft, Stethoscope, Upload, X, Calendar, Clock, Link2, CheckCircle2 } from "lucide-react";
+import { ChevronLeft, Stethoscope, Upload, X, Calendar, Clock, Link2, CheckCircle2, Package, Plus } from "lucide-react";
 
 const BODY_LOCATIONS = [
   "Braço direito", "Braço esquerdo", "Antebraço direito", "Antebraço esquerdo",
@@ -79,6 +79,8 @@ export default function NewProcedure() {
     referenceImageMime: "",
   });
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [plannedMaterialId, setPlannedMaterialId] = useState<string | undefined>();
+  const [plannedQuantity, setPlannedQuantity] = useState("1");
 
   const clientsQuery = trpc.clients.list.useQuery();
   const clients = clientsQuery.data ?? [];
@@ -101,6 +103,9 @@ export default function NewProcedure() {
 
   // Agendamento selecionado
   const selectedAppointment = clientAppointments.find((a) => a.id === form.appointmentId) ?? null;
+  const { data: availableMaterials = [] } = trpc.pod.inventory.list.useQuery(undefined, { enabled: Boolean(selectedAppointment) });
+  const { data: plannedMaterials = [], refetch: refetchPlannedMaterials } = trpc.pod.planning.listByAppointment.useQuery({ appointmentId: form.appointmentId ?? 0 }, { enabled: Boolean(form.appointmentId) });
+  const addPlannedMaterialMutation = trpc.pod.planning.add.useMutation({ onSuccess: result => { setPlannedMaterialId(undefined); setPlannedQuantity("1"); void refetchPlannedMaterials(); if (result.forecast?.critical) toast.warning(`${result.forecast.materialName} ficará em nível crítico. O aviso foi enviado ao estúdio e ao artista.`, { duration: 10000 }); else toast.success("Material vinculado à sessão sem baixar o estoque."); }, onError: error => toast.error(`Não foi possível adicionar o material: ${error.message}`) });
 
   // Pré-preencher dados a partir do agendamento selecionado
   useEffect(() => {
@@ -315,6 +320,12 @@ export default function NewProcedure() {
                     </p>
                   </div>
                 )}
+                {selectedAppointment && <div className="mt-3 space-y-2 rounded-lg border p-3">
+                  <Label className="flex items-center gap-2"><Package className="h-4 w-4 text-primary" />Materiais da sessão (opcional)</Label>
+                  <p className="text-xs text-muted-foreground">A seleção apenas prepara a sessão; o estoque será baixado quando o artista confirmar o uso.</p>
+                  <div className="grid grid-cols-[minmax(0,1fr)_80px_auto] gap-2"><Select value={plannedMaterialId} onValueChange={setPlannedMaterialId}><SelectTrigger><SelectValue placeholder="Material" /></SelectTrigger><SelectContent>{availableMaterials.map(material => <SelectItem key={material.id} value={String(material.id)}>{material.name} · {material.currentQuantity} {material.unit}</SelectItem>)}</SelectContent></Select><Input value={plannedQuantity} inputMode="decimal" onChange={event => setPlannedQuantity(event.target.value.replace(",", "."))} aria-label="Quantidade prevista" /><Button type="button" size="icon" disabled={!plannedMaterialId || addPlannedMaterialMutation.isPending} onClick={() => addPlannedMaterialMutation.mutate({ appointmentId: selectedAppointment.id, tenantMaterialId: Number(plannedMaterialId), quantityPlanned: plannedQuantity })}><Plus className="h-4 w-4" /></Button></div>
+                  {plannedMaterials.filter(item => item.status === "planejado").map(item => <div key={item.id} className="rounded-md bg-muted/40 px-2 py-1.5 text-xs">{item.nameSnapshot} · {item.quantityPlanned} {item.unitSnapshot}</div>)}
+                </div>}
               </div>
             )}
 

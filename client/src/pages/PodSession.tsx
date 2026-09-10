@@ -53,6 +53,8 @@ import {
   Calendar,
   Link2,
   ExternalLink,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
@@ -142,6 +144,7 @@ export default function PodSession() {
   });
   const [tenantMaterialId, setTenantMaterialId] = useState<string | undefined>();
   const [tenantConsumptionQuantity, setTenantConsumptionQuantity] = useState("1");
+  const [referenceFullscreen, setReferenceFullscreen] = useState(false);
 
   // ── Estado do upload de imagem ───────────────────────────────────────────
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -311,6 +314,13 @@ export default function PodSession() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isRunning]);
+
+  useEffect(() => {
+    if (!referenceFullscreen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setReferenceFullscreen(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [referenceFullscreen]);
 
   // ── Formatar tempo ───────────────────────────────────────────────────────
   const formatTime = (seconds: number) => {
@@ -564,7 +574,7 @@ export default function PodSession() {
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
 
         {/* ── Coluna esquerda: imagem + timer ──────────────────────────── */}
-        <div className="lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r">
+        <div className={referenceFullscreen ? "fixed inset-0 z-[100] flex flex-col bg-background" : "lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r"}>
 
           {/* Timer */}
           <div className="bg-card border-b px-4 py-3 flex items-center justify-between gap-3">
@@ -582,6 +592,7 @@ export default function PodSession() {
             </div>
 
             <div className="flex gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span className="hidden sm:inline">{referenceFullscreen ? "Sair da tela cheia" : "Tela cheia"}</span></Button>
               {isNew && (
                 <Button size="sm" onClick={handleStart} className="gap-1.5 bg-green-600 hover:bg-green-700">
                   <Play className="w-4 h-4" />
@@ -646,6 +657,9 @@ export default function PodSession() {
                 </Button>
               )}
             </div>
+            {plannedMaterials.some(item => item.status === "planejado" && item.tenantMaterialId) && <div className="absolute right-3 top-1/2 z-20 flex max-h-[75%] -translate-y-1/2 flex-col gap-2 overflow-y-auto py-2">
+              {plannedMaterials.filter(item => item.status === "planejado" && item.tenantMaterialId).map(item => { const stock = tenantMaterials.find(material => material.id === item.tenantMaterialId); return <button key={item.id} type="button" disabled={!stock || isFinished || consumeTenantMaterialMutation.isPending} onClick={() => consumeTenantMaterialMutation.mutate({ procedureId, tenantMaterialId: item.tenantMaterialId!, plannedMaterialId: item.id, quantity: item.quantityPlanned })} className="group max-w-[220px] rounded-xl border border-white/20 bg-black/45 px-3 py-2 text-left text-xs text-white shadow-xl backdrop-blur-md transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45" title={`Baixar ${item.quantityPlanned} ${item.unitSnapshot} do estoque`}><span className="block truncate font-semibold">{item.nameSnapshot}</span><span className="block text-[10px] text-white/75 group-hover:text-white">− {item.quantityPlanned} {item.unitSnapshot}{stock ? ` · saldo ${stock.currentQuantity}` : " · indisponível"}</span></button>; })}
+            </div>}
           </div>
 
           {/* Input oculto para upload */}
