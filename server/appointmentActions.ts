@@ -174,19 +174,30 @@ async function queueArtistActionNotification(input: {
     id: appointments.id,
     clientId: appointments.clientId,
     artistId: appointments.artistId,
+    artist: appointments.artist,
     date: appointments.date,
     service: appointments.service,
   }).from(appointments).where(and(
     eq(appointments.id, input.appointmentId),
     eq(appointments.studioId, input.studioId),
   )).limit(1))[0];
-  if (!appointment?.artistId) return false;
+  if (!appointment) return false;
   const client = (await db.select({ name: clients.name }).from(clients)
     .where(eq(clients.id, appointment.clientId)).limit(1))[0];
-  const artist = (await db.select({ name: artists.name, phone: artists.phone }).from(artists).where(and(
+  let artist = appointment.artistId ? (await db.select({ id: artists.id, name: artists.name, phone: artists.phone }).from(artists).where(and(
     eq(artists.id, appointment.artistId),
     eq(artists.studioId, input.studioId),
-  )).limit(1))[0];
+  )).limit(1))[0] : undefined;
+
+  // Agendamentos antigos podem ter somente o nome do profissional. Nesse caso,
+  // vinculamos apenas quando há um único artista ativo com o mesmo nome no estúdio.
+  if (!artist && appointment.artist) {
+    const candidates = await db.select({ id: artists.id, name: artists.name, phone: artists.phone }).from(artists).where(and(
+      eq(artists.studioId, input.studioId),
+      eq(artists.active, 1),
+    ));
+    artist = selectArtistNotificationRecipient(appointment.artist, candidates);
+  }
   if (!client || !artist?.phone) return false;
 
   const actionText: Record<AppointmentAction, string> = {
@@ -194,6 +205,12 @@ async function queueArtistActionNotification(input: {
     early: "informou que chegará adiantado",
     late: "informou que terá atraso",
     reschedule_requested: "solicitou remarcação",
+  };
+  const selectedOption: Record<AppointmentAction, string> = {
+    confirmed: "Confirmar presença",
+    early: "Avisar adiantamento",
+    late: "Avisar atraso",
+    reschedule_requested: "Solicitar remarcação",
   };
   const when = saoPauloDateTime(String(appointment.date)).toLocaleString("pt-BR", {
     timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short",
@@ -207,10 +224,20 @@ async function queueArtistActionNotification(input: {
     clientId: appointment.clientId,
     appointmentId: appointment.id,
     trigger: `appointment_action_${input.action}`,
-    message: `Olá, ${firstName(artist.name)}! ${firstName(client.name)} ${actionText[input.action]} no agendamento de ${when}. Serviço: ${appointment.service}.`,
+    message: `Olá, ${firstName(artist.name)}!\n\nO cliente ${client.name} ${actionText[input.action]} no agendamento de ${when}.\n\nOpção escolhida: ${selectedOption[input.action]}\nServiço: ${appointment.service}.`,
     idempotencyKey: `appointment-action-artist:${input.actionLinkId}`,
   });
   return delivery.success && (delivery.queued || delivery.duplicate);
+}
+
+function comparableArtistName(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
+}
+
+export function selectArtistNotificationRecipient<T extends { name: string; phone: string | null }>(appointmentArtist: string, candidates: T[]): T | undefined {
+  const expected = comparableArtistName(appointmentArtist);
+  const matches = candidates.filter((candidate) => candidate.phone && comparableArtistName(candidate.name) === expected);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export async function consumeAppointmentActionLink(rawToken: string) {
