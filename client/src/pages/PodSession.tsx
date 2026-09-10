@@ -657,9 +657,58 @@ export default function PodSession() {
                 </Button>
               )}
             </div>
-            {plannedMaterials.some(item => item.status === "planejado" && item.tenantMaterialId) && <div className="absolute right-3 top-1/2 z-20 flex max-h-[75%] -translate-y-1/2 flex-col gap-2 overflow-y-auto py-2">
-              {plannedMaterials.filter(item => item.status === "planejado" && item.tenantMaterialId).map(item => { const stock = tenantMaterials.find(material => material.id === item.tenantMaterialId); return <button key={item.id} type="button" disabled={!stock || isFinished || consumeTenantMaterialMutation.isPending} onClick={() => consumeTenantMaterialMutation.mutate({ procedureId, tenantMaterialId: item.tenantMaterialId!, plannedMaterialId: item.id, quantity: item.quantityPlanned })} className="group max-w-[220px] rounded-xl border border-white/20 bg-black/45 px-3 py-2 text-left text-xs text-white shadow-xl backdrop-blur-md transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45" title={`Baixar ${item.quantityPlanned} ${item.unitSnapshot} do estoque`}><span className="block truncate font-semibold">{item.nameSnapshot}</span><span className="block text-[10px] text-white/75 group-hover:text-white">− {item.quantityPlanned} {item.unitSnapshot}{stock ? ` · saldo ${stock.currentQuantity}` : " · indisponível"}</span></button>; })}
-            </div>}
+            {plannedMaterials.some(item => item.status !== "nao_utilizado" && item.tenantMaterialId) && (
+              <div
+                className={referenceFullscreen
+                  ? "absolute left-3 top-1/2 z-20 flex max-h-[72%] w-[82px] -translate-y-1/2 flex-col gap-1.5 overflow-y-auto rounded-2xl border border-white/10 bg-black/25 p-1.5 shadow-2xl backdrop-blur-md"
+                  : "absolute right-3 top-1/2 z-20 flex max-h-[75%] -translate-y-1/2 flex-col gap-2 overflow-y-auto py-2"
+                }
+                aria-label="Materiais utilizados na sessão"
+              >
+                {plannedMaterials
+                  .filter(item => item.status !== "nao_utilizado" && item.tenantMaterialId)
+                  .map(item => {
+                    const stock = tenantMaterials.find(material => material.id === item.tenantMaterialId);
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        disabled={!stock || isFinished || consumeTenantMaterialMutation.isPending}
+                        onClick={() => consumeTenantMaterialMutation.mutate({
+                          procedureId,
+                          tenantMaterialId: item.tenantMaterialId!,
+                          plannedMaterialId: item.id,
+                          quantity: item.quantityPlanned,
+                        })}
+                        className={referenceFullscreen
+                          ? "group flex min-h-[70px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-black/30 px-1.5 py-2 text-center text-white shadow-lg transition hover:border-white/30 hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
+                          : "group max-w-[220px] rounded-xl border border-white/20 bg-black/45 px-3 py-2 text-left text-xs text-white shadow-xl backdrop-blur-md transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
+                        }
+                        title={`Baixar ${item.quantityPlanned} ${item.unitSnapshot} de ${item.nameSnapshot}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
+                      >
+                        {referenceFullscreen && (
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 text-white">
+                            {CATEGORY_ICONS[stock?.category ?? "other"] ?? CATEGORY_ICONS.other}
+                          </span>
+                        )}
+                        <span className={referenceFullscreen
+                          ? "line-clamp-2 w-full text-[10px] font-semibold leading-tight"
+                          : "block truncate font-semibold"
+                        }>
+                          {item.nameSnapshot}
+                        </span>
+                        <span className={referenceFullscreen
+                          ? "block text-[9px] leading-none text-white/70 group-hover:text-white"
+                          : "block text-[10px] text-white/75 group-hover:text-white"
+                        }>
+                          − {item.quantityPlanned} {item.unitSnapshot}
+                          {!referenceFullscreen && (stock ? ` · saldo ${stock.currentQuantity}` : " · indisponível")}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
           </div>
 
           {/* Input oculto para upload */}
