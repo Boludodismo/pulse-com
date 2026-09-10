@@ -1758,60 +1758,11 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
     { id: eventId },
     { enabled: !!eventId }
   );
-  const [isOpeningAppleCalendar, setIsOpeningAppleCalendar] = useState(false);
   const sendViaApi = trpc.messaging.sendManual.useMutation({
     onSuccess: () => toast.success("Mensagem encaminhada pela integração. Confira a entrega na Central de Mensagens."),
     onError: (error) => toast.error(error.message),
   });
 
-  const openAppleCalendar = async () => {
-    if (!links || isOpeningAppleCalendar) return;
-    setIsOpeningAppleCalendar(true);
-
-    try {
-      const response = await fetch(links.icsUrl, {
-        credentials: "same-origin",
-        headers: { Accept: "text/calendar" },
-      });
-      if (!response.ok) throw new Error("Não foi possível preparar o calendário.");
-
-      const calendarFile = new File(
-        [await response.blob()],
-        `agendamento-${eventId}.ics`,
-        { type: "text/calendar" }
-      );
-
-      const canShareCalendar = typeof navigator.share === "function"
-        && typeof navigator.canShare === "function"
-        && navigator.canShare({ files: [calendarFile] });
-
-      if (canShareCalendar) {
-        await navigator.share({
-          title: "Adicionar agendamento ao calendário",
-          text: "Adicionar este agendamento ao Calendário Apple/iCloud.",
-          files: [calendarFile],
-        });
-        toast.success("Escolha ‘Adicionar ao Calendário’ para salvar no iCloud.");
-        return;
-      }
-
-      const objectUrl = URL.createObjectURL(calendarFile);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = calendarFile.name;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(objectUrl);
-      toast.info("Arquivo de calendário preparado para importação no Apple/iCloud.");
-    } catch (error) {
-      if ((error as DOMException)?.name !== "AbortError") {
-        toast.error(error instanceof Error ? error.message : "Não foi possível abrir o Calendário Apple/iCloud.");
-      }
-    } finally {
-      setIsOpeningAppleCalendar(false);
-    }
-  };
 
   const copyToClipboard = async (text: string, key: string) => {
     try {
@@ -1855,10 +1806,8 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
         </p>
         <div className="grid grid-cols-1 gap-2">
           {/* Apple/iCloud */}
-          <button
-            type="button"
-            onClick={openAppleCalendar}
-            disabled={isOpeningAppleCalendar}
+          <a
+            href={links.icsUrl}
             className="flex w-full items-center gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors disabled:cursor-wait disabled:opacity-70"
           >
             <div className="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0">
@@ -1868,12 +1817,10 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium">Apple/iCloud Calendar</p>
-              <p className="text-xs text-muted-foreground">Abrir o compartilhamento para adicionar ao calendário</p>
+              <p className="text-xs text-muted-foreground">Abrir o evento e confirmar “Adicionar”. Escolha um calendário iCloud para sincronizar seus dispositivos.</p>
             </div>
-            {isOpeningAppleCalendar
-              ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-              : <Share2 className="h-4 w-4 shrink-0 text-muted-foreground" />}
-          </button>
+            <CalendarPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
+          </a>
 
           {/* Google Calendar */}
           <a
