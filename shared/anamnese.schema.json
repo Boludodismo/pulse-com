@@ -1,5 +1,5 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "title": "Ficha de Anamnese",
   "subtitle": "Histórico de saúde",
   "steps": [
@@ -93,6 +93,27 @@
           "type": "text",
           "label": "Número de telefone / WhatsApp",
           "required": true
+        },
+        {
+          "key": "emergency_contact_name",
+          "type": "text",
+          "label": "Contato de emergência — nome completo",
+          "required": false,
+          "placeholder": "Nome da pessoa a contatar em caso de emergência"
+        },
+        {
+          "key": "emergency_contact_phone",
+          "type": "text",
+          "label": "Contato de emergência — telefone com DDD",
+          "required": false,
+          "placeholder": "Ex.: (31) 99999-9999"
+        },
+        {
+          "key": "emergency_contact_relationship",
+          "type": "text",
+          "label": "Contato de emergência — parentesco ou vínculo",
+          "required": false,
+          "placeholder": "Ex.: mãe, pai, cônjuge ou amigo(a)"
         },
         {
           "key": "client_instagram",
