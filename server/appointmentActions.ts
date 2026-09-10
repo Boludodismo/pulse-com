@@ -3,6 +3,7 @@ import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { anamneseRequests, anamneseSubmissions, anamnesisRecords, appointmentActionAlerts, appointmentActionLinks, appointments, artists, clients } from "../drizzle/schema";
 import { getDb } from "./db";
 import { firstName } from "./messaging/messagePresentation";
+import { anamneseExpiryForDatabase } from "./anamneseTime";
 
 export const APPOINTMENT_ACTIONS = ["confirmed", "early", "late", "reschedule_requested"] as const;
 export type AppointmentAction = typeof APPOINTMENT_ACTIONS[number];
@@ -112,7 +113,7 @@ export async function queueAnamneseAfterCustomerAction(input: {
 
   const client = (await db.select({ id: clients.id, name: clients.name, phone: clients.phone, email: clients.email })
     .from(clients)
-    .where(eq(clients.id, appointment.clientId))
+    .where(and(eq(clients.id, appointment.clientId), eq(clients.studioId, input.studioId)))
     .limit(1))[0];
   if (!client) return { queued: false, reason: "client-not-found" as const };
 
@@ -122,7 +123,7 @@ export async function queueAnamneseAfterCustomerAction(input: {
       eq(anamneseRequests.clientId, client.id),
       eq(anamneseRequests.appointmentId, appointment.id),
       eq(anamneseRequests.statusRequest, "pendente"),
-      gt(anamneseRequests.expiresAt, sqlDate()),
+      gt(anamneseRequests.expiresAt, anamneseExpiryForDatabase(new Date())),
     ))
     .limit(1))[0];
 
@@ -144,7 +145,7 @@ export async function queueAnamneseAfterCustomerAction(input: {
     token,
     sentVia: client.phone ? "whatsapp" : "email",
     sentTo: client.phone ?? client.email ?? "link_publico",
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: anamneseExpiryForDatabase(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
     statusRequest: "pendente",
   }))[0].insertId);
   if (!client.phone) {
@@ -172,10 +173,10 @@ export async function queueAnamneseAfterCustomerAction(input: {
   };
 }
 
-async function queueArtistActionNotification(input: {
+export async function queueArtistActionNotification(input: {
   studioId: number;
   appointmentId: number;
-  actionLinkId: number;
+  actionEventKey: string;
   action: AppointmentAction;
 }) {
   const db = await getDb();
@@ -193,7 +194,7 @@ async function queueArtistActionNotification(input: {
   )).limit(1))[0];
   if (!appointment) return false;
   const client = (await db.select({ name: clients.name }).from(clients)
-    .where(eq(clients.id, appointment.clientId)).limit(1))[0];
+    .where(and(eq(clients.id, appointment.clientId), eq(clients.studioId, input.studioId))).limit(1))[0];
   let artist = appointment.artistId ? (await db.select({ id: artists.id, name: artists.name, phone: artists.phone }).from(artists).where(and(
     eq(artists.id, appointment.artistId),
     eq(artists.studioId, input.studioId),
@@ -208,7 +209,13 @@ async function queueArtistActionNotification(input: {
     ));
     artist = selectArtistNotificationRecipient(appointment.artist, candidates);
   }
-  if (!client || !artist?.phone) return false;
+  if (!client || !artist?.phone) {
+    console.warn("[AppointmentActions] Aviso ao artista não enfileirado", {
+      studioId: input.studioId, appointmentId: input.appointmentId,
+      reason: !client ? "client-not-found" : "artist-without-verified-phone",
+    });
+    return false;
+  }
 
   const actionText: Record<AppointmentAction, string> = {
     confirmed: "confirmou presença",
@@ -235,7 +242,7 @@ async function queueArtistActionNotification(input: {
     appointmentId: appointment.id,
     trigger: `appointment_action_${input.action}`,
     message: `Olá, ${firstName(artist.name)}!\n\nO cliente ${client.name} ${actionText[input.action]} no agendamento de ${when}.\n\nOpção escolhida: ${selectedOption[input.action]}\nServiço: ${appointment.service}.`,
-    idempotencyKey: `appointment-action-artist:${input.actionLinkId}`,
+    idempotencyKey: `appointment-action-artist:${input.actionEventKey}`,
   });
   return delivery.success && (delivery.queued || delivery.duplicate);
 }
@@ -307,7 +314,7 @@ export async function consumeAppointmentActionLink(rawToken: string) {
     artistQueued = await queueArtistActionNotification({
       studioId: link.studioId,
       appointmentId: link.appointmentId,
-      actionLinkId: link.id,
+      actionEventKey: String(link.id),
       action,
     });
   } catch (error) {

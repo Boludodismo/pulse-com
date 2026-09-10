@@ -1056,7 +1056,19 @@ export const appRouter = router({
         } catch (error) {
           console.error("[Appointments] Não foi possível disponibilizar a anamnese após a confirmação legada", error);
         }
-        return { success: true, status: input.status, anamneseUrl, anamneseQueued };
+        let artistQueued = false;
+        try {
+          const { queueArtistActionNotification } = await import("./appointmentActions");
+          artistQueued = await queueArtistActionNotification({
+            studioId: appointment.studioId,
+            appointmentId: appointment.id,
+            action: legacyAction,
+            actionEventKey: `legacy:${appointment.id}:${input.status}:${expected}`,
+          });
+        } catch (error) {
+          console.error("[Appointments] Não foi possível enfileirar aviso ao artista após resposta legada", error);
+        }
+        return { success: true, status: input.status, anamneseUrl, anamneseQueued, artistQueued };
       }),
 
     /** Consome um link aleatório, expirável e de uso único enviado ao cliente. */
