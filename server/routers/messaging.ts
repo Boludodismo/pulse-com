@@ -18,6 +18,7 @@ import { interpolateTemplate } from "../messaging/provider";
 import { getOutboundEventIdempotencyKey, getProviderForIntegration, sendAndLog, seedDefaultTemplates } from "../messaging/service";
 import { createConnectionKey, encryptIntegrationSecret, maskSecret } from "../messaging/crypto";
 import { normalizeBrazilianPhone } from "../messaging/phone";
+import { resolveManualRecipient } from "../messaging/manualRecipient";
 
 function requireIntegrationManager(ctx: { user?: { role?: string } | null }) {
   if (ctx.user?.role !== "admin" && ctx.user?.role !== "superadmin") {
@@ -602,14 +603,15 @@ export const messagingRouter = router({
     .mutation(async ({ input, ctx }) => {
       requireIntegrationManager(ctx);
       const studioId = getManagedStudioId(ctx);
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Banco de dados indisponível" });
+      const recipient = await resolveManualRecipient(db, studioId, input);
       const result = await sendAndLog({
         studioId,
-        recipientPhone: input.recipientPhone,
-        recipientName: input.recipientName,
+        ...recipient,
         recipientType: "client",
         message: input.message,
         trigger: "custom",
-        clientId: input.clientId,
         appointmentId: input.appointmentId,
       });
 

@@ -1759,7 +1759,7 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
     { enabled: !!eventId }
   );
   const sendViaApi = trpc.messaging.sendManual.useMutation({
-    onSuccess: () => toast.success("Mensagem encaminhada pela integração. Confira a entrega na Central de Mensagens."),
+    onSuccess: () => toast.success("Mensagem adicionada à fila. A entrega ainda será processada; acompanhe na Central de Mensagens."),
     onError: (error) => toast.error(error.message),
   });
 
@@ -1913,6 +1913,8 @@ function ExportTab({ eventId, copiedLink, setCopiedLink }: { eventId: number; co
           if (!message) return;
           sendViaApi.mutate({recipientPhone: links.clientPhone, message, appointmentId: eventId});
         }}>{sendViaApi.isPending ? "Enviando…" : "Enviar pela integração"}</Button>
+        {sendViaApi.isSuccess && <p role="status" className="text-xs text-muted-foreground">Mensagem adicionada à fila, ainda sem confirmação de entrega. Consulte Central de Mensagens → Histórico.</p>}
+        {sendViaApi.error && <p role="alert" className="text-xs text-destructive">{sendViaApi.error.message}</p>}
       </div>
       {links.hasAnamnesis && links.anamnesisLink ? (
         <div className="rounded-lg border p-4 space-y-3 border-amber-500/30 bg-amber-500/5">
