@@ -323,6 +323,10 @@ export default function PublicAnamnese() {
               {field.required && <span className="text-orange-400 ml-1">*</span>}
             </Label>
             <Input
+              id={field.key}
+              aria-label={field.label}
+              type={field.key === "emergency_contact_phone" ? "tel" : "text"}
+              inputMode={field.key === "emergency_contact_phone" ? "tel" : undefined}
               value={value}
               onChange={(e) => handleFieldChange(field.key, e.target.value)}
               placeholder={field.placeholder || field.label}
