@@ -45,7 +45,7 @@ export default function SaaSAdmin() {
   const user = auth.data;
   const isSuperadmin = user?.role === "superadmin";
   const isAdmin = user?.role === "admin";
-  const canManage = isSuperadmin || isAdmin;
+  const canManage = isSuperadmin;
   const studios = trpc.saas.studios.useQuery(undefined, { enabled: isSuperadmin });
   const invitations = trpc.saas.listStudioInvitations.useQuery(undefined, { enabled: canManage });
   const teamAccess = trpc.saas.teamAccess.useQuery(undefined, { enabled: canManage });
@@ -101,12 +101,12 @@ export default function SaaSAdmin() {
   };
 
   if (auth.isLoading) return <div className="container py-6"><p className="text-muted-foreground">Carregando permissões…</p></div>;
-  if (!canManage) return <div className="container py-6"><Card><CardContent className="p-6"><p>Acesso restrito a administradores.</p></CardContent></Card></div>;
+  if (!canManage) return <div className="container py-6"><Card><CardContent className="p-6"><p>Acesso restrito ao superadministrador.</p></CardContent></Card></div>;
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (isSuperadmin && !studioId) return toast.error("Selecione a empresa.");
-    createInvitation.mutate({ email: email.trim(), role, studioId: isSuperadmin ? Number(studioId) : undefined });
+    createInvitation.mutate({ email: email.trim(), role, studioId: Number(studioId) });
   };
 
   return (
