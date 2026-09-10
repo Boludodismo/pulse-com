@@ -45,6 +45,7 @@ import MessagingCenter from "./pages/MessagingCenter";
 import SaaSAdmin from "./pages/SaaSAdmin";
 import SaaSMetrics from "./pages/SaaSMetrics";
 import AcceptInvitation from "./pages/AcceptInvitation";
+import AcceptPilotInvitation from "./pages/AcceptPilotInvitation";
 
 function StockEntry(){
   const {user}=useAuth();
@@ -178,6 +179,7 @@ function Router() {
       
       <Route path="/convite-artista/:token" component={AcceptArtistInvitation} />
       <Route path="/convite/:token" component={AcceptInvitation} />
+      <Route path="/convite-estudio/:token" component={AcceptPilotInvitation} />
 
       {/* Rotas públicas sem layout */}
       <Route path="/reset-password" component={ResetPassword} />
