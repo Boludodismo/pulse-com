@@ -1,3 +1,6 @@
+import { TRPCError } from "@trpc/server";
+import { clientPatchFromAnamnese } from "../shared/clientPersonal";
+import { parseAnamneseExpiry } from "./anamneseTime";
 import { anamneseExpiryForDatabase } from "./anamneseTime";
 import { appointmentInstant, appointmentsOverlap } from "../shared/appointmentTime";
 import { eq, desc, and, gte, lte, or, like, sql, ne } from "drizzle-orm";
@@ -3154,5 +3157,47 @@ export async function getCollaboratorsSummary(
       collaboratorEarningsBRL: (collaboratorEarnings / 100).toFixed(2),
       studioEarningsBRL: (studioEarnings / 100).toFixed(2),
     };
+  });
+}
+
+/** Save the answer and its linked client's personal data atomically. */
+export async function savePublicAnamnese(token: string, payload: Record<string, unknown>, expectedSubmissionId?: number) {
+  const database = await getDb();
+  if (!database) throw new Error("Database not available");
+  let patch: ReturnType<typeof clientPatchFromAnamnese>;
+  try { patch = clientPatchFromAnamnese(payload); }
+  catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Dados pessoais inválidos" }); }
+  return database.transaction(async (tx) => {
+    const [request] = await tx.select().from(anamneseRequests)
+      .where(eq(anamneseRequests.token, token)).limit(1).for("update");
+    if (!request) throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido" });
+    if (request.statusRequest === "cancelada" || request.statusRequest === "expirada" ||
+        parseAnamneseExpiry(request.expiresAt).getTime() < Date.now()) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado ou cancelado. Solicite um novo link ao estúdio." });
+    }
+    const [client] = await tx.select().from(clients).where(eq(clients.id, request.clientId)).limit(1).for("update");
+    if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+    const [existing] = await tx.select().from(anamneseSubmissions)
+      .where(eq(anamneseSubmissions.requestId, request.id)).limit(1);
+    if (expectedSubmissionId !== undefined && existing?.id !== expectedSubmissionId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Ficha não pertence a este link" });
+    }
+    const payloadJson = JSON.stringify(payload);
+    let submissionId: number;
+    if (existing) {
+      if (existing.clientId !== request.clientId) throw new TRPCError({ code: "BAD_REQUEST", message: "Vínculo da ficha inválido" });
+      await tx.update(anamneseSubmissions).set({ payloadJson }).where(eq(anamneseSubmissions.id, existing.id));
+      submissionId = existing.id;
+    } else {
+      const result = await tx.insert(anamneseSubmissions).values({
+        requestId: request.id, clientId: request.clientId, appointmentId: request.appointmentId, payloadJson,
+      });
+      submissionId = result[0].insertId;
+    }
+    if (Object.keys(patch).length) await tx.update(clients).set(patch).where(eq(clients.id, request.clientId));
+    await tx.update(anamneseRequests).set({
+      completedAt: request.completedAt || toDateStr(new Date()), statusRequest: "preenchida",
+    }).where(eq(anamneseRequests.id, request.id));
+    return { submissionId, clientId: request.clientId, appointmentId: request.appointmentId };
   });
 }

@@ -1,3 +1,4 @@
+import { clientBirthDate, clientPersonalPrefill } from "../shared/clientPersonal";
 import { parseAnamneseExpiry } from "./anamneseTime";
 import { assertManagedUser, safeUser } from "./userAccess";
 import { legacyArchiveRouter } from './routers/legacyArchive';
@@ -453,10 +454,14 @@ export const appRouter = router({
           name: z.string().min(1).optional(),
           email: z.string().email().optional().or(z.literal("")),
           phone: z.string().optional(),
-          birthDate: z.string().optional(),
+          birthDate: z.string().nullable().optional(),
           instagram: z.string().optional(),
           cep: z.string().optional(),
           street: z.string().optional(),
+          number: z.string().max(20).optional(),
+          complement: z.string().max(100).optional(),
+          reference: z.string().max(255).optional(),
+          gender: z.enum(["Homem", "Mulher", "Outros"]).nullable().optional(),
           neighborhood: z.string().optional(),
           city: z.string().optional(),
           state: z.string().optional(),
@@ -469,7 +474,17 @@ export const appRouter = router({
         // Buscar dados antes da atualização
         const clientBefore = await db.getClientById(input.id);
         
-        const result = await db.updateClient(input.id, input.data);
+        if (!clientBefore) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+        if (ctx.user.role !== "superadmin" && clientBefore.studioId !== ctx.user.studioId)
+          throw new TRPCError({ code: "FORBIDDEN", message: "Cliente de outro estúdio" });
+        if (ctx.user.role === "collaborator" && (!ctx.user.artistId || clientBefore.artistId !== ctx.user.artistId))
+          throw new TRPCError({ code: "FORBIDDEN", message: "Cliente não vinculado ao artista" });
+        const data = { ...input.data };
+        if (data.birthDate) {
+          try { data.birthDate = clientBirthDate(data.birthDate); }
+          catch { throw new TRPCError({ code: "BAD_REQUEST", message: "Data de nascimento inválida" }); }
+        } else if (data.birthDate === "") data.birthDate = null;
+        const result = await db.updateClient(input.id, data);
         
         // Buscar dados depois da atualização
         const clientAfter = await db.getClientById(input.id);
@@ -2524,7 +2539,18 @@ export const appRouter = router({
         sentVia: z.enum(["email", "whatsapp"]),
         sentTo: z.string(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        const client = await db.getClientById(input.clientId);
+        if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+        if (ctx.user.role !== "superadmin" && client.studioId !== ctx.user.studioId)
+          throw new TRPCError({ code: "FORBIDDEN", message: "Cliente de outro estúdio" });
+        if (ctx.user.role === "collaborator" && (!ctx.user.artistId || client.artistId !== ctx.user.artistId))
+          throw new TRPCError({ code: "FORBIDDEN", message: "Cliente não vinculado ao artista" });
+        if (input.appointmentId) {
+          const appointment = await db.getAppointmentById(input.appointmentId);
+          if (!appointment || appointment.clientId !== client.id || appointment.studioId !== client.studioId)
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Agendamento não pertence ao cliente" });
+        }
         // Gerar token único
         const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
         // Expirar em 7 dias
@@ -2558,7 +2584,7 @@ export const appRouter = router({
         if (!request) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido ou expirado" });
         }
-        if (parseAnamneseExpiry(request.expiresAt) < new Date() && !request.completedAt) {
+        if (parseAnamneseExpiry(request.expiresAt) < new Date() || request.statusRequest === "cancelada") {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado" });
         }
         // Buscar dados do cliente
@@ -2587,64 +2613,24 @@ export const appRouter = router({
         return {
           request,
           client,
-          existingPayload,
+          existingPayload: { ...existingPayload, ...(client ? clientPersonalPrefill(client) : {}) },
           existingSubmissionId,
           isEditing: !!request.completedAt,
           isReview: !request.completedAt && !!existingPayload,
         };
       }),
 
-    // Submeter anamnese preenchida (público) — também suporta reedição
     submitAnamnese: publicProcedure
-      .input(z.object({
-        token: z.string(),
-        payload: z.record(z.string(), z.any()),
-        submissionId: z.number().optional(), // presente quando está editando
-      }))
+      .input(z.object({ token: z.string(), payload: z.record(z.string(), z.any()), submissionId: z.number().optional() }))
       .mutation(async ({ input }) => {
-        const request = await db.getAnamneseRequestByToken(input.token);
-        if (!request) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido" });
-        }
-        
-        const payloadJson = JSON.stringify(input.payload);
-        
-        if (request.completedAt) {
-          // Modo edição: atualizar submissão existente
-          // Usa o submissionId enviado pelo frontend ou busca pelo requestId como fallback
-          let targetId = input.submissionId;
-          if (!targetId) {
-            const existing = await db.getAnamneseSubmissionByRequestId(request.id);
-            targetId = existing?.id;
-          }
-          if (!targetId) {
-            throw new TRPCError({ code: "NOT_FOUND", message: "Submissão original não encontrada" });
-          }
-          await db.updateAnamneseSubmission(targetId, payloadJson);
-          return { success: true, submissionId: targetId };
-        }
-        
-        // Primeira submissão
-        if (parseAnamneseExpiry(request.expiresAt) < new Date()) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado" });
-        }
-        const submissionId = await db.createAnamneseSubmission({
-          requestId: request.id,
-          clientId: request.clientId,
-          appointmentId: request.appointmentId,
-          payloadJson,
-        });
-        await db.markAnamneseRequestCompleted(request.id);
-
-        // Sincronizar com Google Sheets
-        syncAnamnesisSubmissionToSheets({
-          id: submissionId,
-          clientId: request.clientId,
-          appointmentId: request.appointmentId,
-          submittedAt: new Date(),
-        });
-
-        return { success: true, submissionId };
+        const result = await db.savePublicAnamnese(input.token, input.payload, input.submissionId);
+        syncAnamnesisSubmissionToSheets({ id: result.submissionId, clientId: result.clientId,
+          appointmentId: result.appointmentId, submittedAt: new Date() });
+        const client = await db.getClientById(result.clientId);
+        if (client) syncClientToSheets({ id: client.id, name: client.name, phone: client.phone,
+          email: client.email, birthDate: client.birthDate, instagram: client.instagram,
+          city: client.city, state: client.state, country: client.country });
+        return { success: true, submissionId: result.submissionId };
       }),
 
     // Listar submissões de um cliente
@@ -2733,17 +2719,10 @@ export const appRouter = router({
       }),
     // Atualizar submissão via formulário público (cliente edita ficha já preenchida)
     updateSubmissionPublic: publicProcedure
-      .input(z.object({
-        token: z.string(),
-        payload: z.record(z.string(), z.any()),
-      }))
+      .input(z.object({ token: z.string(), payload: z.record(z.string(), z.any()) }))
       .mutation(async ({ input }) => {
-        const request = await db.getAnamneseRequestByToken(input.token);
-        if (!request) throw new TRPCError({ code: 'NOT_FOUND', message: 'Link inválido' });
-        const submission = await db.getAnamneseSubmissionByRequestId(request.id);
-        if (!submission) throw new TRPCError({ code: 'NOT_FOUND', message: 'Ficha não encontrada' });
-        await db.updateAnamneseSubmission(submission.id, JSON.stringify(input.payload));
-        return { success: true };
+        const result = await db.savePublicAnamnese(input.token, input.payload);
+        return { success: true, submissionId: result.submissionId };
       }),
   }),
   // ============ SUPPLIERS ROUTER ============

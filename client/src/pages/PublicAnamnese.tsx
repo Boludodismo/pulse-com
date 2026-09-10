@@ -48,6 +48,7 @@ function normaliseDateValue(value: string): string {
   // Raw 8-digit string
   if (/^\d{8}$/.test(value)) return applyDateMask(value);
   // ISO date (YYYY-MM-DD or timestamp)
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10).split("-").reverse().join("/");
   const d = new Date(value);
   if (!isNaN(d.getTime())) return d.toLocaleDateString("pt-BR");
   return value;
@@ -124,7 +125,7 @@ export default function PublicAnamnese() {
         });
       } else {
         const rawDob = data.client.birthDate
-          ? new Date(data.client.birthDate).toLocaleDateString("pt-BR")
+          ? normaliseDateValue(String(data.client.birthDate))
           : "";
         setFormData({
           client_name: data.client.name || "",

@@ -1,3 +1,4 @@
+import { EditClientDialog } from "@/components/EditClientDialog";
 import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { ClientCare } from "@/components/CustomerCarePanel";
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
@@ -538,6 +539,8 @@ export default function ClientProfile() {
         </Badge>
       </div>
 
+      <div className="flex justify-end"><EditClientDialog client={client} /></div>
+
       {/* Client Info */}
       <Card>
         <CardContent className="pt-6">
@@ -564,13 +567,13 @@ export default function ClientProfile() {
               {client.birthDate && (
                 <div className="flex items-center gap-2 text-sm">
                   <Cake className="h-4 w-4 text-muted-foreground" />
-                  <span>{formatDate(client.birthDate)}</span>
+                  <span>{String(client.birthDate).slice(0, 10).split('-').reverse().join('/')}</span>
                 </div>
               )}
               {client.docNumber && (
                 <div className="flex items-center gap-2 text-sm">
                   <CreditCard className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground text-xs">{client.docType === 'passport' ? 'Passaporte' : 'CPF'}:</span>
+                  <span className="text-muted-foreground text-xs">{client.docType === 'passport' ? 'Passaporte' : 'CPF / RG'}:</span>
                   <span>{client.docNumber}</span>
                 </div>
               )}
