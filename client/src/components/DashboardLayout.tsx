@@ -57,7 +57,7 @@ const menuItems = [
   { icon: Package, label: "Estoque", path: "/stock", roles: ["superadmin", "admin"] },
   { icon: Truck, label: "Fornecedores", path: "/suppliers", roles: ["superadmin", "admin"] },
   { icon: UserCog, label: "Usuários", path: "/users", roles: ["superadmin", "admin"] },
-  { icon: ShieldCheck, label: "Gestão SaaS", path: "/saas", roles: ["superadmin", "admin"] },
+  { icon: ShieldCheck, label: "Gestão SaaS", path: "/saas", roles: ["superadmin"] },
   { icon: ChartNoAxesCombined, label: "Métricas SaaS", path: "/saas/metricas", roles: ["superadmin"] },
   { icon: FileText, label: "Auditoria", path: "/audit", roles: ["superadmin", "admin"] },
   { icon: SettingsIcon, label: "Configurações", path: "/settings", roles: ["superadmin", "admin"] },
@@ -142,9 +142,11 @@ function DashboardLayoutContent({
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { user, logout } = useAuth();
+  const studioName = user?.studioName?.trim() || (user?.role === "superadmin" ? "Selecione um estúdio" : "Estúdio não vinculado");
   const invited = isInvitedArtist(user);
   const access = trpc.artistInvitations.access.useQuery(undefined,{enabled:invited});
   const canVisit = (path:string) => {
+    if (path === "/saas" || path.startsWith("/saas/")) return user?.role === "superadmin";
     if (!invited) return true;
     const module = artistRouteModule(path);
     return module==='self' || !!(module && access.data?.some(p=>p.module===module && !!p.canRead));
@@ -296,12 +298,12 @@ function DashboardLayoutContent({
                 <button className="flex items-center gap-3 rounded-lg px-1 py-2 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring touch-manipulation">
                   <Avatar className="h-9 w-9 border shrink-0">
                     <AvatarFallback className="text-xs font-medium">
-                      {user?.name?.charAt(0).toUpperCase()}
+                      {studioName.charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
-                    <p className="text-sm font-medium truncate leading-none">
-                      {user?.name || "-"}
+                    <p title={studioName} className="text-sm font-medium break-words leading-snug">
+                      {studioName}
                     </p>
                     <p className="text-xs text-muted-foreground truncate mt-1.5">
                       {user?.email || "-"}

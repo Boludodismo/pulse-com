@@ -1,3 +1,4 @@
+import { ensureLegacyStockScope } from "./legacyStockScope";
 import { ensureStudioSettingsScope } from "./studioSettingsScope";
 import { ensureAppointmentCardSchema } from "./appointmentCardSchema";
 import {ensureStagingArtistInvitationSchema} from './stagingArtistInvitationSchema';
@@ -32,6 +33,7 @@ async function startServer() {
   await ensureStagingIntelligentInboxSchema();
   await ensureStagingArtistInvitationSchema();
   await ensureStudioSettingsScope();
+  await ensureLegacyStockScope();
   await ensureAppointmentCardSchema();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {

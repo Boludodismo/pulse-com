@@ -148,28 +148,15 @@ export const appRouter = router({
 
     listInvitations: superAdminProcedure.query(async () => listStudioInvitations()),
 
-    listStudioInvitations: tenantProcedure.query(async ({ ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      if (ctx.user.role === "superadmin") return listStudioInvitations();
-      return listStudioInvitations(ctx.user.studioId!);
-    }),
+    listStudioInvitations: superAdminProcedure.query(async () => listStudioInvitations()),
 
-    createInvitation: protectedProcedure
-      .input(z.object({ studioId: z.number().int().positive().optional(), email: z.string().email(), role: z.enum(["admin", "collaborator"]) }))
-      .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role !== "superadmin" && ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
-        if (ctx.user.role === "admin" && input.role !== "collaborator") throw new TRPCError({ code: "FORBIDDEN", message: "Administradores podem convidar apenas colaboradores." });
-        const studioId = ctx.user.role === "superadmin" ? input.studioId : ctx.user.studioId;
-        if (!studioId) throw new TRPCError({ code: "BAD_REQUEST", message: "Empresa obrigatória." });
-        return createStudioInvitation({ studioId, email: input.email, role: input.role, invitedByUserId: ctx.user.id });
-      }),
+    createInvitation: superAdminProcedure
+      .input(z.object({ studioId: z.number().int().positive(), email: z.string().email(), role: z.enum(["admin", "collaborator"]) }))
+      .mutation(({ ctx, input }) => createStudioInvitation({ ...input, invitedByUserId: ctx.user.id })),
 
-    revokeInvitation: protectedProcedure
+    revokeInvitation: superAdminProcedure
       .input(z.object({ id: z.number().int().positive() }))
-      .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role !== "superadmin" && ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
-        return revokeStudioInvitation(input.id, ctx.user.role === "admin" ? ctx.user.studioId ?? undefined : undefined);
-      }),
+      .mutation(({ input }) => revokeStudioInvitation(input.id)),
 
     claimInvitation: protectedProcedure
       .input(z.object({ token: z.string().length(64) }))
@@ -179,7 +166,7 @@ export const appRouter = router({
         return result;
       }),
 
-    permissions: protectedProcedure
+    permissions: superAdminProcedure
       .input(z.object({ userId: z.number().int().positive() }))
       .query(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN" });
@@ -188,7 +175,7 @@ export const appRouter = router({
         return listUserPermissions(input.userId, target.studioId!);
       }),
 
-    teamAccess: protectedProcedure.query(async ({ ctx }) => {
+    teamAccess: superAdminProcedure.query(async ({ ctx }) => {
       if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN" });
       const allUsers = await db.listAllUsers();
       const team = ctx.user.role === "superadmin" ? allUsers : allUsers.filter((member) => member.studioId === ctx.user.studioId);
@@ -204,7 +191,7 @@ export const appRouter = router({
       })));
     }),
 
-    setPermissions: protectedProcedure
+    setPermissions: superAdminProcedure
       .input(z.object({ userId: z.number().int().positive(), permissions: z.array(z.object({ module: z.enum(SAAS_MODULES), canRead: z.boolean(), canWrite: z.boolean() })) }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN" });
@@ -216,10 +203,11 @@ export const appRouter = router({
   }),
 
   auth: router({
-    me: publicProcedure.query(opts => {
+    me: publicProcedure.query(async opts => {
       if (!opts.ctx.user) return null;
       const { passwordHash: _secret, ...safeUser } = opts.ctx.user;
-      return safeUser;
+      const studio = safeUser.studioId ? await db.getStudioById(safeUser.studioId) : null;
+      return { ...safeUser, studioName: studio?.name ?? null };
     }),
     setActiveStudio: protectedProcedure
       .input(z.object({ studioId: z.number().int().positive() }))
@@ -1578,6 +1566,11 @@ export const appRouter = router({
 
         const { materials: materialItems, ...transactionInput } = input;
 
+        for (const item of materialItems) {
+          if (!(await db.getMaterialById(item.materialId, studioId))) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado neste estúdio." });
+          }
+        }
         // Criar a transação financeira
         const transactionData = {
           ...transactionInput,
@@ -1591,7 +1584,7 @@ export const appRouter = router({
         // Dar baixa nos materiais selecionados
         const stockResults: Array<{ materialId: number; materialName: string; previousStock: number; newStock: number }> = [];
         for (const item of materialItems) {
-          const mat = await db.getMaterialById(item.materialId);
+          const mat = await db.getMaterialById(item.materialId, studioId);
           if (!mat) continue;
           const result = await db.addStockMovement({
             materialId: item.materialId,
@@ -1599,7 +1592,7 @@ export const appRouter = router({
             quantity: item.quantity,
             reason: item.reason || `Baixa via transação financeira - ${transactionInput.category}`,
             createdBy: ctx.user.id,
-          });
+          }, studioId);
           stockResults.push({
             materialId: item.materialId,
             materialName: mat.name,
@@ -2839,21 +2832,21 @@ export const appRouter = router({
   }),
   // ============ SUPPLIERS ROUTER ============
   suppliers: router({
-    list: protectedProcedure
+    list: tenantProcedure
       .input(z.object({ activeOnly: z.boolean().optional().default(true) }))
-      .query(async ({ input }) => {
-        return await db.listSuppliers(input.activeOnly);
+      .query(async ({ ctx, input }) => {
+        return await db.listSuppliers(ctx.studioId, input.activeOnly);
       }),
 
-    getById: protectedProcedure
+    getById: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
-        const supplier = await db.getSupplierById(input.id);
+      .query(async ({ ctx, input }) => {
+        const supplier = await db.getSupplierById(input.id, ctx.studioId);
         if (!supplier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fornecedor não encontrado' });
         return supplier;
       }),
 
-    create: protectedProcedure
+    create: tenantProcedure
       .input(z.object({
         name: z.string().min(1),
         cnpj: z.string().optional(),
@@ -2864,12 +2857,12 @@ export const appRouter = router({
         address: z.string().optional(),
         notes: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
-        const id = await db.createSupplier(input);
+      .mutation(async ({ ctx, input }) => {
+        const id = await db.createSupplier({ ...input, studioId: ctx.studioId });
         return { id };
       }),
 
-    update: protectedProcedure
+    update: tenantProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
@@ -2882,41 +2875,41 @@ export const appRouter = router({
         notes: z.string().optional(),
         isActive: z.number().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
         const { id, ...data } = input;
-        await db.updateSupplier(id, data);
+        await db.updateSupplier(id, data, ctx.studioId);
         return { success: true };
       }),
 
-    delete: protectedProcedure
+    delete: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
-        await db.deleteSupplier(input.id);
+      .mutation(async ({ ctx, input }) => {
+        await db.deleteSupplier(input.id, ctx.studioId);
         return { success: true };
       }),
   }),
 
   // ============ STOCK ROUTER ============
   stock: router({
-    listMaterials: protectedProcedure
+    listMaterials: tenantProcedure
       .input(z.object({ activeOnly: z.boolean().optional().default(true) }))
-      .query(async ({ input }) => {
-        return await db.listMaterials(input.activeOnly);
+      .query(async ({ ctx, input }) => {
+        return await db.listMaterials(ctx.studioId, input.activeOnly);
       }),
 
-    getLowStock: protectedProcedure.query(async () => {
-      return await db.getLowStockMaterials();
+    getLowStock: tenantProcedure.query(async ({ ctx }) => {
+      return await db.getLowStockMaterials(ctx.studioId);
     }),
 
-    getMaterial: protectedProcedure
+    getMaterial: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
-        const mat = await db.getMaterialById(input.id);
+      .query(async ({ ctx, input }) => {
+        const mat = await db.getMaterialById(input.id, ctx.studioId);
         if (!mat) throw new TRPCError({ code: 'NOT_FOUND', message: 'Material não encontrado' });
         return mat;
       }),
 
-    createMaterial: protectedProcedure
+    createMaterial: tenantProcedure
       .input(z.object({
         name: z.string().min(1),
         category: z.string().min(1),
@@ -2927,9 +2920,9 @@ export const appRouter = router({
         supplierId: z.number().optional(),
         notes: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
         const id = await db.createMaterial({
-          ...input,
+          ...input, studioId: ctx.studioId,
           currentStock: String(input.currentStock),
           minStock: String(input.minStock),
           avgPrice: String(input.avgPrice),
@@ -2949,7 +2942,7 @@ export const appRouter = router({
         return { id };
       }),
 
-    updateMaterial: protectedProcedure
+    updateMaterial: tenantProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
@@ -2960,16 +2953,16 @@ export const appRouter = router({
         supplierId: z.number().optional().nullable(),
         notes: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
         const { id, minStock, avgPrice, ...rest } = input;
         await db.updateMaterial(id, {
           ...rest,
           ...(minStock !== undefined ? { minStock: String(minStock) } : {}),
           ...(avgPrice !== undefined ? { avgPrice: String(avgPrice) } : {}),
-        });
+        }, ctx.studioId);
 
         // Sincronizar com Google Sheets
-        const matAfter = await db.getMaterialById(id);
+        const matAfter = await db.getMaterialById(id, ctx.studioId);
         if (matAfter) {
           syncMaterialToSheets({
             id: matAfter.id,
@@ -2985,20 +2978,20 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    deleteMaterial: protectedProcedure
+    deleteMaterial: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
-        await db.deleteMaterial(input.id);
+      .mutation(async ({ ctx, input }) => {
+        await db.deleteMaterial(input.id, ctx.studioId);
         return { success: true };
       }),
 
-    listMovements: protectedProcedure
+    listMovements: tenantProcedure
       .input(z.object({ materialId: z.number().optional(), limit: z.number().optional().default(50) }))
-      .query(async ({ input }) => {
-        return await db.listStockMovements(input.materialId, input.limit);
+      .query(async ({ ctx, input }) => {
+        return await db.listStockMovements(ctx.studioId, input.materialId, input.limit);
       }),
 
-    addMovement: protectedProcedure
+    addMovement: tenantProcedure
       .input(z.object({
         materialId: z.number(),
         type: z.enum(['entrada', 'saida', 'ajuste']),
@@ -3007,7 +3000,7 @@ export const appRouter = router({
         reference: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const movResult = await db.addStockMovement({ ...input, createdBy: ctx.user.id });
+        const movResult = await db.addStockMovement({ ...input, createdBy: ctx.user.id }, ctx.studioId);
 
         // Sincronizar com Google Sheets
         syncStockMovementToSheets({
@@ -3026,19 +3019,19 @@ export const appRouter = router({
       }),
 
     // ── Pedidos de Orçamento ──
-    listOrders: protectedProcedure.query(async () => {
-      return await db.listPurchaseOrders();
+    listOrders: tenantProcedure.query(async ({ ctx }) => {
+      return await db.listPurchaseOrders(ctx.studioId);
     }),
 
-    getOrder: protectedProcedure
+    getOrder: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
-        const order = await db.getPurchaseOrderById(input.id);
+      .query(async ({ ctx, input }) => {
+        const order = await db.getPurchaseOrderById(input.id, ctx.studioId);
         if (!order) throw new TRPCError({ code: 'NOT_FOUND', message: 'Pedido não encontrado' });
         return order;
       }),
 
-    createOrder: protectedProcedure
+    createOrder: tenantProcedure
       .input(z.object({
         supplierId: z.number(),
         notes: z.string().optional(),
@@ -3050,30 +3043,30 @@ export const appRouter = router({
         })).min(1),
       }))
       .mutation(async ({ ctx, input }) => {
-        const id = await db.createPurchaseOrder({ ...input, createdBy: ctx.user.id });
+        const id = await db.createPurchaseOrder({ ...input, createdBy: ctx.user.id }, ctx.studioId);
         return { id };
       }),
 
-    updateOrderStatus: protectedProcedure
+    updateOrderStatus: tenantProcedure
       .input(z.object({
         id: z.number(),
         status: z.enum(['rascunho', 'enviado', 'confirmado', 'recebido', 'cancelado']),
       }))
-      .mutation(async ({ input }) => {
-        await db.updatePurchaseOrderStatus(input.id, input.status);
+      .mutation(async ({ ctx, input }) => {
+        await db.updatePurchaseOrderStatus(input.id, input.status, ctx.studioId);
         return { success: true };
       }),
 
-     deleteOrder: protectedProcedure
+     deleteOrder: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
-        await db.deletePurchaseOrder(input.id);
+      .mutation(async ({ ctx, input }) => {
+        await db.deletePurchaseOrder(input.id, ctx.studioId);
         return { success: true };
       }),
-    getWhatsAppLink: protectedProcedure
+    getWhatsAppLink: tenantProcedure
       .input(z.object({ orderId: z.number() }))
-      .query(async ({ input }) => {
-        const order = await db.getPurchaseOrderById(input.orderId);
+      .query(async ({ ctx, input }) => {
+        const order = await db.getPurchaseOrderById(input.orderId, ctx.studioId);
         if (!order) throw new TRPCError({ code: 'NOT_FOUND', message: 'Pedido não encontrado' });
         const message = db.buildWhatsAppOrderMessage(order as any);
         const rawPhone = (order.supplierWhatsapp || '').trim();
