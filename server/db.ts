@@ -2364,50 +2364,61 @@ function formatArtistRevenueResult(
   };
 }
 
+function requireStockStudio(studioId: number): number {
+  if (!Number.isSafeInteger(studioId) || studioId <= 0) throw new TRPCError({ code: "FORBIDDEN", message: "Estúdio obrigatório." });
+  return studioId;
+}
+
+async function assertStockSupplier(id: number, studioId: number) {
+  if (!(await getSupplierById(id, studioId))) throw new TRPCError({ code: "NOT_FOUND", message: "Fornecedor não encontrado neste estúdio." });
+}
+
 // ============ FORNECEDORES ============
 
-export async function listSuppliers(activeOnly = true) {
+export async function listSuppliers(studioId: number, activeOnly = true) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = activeOnly ? [eq(suppliers.isActive, 1)] : [];
+  const conditions = [eq(suppliers.studioId, requireStockStudio(studioId)), ...(activeOnly ? [eq(suppliers.isActive, 1)] : [])];
   return db.select().from(suppliers)
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(suppliers.name);
 }
 
-export async function getSupplierById(id: number) {
+export async function getSupplierById(id: number, studioId: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const rows = await db.select().from(suppliers).where(eq(suppliers.id, id));
+  const rows = await db.select().from(suppliers).where(and(eq(suppliers.id, id), eq(suppliers.studioId, requireStockStudio(studioId))));
   return rows[0];
 }
 
-export async function createSupplier(data: Omit<InsertSupplier, 'id' | 'createdAt' | 'updatedAt'>) {
+export async function createSupplier(data: Omit<InsertSupplier, 'id' | 'createdAt' | 'updatedAt' | 'studioId'> & { studioId: number }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = Date.now();
-  const result = await db.insert(suppliers).values({ ...data, createdAt: now, updatedAt: now });
+  const result = await db.insert(suppliers).values({ ...data, studioId: requireStockStudio(data.studioId), createdAt: now, updatedAt: now });
   return result[0].insertId;
 }
 
-export async function updateSupplier(id: number, data: Partial<Omit<InsertSupplier, 'id' | 'createdAt'>>) {
+export async function updateSupplier(id: number, data: Partial<Omit<InsertSupplier, 'id' | 'createdAt' | 'studioId'>>, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(suppliers).set({ ...data, updatedAt: Date.now() }).where(eq(suppliers.id, id));
+  const result = await db.update(suppliers).set({ ...data, studioId: requireStockStudio(studioId), updatedAt: Date.now() }).where(and(eq(suppliers.id, id), eq(suppliers.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Registro não encontrado neste estúdio." });
 }
 
-export async function deleteSupplier(id: number) {
+export async function deleteSupplier(id: number, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(suppliers).set({ isActive: 0 }).where(eq(suppliers.id, id));
+  const result = await db.update(suppliers).set({ isActive: 0 }).where(and(eq(suppliers.id, id), eq(suppliers.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Registro não encontrado neste estúdio." });
 }
 
 // ============ MATERIAIS / ESTOQUE ============
 
-export async function listMaterials(activeOnly = true) {
+export async function listMaterials(studioId: number, activeOnly = true) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = activeOnly ? [eq(materials.isActive, 1)] : [];
+  const conditions = [eq(materials.studioId, requireStockStudio(studioId)), ...(activeOnly ? [eq(materials.isActive, 1)] : [])];
   const rows = await db.select({
     id: materials.id,
     name: materials.name,
@@ -2424,40 +2435,44 @@ export async function listMaterials(activeOnly = true) {
     updatedAt: materials.updatedAt,
   })
     .from(materials)
-    .leftJoin(suppliers, eq(suppliers.id, materials.supplierId))
+    .leftJoin(suppliers, and(eq(suppliers.id, materials.supplierId), eq(suppliers.studioId, requireStockStudio(studioId))))
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(materials.category, materials.name);
   return rows;
 }
 
-export async function getMaterialById(id: number) {
+export async function getMaterialById(id: number, studioId: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const rows = await db.select().from(materials).where(eq(materials.id, id));
+  const rows = await db.select().from(materials).where(and(eq(materials.id, id), eq(materials.studioId, requireStockStudio(studioId))));
   return rows[0];
 }
 
-export async function createMaterial(data: Omit<InsertMaterial, 'id' | 'createdAt' | 'updatedAt'>) {
+export async function createMaterial(data: Omit<InsertMaterial, 'id' | 'createdAt' | 'updatedAt' | 'studioId'> & { studioId: number }) {
+  if (data.supplierId != null) await assertStockSupplier(data.supplierId, data.studioId);
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = Date.now();
-  const result = await db.insert(materials).values({ ...data, createdAt: now, updatedAt: now });
+  const result = await db.insert(materials).values({ ...data, studioId: requireStockStudio(data.studioId), createdAt: now, updatedAt: now });
   return result[0].insertId;
 }
 
-export async function updateMaterial(id: number, data: Partial<Omit<InsertMaterial, 'id' | 'createdAt'>>) {
+export async function updateMaterial(id: number, data: Partial<Omit<InsertMaterial, 'id' | 'createdAt' | 'studioId'>>, studioId: number) {
+  if (data.supplierId != null) await assertStockSupplier(data.supplierId, studioId);
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(materials).set({ ...data, updatedAt: Date.now() }).where(eq(materials.id, id));
+  const result = await db.update(materials).set({ ...data, studioId: requireStockStudio(studioId), updatedAt: Date.now() }).where(and(eq(materials.id, id), eq(materials.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Registro não encontrado neste estúdio." });
 }
 
-export async function deleteMaterial(id: number) {
+export async function deleteMaterial(id: number, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(materials).set({ isActive: 0 }).where(eq(materials.id, id));
+  const result = await db.update(materials).set({ isActive: 0 }).where(and(eq(materials.id, id), eq(materials.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Registro não encontrado neste estúdio." });
 }
 
-export async function getLowStockMaterials() {
+export async function getLowStockMaterials(studioId: number) {
   const db = await getDb();
   if (!db) return [];
   // Busca materiais onde currentStock <= minStock e minStock > 0
@@ -2472,8 +2487,9 @@ export async function getLowStockMaterials() {
     supplierWhatsapp: suppliers.whatsapp,
   })
     .from(materials)
-    .leftJoin(suppliers, eq(suppliers.id, materials.supplierId))
+    .leftJoin(suppliers, and(eq(suppliers.id, materials.supplierId), eq(suppliers.studioId, requireStockStudio(studioId))))
     .where(and(
+      eq(materials.studioId, requireStockStudio(studioId)),
       eq(materials.isActive, 1),
       sql`CAST(${materials.currentStock} AS DECIMAL(10,2)) <= CAST(${materials.minStock} AS DECIMAL(10,2))`,
       sql`CAST(${materials.minStock} AS DECIMAL(10,2)) > 0`
@@ -2484,10 +2500,10 @@ export async function getLowStockMaterials() {
 
 // ============ MOVIMENTAÇÕES DE ESTOQUE ============
 
-export async function listStockMovements(materialId?: number, limit = 50) {
+export async function listStockMovements(studioId: number, materialId?: number, limit = 50) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = materialId ? [eq(stockMovements.materialId, materialId)] : [];
+  const conditions = [sql`EXISTS (SELECT 1 FROM ${materials} WHERE ${materials.id} = ${stockMovements.materialId} AND ${materials.studioId} = ${requireStockStudio(studioId)})`, ...(materialId ? [eq(stockMovements.materialId, materialId)] : [])];
   return db.select().from(stockMovements)
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(desc(stockMovements.createdAt))
@@ -2501,13 +2517,13 @@ export async function addStockMovement(data: {
   reason?: string;
   notes?: string;
   createdBy?: number;
-}) {
+}, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   // Buscar estoque atual
-  const mat = await getMaterialById(data.materialId);
-  if (!mat) throw new Error("Material não encontrado");
+  const mat = await getMaterialById(data.materialId, studioId);
+  if (!mat) throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado neste estúdio." });
 
   const previousStock = parseFloat(String(mat.currentStock)) || 0;
   let newStock: number;
@@ -2537,14 +2553,14 @@ export async function addStockMovement(data: {
   // Atualizar estoque atual do material
   await db.update(materials)
     .set({ currentStock: String(newStock) })
-    .where(eq(materials.id, data.materialId));
+    .where(and(eq(materials.id, data.materialId), eq(materials.studioId, requireStockStudio(studioId))));
 
   return { previousStock, newStock };
 }
 
 // ============ PEDIDOS DE ORÇAMENTO ============
 
-export async function listPurchaseOrders() {
+export async function listPurchaseOrders(studioId: number) {
   const db = await getDb();
   if (!db) return [];
   const rows = await db.select({
@@ -2558,12 +2574,13 @@ export async function listPurchaseOrders() {
     createdAt: purchaseOrders.createdAt,
   })
     .from(purchaseOrders)
-    .leftJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
+    .leftJoin(suppliers, and(eq(suppliers.id, purchaseOrders.supplierId), eq(suppliers.studioId, requireStockStudio(studioId))))
+    .where(eq(purchaseOrders.studioId, requireStockStudio(studioId)))
     .orderBy(desc(purchaseOrders.createdAt));
   return rows;
 }
 
-export async function getPurchaseOrderById(id: number) {
+export async function getPurchaseOrderById(id: number, studioId: number) {
   const db = await getDb();
   if (!db) return undefined;
   const order = await db.select({
@@ -2578,8 +2595,8 @@ export async function getPurchaseOrderById(id: number) {
     createdAt: purchaseOrders.createdAt,
   })
     .from(purchaseOrders)
-    .leftJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
-    .where(eq(purchaseOrders.id, id));
+    .leftJoin(suppliers, and(eq(suppliers.id, purchaseOrders.supplierId), eq(suppliers.studioId, requireStockStudio(studioId))))
+    .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.studioId, requireStockStudio(studioId))));
 
   if (!order[0]) return undefined;
 
@@ -2593,7 +2610,7 @@ export async function getPurchaseOrderById(id: number) {
     notes: purchaseOrderItems.notes,
   })
     .from(purchaseOrderItems)
-    .leftJoin(materials, eq(materials.id, purchaseOrderItems.materialId))
+    .leftJoin(materials, and(eq(materials.id, purchaseOrderItems.materialId), eq(materials.studioId, requireStockStudio(studioId))))
     .where(eq(purchaseOrderItems.orderId, id));
 
   return { ...order[0], items };
@@ -2604,11 +2621,16 @@ export async function createPurchaseOrder(data: {
   notes?: string;
   createdBy?: number;
   items: { materialId: number; quantity: number; unitPrice?: number; notes?: string }[];
-}) {
+}, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  await assertStockSupplier(data.supplierId, studioId);
+  for (const item of data.items) {
+    if (!(await getMaterialById(item.materialId, studioId))) throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado neste estúdio." });
+  }
   const result = await db.insert(purchaseOrders).values({
+    studioId: requireStockStudio(studioId),
     supplierId: data.supplierId,
     notes: data.notes,
     createdBy: data.createdBy,
@@ -2631,22 +2653,28 @@ export async function createPurchaseOrder(data: {
   return orderId;
 }
 
-export async function updatePurchaseOrderStatus(id: number, status: 'rascunho' | 'enviado' | 'confirmado' | 'recebido' | 'cancelado') {
+export async function updatePurchaseOrderStatus(id: number, status: 'rascunho' | 'enviado' | 'confirmado' | 'recebido' | 'cancelado', studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const sentAt = status === 'enviado' ? Date.now() : undefined;
-  await db.update(purchaseOrders).set({
+  const result = await db.update(purchaseOrders).set({
     status,
     updatedAt: Date.now(),
     ...(sentAt ? { sentAt } : {}),
-  }).where(eq(purchaseOrders.id, id));
+  }).where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Pedido não encontrado neste estúdio." });
 }
 
-export async function deletePurchaseOrder(id: number) {
+export async function deletePurchaseOrder(id: number, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(purchaseOrderItems).where(eq(purchaseOrderItems.orderId, id));
-  await db.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+  await db.transaction(async tx => {
+    const [order] = await tx.select({ id: purchaseOrders.id }).from(purchaseOrders)
+      .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.studioId, requireStockStudio(studioId)))).for("update");
+    if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Pedido não encontrado neste estúdio." });
+    await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.orderId, id));
+    await tx.delete(purchaseOrders).where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.studioId, studioId)));
+  });
 }
 
 /** Gera a mensagem formatada para WhatsApp de um pedido de orçamento */
