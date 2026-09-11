@@ -321,7 +321,7 @@ export default function PublicAnamnese() {
             </Label>
             <Input
               id={field.key}
-              aria-label=<span>{field.label}</span>
+              aria-label={field.label}
               type={field.key === "emergency_contact_phone" ? "tel" : "text"}
               inputMode={field.key === "emergency_contact_phone" ? "tel" : undefined}
               value={value}
