@@ -1,0 +1,14 @@
+{
+  "dependencies": {
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.1.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "name": "anamnese-dom-regression",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test.mjs"
+  }
+}
