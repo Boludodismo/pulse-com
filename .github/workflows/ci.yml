@@ -36,3 +36,8 @@ jobs:
         env:
           VITE_AUTH_MODE: local
         run: pnpm build
+
+      - name: Anamnese DOM regression
+        run: |
+          npm ci --prefix scripts/anamnese-dom-regression --no-audit --no-fund
+          npm test --prefix scripts/anamnese-dom-regression
