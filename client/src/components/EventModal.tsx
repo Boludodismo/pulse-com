@@ -56,6 +56,7 @@ export function EventModal({
   const [endTime, setEndTime] = useState<string>("");
   const [sessionDuration, setSessionDuration] = useState<number>(60); // minutos
   const [service, setService] = useState<string>("");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [artist, setArtist] = useState<string>("");
   const [artistId, setArtistId] = useState<string>("");
   const [includeArtistCard, setIncludeArtistCard] = useState(false);
@@ -358,6 +359,7 @@ export function EventModal({
       resetForm();
     },
     onError: (error) => {
+      setSaveError(error.message);
       toast.error(`Erro ao criar evento: ${error.message}`);
     },
   });
@@ -375,6 +377,7 @@ export function EventModal({
       resetForm();
     },
     onError: (error) => {
+      setSaveError(error.message);
       toast.error(`Erro ao atualizar evento: ${error.message}`);
     },
   });
@@ -440,6 +443,7 @@ export function EventModal({
   }, [isOpen, eventId, existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, artists]);
 
   const resetForm = () => {
+    setSaveError(null);
     setSelectedStudioId("");
     setClientId("");
     setCalendarId("");
@@ -599,6 +603,7 @@ export function EventModal({
   };
 
   const handleSubmit = async () => {
+    setSaveError(null);
     if (!clientId || !date || !startTime || !service || !artist) {
       toast.error("Preencha todos os campos obrigatórios");
       return;
@@ -1416,6 +1421,13 @@ export function EventModal({
               </div>
             )}
           </div>
+
+          {saveError && (
+            <div role="alert" className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm">
+              <p className="font-semibold">Não foi possível salvar</p>
+              <p className="mt-1 whitespace-pre-line break-words">{saveError}</p>
+            </div>
+          )}
 
           {/* Botões */}
           <div className="flex justify-between pt-4">

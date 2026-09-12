@@ -519,6 +519,7 @@ export async function checkAppointmentConflicts(
     .select({
       id: appointments.id,
       clientId: appointments.clientId,
+      clientName: clients.name,
       date: appointments.date,
       duration: appointments.duration,
       service: appointments.service,
@@ -526,6 +527,7 @@ export async function checkAppointmentConflicts(
       status: appointments.status,
     })
     .from(appointments)
+    .leftJoin(clients, and(eq(clients.id, appointments.clientId), eq(clients.studioId, appointments.studioId)))
     .where(
       and(
         eq(appointments.artist, artist),
@@ -548,6 +550,7 @@ export async function checkAppointmentConflicts(
     conflicts: conflicts.map(c => ({
       id: c.id,
       clientId: c.clientId,
+      clientName: c.clientName,
       date: c.date,
       duration: c.duration,
       service: c.service,
