@@ -55,7 +55,7 @@ export const contactImportRouter=router({
    return {batchId:Number(batch.id),studioId:ctx.studioId,studioName:String(state.studio.name),total:plan.length,newClients:plan.filter(g=>g.action==='criar').length,matched:plan.filter(g=>g.action==='completar').length,eligible:plan.filter(g=>g.eligible).length,withReview:plan.filter(g=>g.review.length).length,integrationReady:state.integrations.length===1,plan};
   }finally{await c.end()}
  }),
- apply:tenantProcedure.input(z.object({batchId:z.number().int().positive(),offset:z.number().int().min(0)})).mutation(async({ctx,input})=>{
+ importBatch:tenantProcedure.input(z.object({batchId:z.number().int().positive(),offset:z.number().int().min(0)})).mutation(async({ctx,input})=>{
   manager(ctx);const c=await connect();
   try{
    await c.beginTransaction();

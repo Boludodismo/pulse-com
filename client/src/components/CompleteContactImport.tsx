@@ -5,7 +5,7 @@ import {Card,CardHeader,CardTitle,CardContent} from '@/components/ui/card';
 import {toast} from 'sonner';
 export default function CompleteContactImport(){
  const prepare=trpc.contactImport.prepare.useMutation();
- const apply=trpc.contactImport.apply.useMutation();
+ const apply=trpc.contactImport.importBatch.useMutation();
  const utils=trpc.useUtils();
  const [plan,setPlan]=useState<any>(null),[progress,setProgress]=useState(0),[running,setRunning]=useState(false),[results,setResults]=useState<any[]>([]);
  async function load(file?:File){if(!file)return;setPlan(null);setResults([]);setProgress(0);try{setPlan(await prepare.mutateAsync({content:await file.text()}))}catch(e){toast.error((e as Error).message)}}
