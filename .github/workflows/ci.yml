@@ -32,6 +32,9 @@ jobs:
       - name: Type check
         run: pnpm check
 
+      - name: Contact import matching
+        run: pnpm exec vitest run server/contactImport/matching.test.ts
+
       - name: Build
         env:
           VITE_AUTH_MODE: local

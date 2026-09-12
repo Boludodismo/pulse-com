@@ -1,4 +1,4 @@
-import {test} from 'node:test';
+import {it as test} from 'vitest';
 import assert from 'node:assert/strict';
 import {chooseExisting, permissionReason} from './matching.ts';
 test('shared family number does not merge distinct people',()=>assert.equal(chooseExisting({name:'Ana Cunha',phone:'31999851316'},[{id:1,name:'William Cunha',phone:'+5531999851316'}]).match,undefined));
