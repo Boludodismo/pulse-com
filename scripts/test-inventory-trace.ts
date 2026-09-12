@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import mysql from 'mysql2/promise';
+import {upgradeInventoryTrace} from '../server/_core/inventoryTraceSchema';
+import {podSaasRouter} from '../server/routers/podSaas';
+import {materialDescription} from '../shared/materialDescription';
+async function main(){
+ const url=new URL(process.env.DATABASE_URL!);assert.equal(process.env.CI,'true');assert.ok(['127.0.0.1','localhost'].includes(url.hostname));assert.equal(url.pathname,'/supplier_test');
+ const c=await mysql.createConnection({uri:url.toString(),dateStrings:true});await upgradeInventoryTrace(c);await upgradeInventoryTrace(c);
+ await c.query("INSERT INTO artists(id,studioId,name,active) VALUES(2101,101,'Artista A',1),(2202,202,'Artista B',1)");
+ await c.query("INSERT INTO clients(id,studioId,name) VALUES(2101,101,'Cliente A'),(2202,202,'Cliente B')");
+ await c.query("INSERT INTO technical_procedures(id,studioId,clientId,artistId,title,status) VALUES(2101,101,2101,2101,'Sessão A','em_andamento'),(2202,202,2202,2202,'Sessão B','em_andamento')");
+ await c.query("INSERT INTO suppliers(id,studioId,name) VALUES(2101,101,'Fornecedor A'),(2202,202,'Fornecedor B')");
+ const caller=(studioId:number)=>podSaasRouter.createCaller({user:{id:studioId,openId:'test',role:'admin',studioId,isActive:1,accessStatus:'active'},req:{headers:{}},res:{}} as any);
+ const a=caller(101),b=caller(202);
+ const m=await a.inventory.create({ownerArtistId:2101,name:'Cartucho teste',category:'Cartuchos e agulhas',brand:'Marca A',configuration:'RL',needleCount:3,diameter:'0.25',gauge:'08',taper:'Long',packageQuantity:20,purchaseUnit:'caixa',unit:'un',unitCost:'9',currentQuantity:'0'});
+ const receipt={tenantMaterialId:m.id,receiptKey:randomUUID(),supplierId:2101,lot:'LOTE-A',expiresAt:'2099-12-31',quantity:'5',unitCost:'2.5000'};
+ await assert.rejects(b.inventory.receive(receipt));await assert.rejects(a.inventory.receive({...receipt,supplierId:2202}));
+ const lotA=await a.inventory.receive(receipt);assert.equal((await a.inventory.receive(receipt)).alreadyReceived,true);
+ await assert.rejects(a.inventory.receive({...receipt,quantity:'50'}));
+ const lotB=await a.inventory.receive({...receipt,receiptKey:randomUUID(),lot:'LOTE-B',quantity:'7',unitCost:'4'});
+ const expired=await a.inventory.receive({...receipt,receiptKey:randomUUID(),lot:'VENCIDO',quantity:'1',expiresAt:'2020-01-01'});
+ await assert.rejects(a.session.consume({procedureId:2101,tenantMaterialId:m.id,quantity:'1'}));
+ await assert.rejects(b.session.consume({procedureId:2202,tenantMaterialId:m.id,batchId:lotA.id,quantity:'1'}));
+ await assert.rejects(a.session.consume({procedureId:2101,tenantMaterialId:m.id,batchId:expired.id,quantity:'1'}));
+ await assert.rejects(a.session.consume({procedureId:2101,tenantMaterialId:m.id,batchId:lotA.id,quantity:'6'}));
+ await assert.rejects(a.inventory.adjustBalance({tenantMaterialId:m.id,newQuantity:'0',reason:'Inválido'}));
+ const use=await a.session.consume({procedureId:2101,tenantMaterialId:m.id,batchId:lotA.id,quantity:'2'});
+ let history=await a.session.clientMaterials({clientId:2101});assert.equal(history.length,1);assert.equal(history[0].lotSnapshot,'LOTE-A');assert.equal(history[0].supplierNameSnapshot,'Fornecedor A');assert.equal(history[0].totalCostSnapshot,'5.0000');assert.ok(history[0].technicalSnapshot?.includes('Pontas: 3'));
+ await assert.rejects(b.session.clientMaterials({clientId:2101}));
+ await c.query("UPDATE suppliers SET name='Fornecedor renomeado' WHERE id=2101");
+ await a.inventory.updateDetails({tenantMaterialId:m.id,name:'Nome alterado',brand:'Marca B',unit:'un',minimumQuantity:'0',unitCost:'99'});
+ history=await a.session.clientMaterials({clientId:2101});assert.equal(history[0].nameSnapshot,'Cartucho teste');assert.equal(history[0].supplierNameSnapshot,'Fornecedor A');
+ const afterEdit=await a.session.consume({procedureId:2101,tenantMaterialId:m.id,batchId:lotB.id,quantity:'1'});
+ history=await a.session.clientMaterials({clientId:2101});assert.equal(history.find(h=>h.id===afterEdit.id)?.nameSnapshot,'Cartucho teste');assert.equal(history.find(h=>h.id===afterEdit.id)?.totalCostSnapshot,'4.0000');
+ await a.session.revertConsumption({consumptionId:use.id,reason:'Correção'});await a.session.revertConsumption({consumptionId:use.id,reason:'Repetição'});
+ const lots=await a.inventory.batches({tenantMaterialId:m.id});assert.equal(lots.find(l=>l.id===lotA.id)?.remainingQuantity,'5.000');assert.equal(lots.find(l=>l.id===lotB.id)?.remainingQuantity,'6.000');
+ // Concurrent consumption cannot spend the same final units twice.
+ const attempts=await Promise.allSettled([1,2].map(()=>a.session.consume({procedureId:2101,tenantMaterialId:m.id,batchId:lotA.id,quantity:'4'})));
+ assert.equal(attempts.filter(x=>x.status==='fulfilled').length,1);
+ const rows=await a.inventory.list();const material=rows.find(x=>x.id===m.id)!;assert.equal(material.currentQuantity,'8.000');
+ assert.ok(materialDescription({name:'Teste',brand:'Marca',configuration:'RL',needleCount:3,diameter:'0.25',packageQuantity:20,purchaseUnit:'cx',unit:'un'}).includes('Embalagem: 20 un / cx'));
+ await c.end();console.log('PASS: lot receipts, idempotency, supplier/studio isolation, expiry, concurrent stock, exact reversal and immutable client snapshots');
+}
+main().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});

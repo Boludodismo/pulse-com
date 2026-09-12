@@ -1,3 +1,4 @@
+import {materialDescription} from "../../shared/materialDescription";
 import { TECHNICAL_CATALOG_2026, canAddCatalogItemToOperationalStock } from "../../shared/technicalCatalog2026";
 import { assertOwnArtist, canUseMaterial, isInventoryManager, requireInventoryArtist, requireMaterialForArtist, requireOwnedMaterial, type InventoryDatabase, type InventoryContext } from "../inventoryAccess";
 import { TRPCError } from "@trpc/server";
@@ -17,6 +18,8 @@ import {
   technicalProcedures,
   tenantInventoryMovements,
   tenantMaterials,
+  inventoryBatches,
+  suppliers,
   studioMaterialArtists,
   studios,
 } from "../../drizzle/schema";
@@ -196,6 +199,12 @@ export const podSaasRouter = router({
       subcategory: z.string().trim().max(120).optional(),
       configuration: z.string().trim().max(120).optional(),
       diameter: z.string().trim().max(40).optional(),
+      needleCount: z.number().int().min(1).max(1000).nullable().optional(),
+      gauge: z.string().trim().max(20).nullable().optional(),
+      taper: z.string().trim().max(80).nullable().optional(),
+      packageQuantity: z.number().int().min(1).max(100000).nullable().optional(),
+      purchaseUnit: z.string().trim().max(50).nullable().optional(),
+
       defaultUnit: z.string().trim().min(1).max(50),
       technicalSpecification: z.string().trim().max(4_000).optional(),
       icon: z.string().trim().max(80).optional(),
@@ -275,6 +284,12 @@ export const podSaasRouter = router({
       model: z.string().trim().max(120).optional(),
       configuration: z.string().trim().max(120).optional(),
       diameter: z.string().trim().max(40).optional(),
+      needleCount: z.number().int().min(1).max(1000).nullable().optional(),
+      gauge: z.string().trim().max(20).nullable().optional(),
+      taper: z.string().trim().max(80).nullable().optional(),
+      packageQuantity: z.number().int().min(1).max(100000).nullable().optional(),
+      purchaseUnit: z.string().trim().max(50).nullable().optional(),
+
       currentQuantity: quantitySchema,
       minimumQuantity: quantitySchema.default("0"),
       unitCost: costSchema,
@@ -313,6 +328,10 @@ export const podSaasRouter = router({
         currentQuantity: scaledToDecimal(decimalToScaled(input.currentQuantity, 3), 3),
         minimumQuantity: scaledToDecimal(decimalToScaled(input.minimumQuantity, 3), 3),
         unitCost: scaledToDecimal(decimalToScaled(input.unitCost, 4), 4),
+        needleCount: technical?.needleCount ?? input.needleCount ?? null,
+        gauge: input.gauge ?? null, taper: technical?.taper ?? input.taper ?? null,
+        packageQuantity: technical?.unitsPerPackage ?? input.packageQuantity ?? null,
+        purchaseUnit: technical?.purchaseUnit ?? input.purchaseUnit ?? null,
         supplierId: null,
         lot: input.lot ?? null,
         expiresAt: input.expiresAt ? input.expiresAt.slice(0, 19).replace("T", " ") : null,
@@ -337,6 +356,31 @@ export const podSaasRouter = router({
       });
     }),
 
+    batches: tenantProcedure.input(z.object({tenantMaterialId:z.number().int().positive(),artistId:z.number().int().positive().optional()})).query(async({ctx,input})=>{
+      await requireModule(ctx,"stock");const d=await requireDatabase();
+      const material=(await d.select().from(tenantMaterials).where(and(eq(tenantMaterials.id,input.tenantMaterialId),eq(tenantMaterials.studioId,ctx.studioId))).limit(1))[0];
+      if(!material)throw new TRPCError({code:"NOT_FOUND",message:"Material não encontrado."});
+      if(!isInventoryManager(ctx))await requireMaterialForArtist(d,ctx,material,input.artistId??ctx.artistId??null);
+      return d.select().from(inventoryBatches).where(and(eq(inventoryBatches.studioId,ctx.studioId),eq(inventoryBatches.tenantMaterialId,material.id))).orderBy(asc(inventoryBatches.expiresAt),asc(inventoryBatches.id));
+    }),
+    receive: tenantProcedure.input(z.object({tenantMaterialId:z.number().int().positive(),receiptKey:z.string().uuid(),supplierId:z.number().int().positive(),lot:z.string().trim().min(1).max(120),expiresAt:z.string().date().optional(),quantity:quantitySchema.refine(v=>Number(v)>0),unitCost:costSchema})).mutation(async({ctx,input})=>{
+      await requireModule(ctx,"stock",true);const d=await requireDatabase();
+      return d.transaction(async tx=>{
+        const material=(await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id,input.tenantMaterialId),eq(tenantMaterials.studioId,ctx.studioId),eq(tenantMaterials.isActive,1))).limit(1).for("update"))[0];
+        if(!material)throw new TRPCError({code:"NOT_FOUND",message:"Material não encontrado."});assertOwnArtist(ctx,material.ownerArtistId);
+        const existing=(await tx.select().from(inventoryBatches).where(and(eq(inventoryBatches.studioId,ctx.studioId),eq(inventoryBatches.receiptKey,input.receiptKey))).limit(1))[0];
+        if(existing){if(existing.tenantMaterialId!==material.id||Number(existing.receivedQuantity)!==Number(input.quantity)||Number(existing.unitCost)!==Number(input.unitCost)||existing.lot!==input.lot||existing.supplierId!==input.supplierId||existing.expiresAt?.slice(0,10)!==input.expiresAt)throw new TRPCError({code:"CONFLICT",message:"Recebimento já utilizado."});return {id:existing.id,alreadyReceived:true};}
+        const supplier=(await tx.select().from(suppliers).where(and(eq(suppliers.id,input.supplierId),eq(suppliers.studioId,ctx.studioId),eq(suppliers.isActive,1))).limit(1))[0];
+        if(!supplier)throw new TRPCError({code:"BAD_REQUEST",message:"Selecione um fornecedor ativo deste estúdio."});
+        const previous=decimalToScaled(material.currentQuantity,3),quantity=decimalToScaled(input.quantity,3),next=previous+quantity;
+        if(next>999999999999)throw new TRPCError({code:"BAD_REQUEST",message:"Saldo acima do limite permitido."});
+        const batch=await tx.insert(inventoryBatches).values({studioId:ctx.studioId,tenantMaterialId:material.id,nameSnapshot:material.name,unitSnapshot:material.unit,technicalSnapshot:materialDescription(material),receiptKey:input.receiptKey,lot:input.lot,supplierId:supplier.id,supplierName:supplier.name,expiresAt:input.expiresAt?input.expiresAt+" 23:59:59":null,receivedQuantity:input.quantity,remainingQuantity:input.quantity,unitCost:input.unitCost,receivedAt:nowSql(),createdByUserId:ctx.user.id});
+        const id=insertId(batch)!;
+        await tx.update(tenantMaterials).set({currentQuantity:scaledToDecimal(next,3)}).where(and(eq(tenantMaterials.id,material.id),eq(tenantMaterials.studioId,ctx.studioId)));
+        await tx.insert(tenantInventoryMovements).values({studioId:ctx.studioId,tenantMaterialId:material.id,type:"entrada",quantity:input.quantity,previousQuantity:material.currentQuantity,newQuantity:scaledToDecimal(next,3),sourceType:"inventory_batch",sourceId:id,reason:`Recebimento do lote ${input.lot}`,createdByUserId:ctx.user.id});
+        return {id,alreadyReceived:false};
+      });
+    }),
     adjustBalance: tenantProcedure.input(z.object({
       tenantMaterialId: z.number().int().positive(),
       newQuantity: quantitySchema,
@@ -355,6 +399,9 @@ export const podSaasRouter = router({
         assertOwnArtist(ctx, material.ownerArtistId);
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         const newQuantity = decimalToScaled(input.newQuantity, 3);
+        const batches=await tx.select().from(inventoryBatches).where(and(eq(inventoryBatches.studioId,ctx.studioId),eq(inventoryBatches.tenantMaterialId,material.id)));
+        const tracked=batches.reduce((sum,b)=>sum+decimalToScaled(b.remainingQuantity,3),0);
+        if(newQuantity<tracked)throw new TRPCError({code:"BAD_REQUEST",message:"O saldo não pode ficar abaixo da quantidade dos lotes recebidos. Confira os consumos e recebimentos."});
         const persistedPreviousQuantity = scaledToDecimal(previousQuantity, 3);
         const persistedNewQuantity = scaledToDecimal(newQuantity, 3);
         const update = await tx.update(tenantMaterials).set({ currentQuantity: persistedNewQuantity }).where(and(
@@ -390,6 +437,12 @@ export const podSaasRouter = router({
       model: z.string().trim().max(120).optional(),
       configuration: z.string().trim().max(120).optional(),
       diameter: z.string().trim().max(40).optional(),
+      needleCount: z.number().int().min(1).max(1000).nullable().optional(),
+      gauge: z.string().trim().max(20).nullable().optional(),
+      taper: z.string().trim().max(80).nullable().optional(),
+      packageQuantity: z.number().int().min(1).max(100000).nullable().optional(),
+      purchaseUnit: z.string().trim().max(50).nullable().optional(),
+
       minimumQuantity: quantitySchema,
       unitCost: costSchema,
       lot: z.string().trim().max(120).optional(),
@@ -398,7 +451,8 @@ export const podSaasRouter = router({
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "stock", true);
       const database = await requireDatabase();
-      await requireOwnedMaterial(database, ctx, input.tenantMaterialId);
+      const existing=await requireOwnedMaterial(database, ctx, input.tenantMaterialId);
+      if(existing.unit!==input.unit&&Number(existing.currentQuantity)>0)throw new TRPCError({code:"BAD_REQUEST",message:"Não altere a unidade de um material com saldo. Cadastre uma variante com a nova unidade."});
       const { tenantMaterialId, expiresAt, ...fields } = input;
       const result = await database.update(tenantMaterials).set({
         ...fields,
@@ -520,6 +574,14 @@ export const podSaasRouter = router({
   }),
 
   session: router({
+    clientMaterials:tenantProcedure.input(z.object({clientId:z.number().int().positive()})).query(async({ctx,input})=>{
+      await requireModule(ctx,"clients");await requireModule(ctx,"pod");const d=await requireDatabase();
+      const client=(await d.select({id:clients.id}).from(clients).where(and(eq(clients.id,input.clientId),eq(clients.studioId,ctx.studioId))).limit(1))[0];
+      if(!client)throw new TRPCError({code:"NOT_FOUND",message:"Cliente não encontrado."});
+      if(!isInventoryManager(ctx)&&!ctx.artistId)throw new TRPCError({code:"FORBIDDEN",message:"Artista não vinculado."});
+      return d.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,ctx.studioId),eq(procedureInventoryConsumptions.clientId,input.clientId),isInventoryManager(ctx)?undefined:eq(procedureInventoryConsumptions.artistId,ctx.artistId!))).orderBy(desc(procedureInventoryConsumptions.consumedAt));
+    }),
+
     create: tenantProcedure.input(z.object({
       clientId: z.number().int().positive(),
       appointmentId: z.number().int().positive().optional(),
@@ -621,6 +683,7 @@ export const podSaasRouter = router({
       procedureId: z.number().int().positive(),
       tenantMaterialId: z.number().int().positive(),
       plannedMaterialId: z.number().int().positive().optional(),
+      batchId: z.number().int().positive().optional(),
       quantity: quantitySchema.refine((value) => decimalToScaled(value, 3) > 0, "A quantidade deve ser maior que zero."),
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "pod", true);
@@ -638,6 +701,17 @@ export const podSaasRouter = router({
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         if (previousQuantity < quantity) throw new TRPCError({ code: "BAD_REQUEST", message: "Saldo insuficiente para confirmar este consumo." });
         const newQuantity = previousQuantity - quantity;
+        const batches=await tx.select().from(inventoryBatches).where(and(eq(inventoryBatches.studioId,ctx.studioId),eq(inventoryBatches.tenantMaterialId,material.id))).for("update");
+        const batch=input.batchId?batches.find(b=>b.id===input.batchId):undefined;
+        if(input.batchId&&!batch)throw new TRPCError({code:"BAD_REQUEST",message:"Lote não pertence a este material e estúdio."});
+        const available=batch?decimalToScaled(batch.remainingQuantity,3):previousQuantity-batches.reduce((sum,b)=>sum+decimalToScaled(b.remainingQuantity,3),0);
+        if(available<quantity)throw new TRPCError({code:"BAD_REQUEST",message:batch?"Saldo insuficiente neste lote.":"Selecione o lote recebido que foi utilizado."});
+        const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Sao_Paulo'}).format(new Date());
+        const expiry=batch?.expiresAt??(!batch?material.expiresAt:null);
+        if(expiry&&String(expiry).slice(0,10)<today)throw new TRPCError({code:"BAD_REQUEST",message:"Este lote está vencido. Selecione outro material."});
+        const cost=batch?.unitCost??material.unitCost;
+        if(batch)await tx.update(inventoryBatches).set({remainingQuantity:scaledToDecimal(available-quantity,3)}).where(and(eq(inventoryBatches.id,batch.id),eq(inventoryBatches.studioId,ctx.studioId)));
+
 
         let plannedMaterial: typeof appointmentPlannedMaterials.$inferSelect | undefined;
         if (input.plannedMaterialId) {
@@ -650,8 +724,8 @@ export const podSaasRouter = router({
           if (plannedMaterial.tenantMaterialId && plannedMaterial.tenantMaterialId !== material.id) throw new TRPCError({ code: "BAD_REQUEST", message: "O material consumido não corresponde ao material previsto." });
         }
 
-        const unitCost = decimalToScaled(material.unitCost, 4);
-        const totalCost = multiplyQuantityByCost(input.quantity, material.unitCost);
+        const unitCost = decimalToScaled(cost, 4);
+        const totalCost = multiplyQuantityByCost(input.quantity, cost);
         const persistedPreviousQuantity = scaledToDecimal(previousQuantity, 3);
         const persistedNewQuantity = scaledToDecimal(newQuantity, 3);
         const stockUpdate = await tx.update(tenantMaterials).set({ currentQuantity: persistedNewQuantity }).where(and(
@@ -667,13 +741,16 @@ export const podSaasRouter = router({
           artistId: procedure.artistId,
           tenantMaterialId: material.id,
           plannedMaterialId: plannedMaterial?.id ?? null,
-          nameSnapshot: material.name,
-          unitSnapshot: material.unit,
+          nameSnapshot: batch?.nameSnapshot??material.name,
+          unitSnapshot: batch?.unitSnapshot??material.unit,
           quantity: scaledToDecimal(quantity, 3),
           unitCostSnapshot: scaledToDecimal(unitCost, 4),
           totalCostSnapshot: totalCost,
-          lotSnapshot: material.lot,
-          expiresAtSnapshot: material.expiresAt,
+          batchId: batch?.id??null,
+          supplierNameSnapshot: batch?.supplierName??null,
+          technicalSnapshot: batch?.technicalSnapshot??materialDescription(material),
+          lotSnapshot: batch?.lot??material.lot,
+          expiresAtSnapshot: batch?.expiresAt??material.expiresAt,
           consumedAt: nowSql(),
           createdByUserId: ctx.user.id,
         });
@@ -719,6 +796,11 @@ export const podSaasRouter = router({
           eq(tenantMaterials.id, material.id), eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.currentQuantity, persistedPreviousQuantity),
         ));
         if (!isAffected(stockUpdate)) throw new TRPCError({ code: "CONFLICT", message: "O estoque foi atualizado por outra operação. Atualize a sessão e tente novamente." });
+        if(consumption.batchId){
+          const batch=(await tx.select().from(inventoryBatches).where(and(eq(inventoryBatches.id,consumption.batchId),eq(inventoryBatches.studioId,ctx.studioId),eq(inventoryBatches.tenantMaterialId,material.id))).limit(1).for("update"))[0];
+          if(!batch)throw new TRPCError({code:"CONFLICT",message:"Lote original não encontrado; nenhuma quantidade foi alterada."});
+          await tx.update(inventoryBatches).set({remainingQuantity:scaledToDecimal(decimalToScaled(batch.remainingQuantity,3)+decimalToScaled(consumption.quantity,3),3)}).where(eq(inventoryBatches.id,batch.id));
+        }
         const reversalUpdate = await tx.update(procedureInventoryConsumptions).set({ status: "revertido", reversedAt: nowSql(), reversalReason: input.reason, reversedByUserId: ctx.user.id }).where(and(
           eq(procedureInventoryConsumptions.id, consumption.id), eq(procedureInventoryConsumptions.studioId, ctx.studioId), eq(procedureInventoryConsumptions.status, "consumido"),
         ));

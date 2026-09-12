@@ -417,6 +417,11 @@ export const tenantMaterials = mysqlTable("tenant_materials", {
 	model: varchar({ length: 120 }),
 	configuration: varchar({ length: 120 }),
 	diameter: varchar({ length: 40 }),
+	needleCount: int(),
+	gauge: varchar({ length: 20 }),
+	taper: varchar({ length: 80 }),
+	packageQuantity: int(),
+	purchaseUnit: varchar({ length: 50 }),
 	currentQuantity: decimal({ precision: 12, scale: 3 }).default('0').notNull(),
 	minimumQuantity: decimal({ precision: 12, scale: 3 }).default('0').notNull(),
 	unitCost: decimal({ precision: 12, scale: 4 }).default('0').notNull(),
@@ -505,6 +510,9 @@ export const procedureInventoryConsumptions = mysqlTable("procedure_inventory_co
 	artistId: int(),
 	tenantMaterialId: int().notNull(),
 	plannedMaterialId: int(),
+	batchId: int(),
+	supplierNameSnapshot: varchar({ length: 255 }),
+	technicalSnapshot: text(),
 	nameSnapshot: varchar({ length: 255 }).notNull(),
 	unitSnapshot: varchar({ length: 50 }).notNull(),
 	quantity: decimal({ precision: 12, scale: 3 }).notNull(),
@@ -933,3 +941,12 @@ export type InsertIntegrationSchedule = typeof integrationSchedules.$inferInsert
 export * from './studioRelationsSchema';
 
 export * from './intelligentInboxSchema';
+
+export const inventoryBatches = mysqlTable("inventory_batches", {
+ id: int().autoincrement().primaryKey(), studioId: int().notNull(), tenantMaterialId: int().notNull(),
+ nameSnapshot: varchar({length:255}).notNull(), unitSnapshot: varchar({length:50}).notNull(), technicalSnapshot: text().notNull(),
+ receiptKey: varchar({length:36}).notNull(), lot: varchar({length:120}).notNull(),
+ supplierId: int().notNull(), supplierName: varchar({length:255}).notNull(), expiresAt: datetime({mode:'string'}),
+ receivedQuantity: decimal({precision:12,scale:3}).notNull(), remainingQuantity: decimal({precision:12,scale:3}).notNull(),
+ unitCost: decimal({precision:12,scale:4}).notNull(), receivedAt: datetime({mode:'string'}).notNull(), createdByUserId: int().notNull(),
+}, t=>[uniqueIndex('inventory_batch_receipt_unique').on(t.studioId,t.receiptKey),index('inventory_batch_material_idx').on(t.studioId,t.tenantMaterialId)]);

@@ -1,3 +1,6 @@
+import MaterialSpecificationFields,{emptySpecification,specificationFromMaterial,type SpecificationForm} from "./MaterialSpecificationFields";
+import ReceiveMaterial from "./ReceiveMaterial";
+import {materialDescription} from "@shared/materialDescription";
 import TechnicalCatalog from "./TechnicalCatalog";
 import { TECHNICAL_CATALOG_2026 } from "@shared/technicalCatalog2026";
 import { useState } from "react";
@@ -17,7 +20,7 @@ import {
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Plus, Package, Users } from "lucide-react";
 
-type Form = {
+type Form = SpecificationForm & {
   technicalCatalogIndex?: number;
   name: string;
   owner: string;
@@ -27,6 +30,7 @@ type Form = {
   unitCost: string;
 };
 const emptyForm = (owner: string): Form => ({
+  ...emptySpecification,
   name: "",
   owner,
   unit: "unidade",
@@ -44,6 +48,7 @@ export default function ArtistInventory() {
   const artistsQuery = trpc.artists.list.useQuery();
   const artists = artistsQuery.data ?? [];
   const materials = inventory.data ?? [];
+  const [receiving,setReceiving]=useState<(typeof materials)[number]|null>(null);
   const [view, setView] = useState("stock");
   const [owner, setOwner] = useState("all");
   const [search, setSearch] = useState("");
@@ -118,15 +123,17 @@ export default function ArtistInventory() {
         (owner === "studio"
           ? m.ownerArtistId == null
           : m.ownerArtistId === Number(owner))) &&
-      m.name.toLocaleLowerCase().includes(search.toLocaleLowerCase())
+      materialDescription(m).toLocaleLowerCase().includes(search.toLocaleLowerCase())
   );
   const setField = (key: keyof Form, value: string) =>
-    setForm(previous => previous && { ...previous, [key]: value });
+    setForm(previous => previous && { ...previous, [key]: value, ...(["name","unit"].includes(key)?{technicalCatalogIndex:undefined}:{}) });
   const busy = create.isPending || update.isPending;
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!form) return;
     const fields = {
+      category:form.category,brand:form.brand,line:form.line,model:form.model,configuration:form.configuration,diameter:form.diameter,
+      needleCount:form.needleCount?Number(form.needleCount):null,gauge:form.gauge,taper:form.taper,packageQuantity:form.packageQuantity?Number(form.packageQuantity):null,purchaseUnit:form.purchaseUnit,
       name: form.name,
       unit: form.unit,
       minimumQuantity: form.minimumQuantity.replace(",", "."),
@@ -137,12 +144,6 @@ export default function ArtistInventory() {
       update.mutate({
         tenantMaterialId: editingId,
         ...fields,
-        category: material.category ?? undefined,
-        brand: material.brand ?? undefined,
-        line: material.line ?? undefined,
-        model: material.model ?? undefined,
-        configuration: material.configuration ?? undefined,
-        diameter: material.diameter ?? undefined,
         lot: material.lot ?? undefined,
         notes: material.notes ?? undefined,
         expiresAt: material.expiresAt
@@ -159,6 +160,7 @@ export default function ArtistInventory() {
   };
   return (
     <section className="space-y-5">
+      {receiving&&<ReceiveMaterial material={receiving} onClose={()=>setReceiving(null)}/>}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
@@ -192,7 +194,7 @@ export default function ArtistInventory() {
       {view === "catalog" && <TechnicalCatalog onSelect={index => {
         const item = TECHNICAL_CATALOG_2026[index];
         setEditingId(null);
-        setForm({ ...emptyForm(manager ? (owner === "all" ? "studio" : owner) : String(user?.artistId)), name: item.name, unit: item.baseUnit, technicalCatalogIndex: index });
+        setForm({ ...emptyForm(manager ? (owner === "all" ? "studio" : owner) : String(user?.artistId)), ...specificationFromMaterial({category:item.category,brand:item.brandName,line:item.lineName,model:item.sku,configuration:item.format,diameter:item.needleDiameter,needleCount:item.needleCount,taper:item.taper,packageQuantity:item.unitsPerPackage,purchaseUnit:item.purchaseUnit}), name: item.name, unit: item.baseUnit, technicalCatalogIndex: index });
       }} />}
       <div hidden={view !== "stock"} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -219,7 +221,7 @@ export default function ArtistInventory() {
             id="inventory-search"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Nome do material"
+            placeholder="Nome, marca, formato, calibre…"
           />
         </div>
       </div>
@@ -294,6 +296,7 @@ export default function ArtistInventory() {
                     </p>
                   </div>
                 )}
+                <p className="text-sm text-muted-foreground break-words">{materialDescription(material)}</p>
                 <p className="text-sm text-muted-foreground">
                   Custo por {material.unit}:{" "}
                   {Number(material.unitCost).toLocaleString("pt-BR", {
@@ -310,6 +313,7 @@ export default function ArtistInventory() {
                         onClick={() => {
                           setEditingId(material.id);
                           setForm({
+                            ...specificationFromMaterial(material),
                             name: material.name,
                             owner:
                               material.ownerArtistId == null
@@ -324,12 +328,14 @@ export default function ArtistInventory() {
                       >
                         Editar
                       </Button>
+                      <Button size="sm" variant="outline" onClick={()=>setReceiving(material)}>Receber / lotes</Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() =>
                           setBalance({
                             id: material.id,
+                            ...specificationFromMaterial(material),
                             name: material.name,
                             quantity: material.currentQuantity,
                             reason: "",
@@ -400,6 +406,7 @@ export default function ArtistInventory() {
           </DialogHeader>
           {form && (
             <form onSubmit={submit} className="space-y-4">
+              {!editingId&&<label className="block text-sm">Usar material existente como modelo<select className={selectClass} defaultValue="" onChange={e=>{const m=materials.find(m=>m.id===Number(e.target.value));if(m)setForm(previous=>previous&&({...previous,...specificationFromMaterial(m),name:m.name,unit:m.unit,technicalCatalogIndex:undefined,currentQuantity:"0"}));}}><option value="">Novo cadastro ou selecionar um modelo</option>{materials.map(m=><option key={m.id} value={m.id}>{materialDescription(m)}</option>)}</select></label>}
               {form.technicalCatalogIndex != null && <p className="rounded-md border border-orange-500/40 p-3 text-sm">{TECHNICAL_CATALOG_2026[form.technicalCatalogIndex].brandName} · {TECHNICAL_CATALOG_2026[form.technicalCatalogIndex].lineName}. Informe o saldo e o custo por {form.unit}. Uma embalagem contém {TECHNICAL_CATALOG_2026[form.technicalCatalogIndex].unitsPerPackage} {form.unit}. Confirme os dados do produto antes da compra.</p>}
               <div>
                 <Label htmlFor="material-owner">Este material pertence a</Label>
@@ -428,11 +435,12 @@ export default function ArtistInventory() {
                   minLength={2}
                   maxLength={255}
                   id="material-name"
-                  readOnly={form.technicalCatalogIndex != null}
+  
                   value={form.name}
                   onChange={e => setField("name", e.target.value)}
                 />
               </div>
+              <MaterialSpecificationFields value={form} materials={materials} onChange={(key,value)=>setForm(previous=>previous&&({...previous,[key]:value,technicalCatalogIndex:undefined}))}/>
               <div>
                 <Label htmlFor="material-unit">
                   Unidade (unidade, ml, par…)
@@ -441,14 +449,15 @@ export default function ArtistInventory() {
                   required
                   maxLength={50}
                   id="material-unit"
-                  readOnly={form.technicalCatalogIndex != null}
+  
                   value={form.unit}
                   onChange={e => setField("unit", e.target.value)}
                 />
               </div>
               {!editingId && (
                 <div>
-                  <Label htmlFor="material-quantity">Saldo inicial</Label>
+                  <Label htmlFor="material-quantity">Saldo inicial sem rastreabilidade por lote</Label>
+                  <p className="text-xs text-muted-foreground">Para registrar fornecedor, lote e validade, deixe zero e use Receber / lotes após salvar.</p>
                   <Input
                     required
                     inputMode="decimal"

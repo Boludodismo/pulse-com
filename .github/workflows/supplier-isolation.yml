@@ -16,6 +16,9 @@ on:
       - 'shared/appointmentTime.ts'
       - 'scripts/test-appointment-conflicts.ts'
       - 'server/production/messagingMaintenance.ts'
+      - 'server/routers/podSaas.ts'
+      - 'server/_core/inventoryTraceSchema.ts'
+      - 'scripts/test-inventory-trace.ts'
 permissions:
   contents: read
 jobs:
@@ -47,3 +50,4 @@ jobs:
       - run: pnpm exec vitest run server/supplier-saas-isolation.test.ts server/_core/legacyStockScope.test.ts
       - run: pnpm tsx scripts/test-contact-import.ts
       - run: pnpm tsx scripts/test-appointment-conflicts.ts
+      - run: pnpm tsx scripts/test-inventory-trace.ts
