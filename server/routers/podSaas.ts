@@ -451,10 +451,15 @@ export const podSaasRouter = router({
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "stock", true);
       const database = await requireDatabase();
-      const existing=await requireOwnedMaterial(database, ctx, input.tenantMaterialId);
-      if(existing.unit!==input.unit&&Number(existing.currentQuantity)>0)throw new TRPCError({code:"BAD_REQUEST",message:"Não altere a unidade de um material com saldo. Cadastre uma variante com a nova unidade."});
+      return database.transaction(async tx=>{
+      const existing=(await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id,input.tenantMaterialId),eq(tenantMaterials.studioId,ctx.studioId),eq(tenantMaterials.isActive,1))).limit(1).for("update"))[0];
+      if(!existing)throw new TRPCError({code:"NOT_FOUND",message:"Material não encontrado."});assertOwnArtist(ctx,existing.ownerArtistId);
+      if(existing.unit!==input.unit){
+        const batches=await tx.select({id:inventoryBatches.id}).from(inventoryBatches).where(and(eq(inventoryBatches.studioId,ctx.studioId),eq(inventoryBatches.tenantMaterialId,existing.id))).limit(1);
+        if(Number(existing.currentQuantity)>0||batches.length)throw new TRPCError({code:"BAD_REQUEST",message:"Não altere a unidade de um material com saldo ou lotes recebidos. Cadastre uma variante com a nova unidade."});
+      }
       const { tenantMaterialId, expiresAt, ...fields } = input;
-      const result = await database.update(tenantMaterials).set({
+      const result = await tx.update(tenantMaterials).set({
         ...fields,
         category: fields.category ?? null,
         brand: fields.brand ?? null,
@@ -468,6 +473,7 @@ export const podSaasRouter = router({
       }).where(and(eq(tenantMaterials.id, tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.isActive, 1)));
       if (!isAffected(result)) throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado nesta empresa." });
       return { id: tenantMaterialId };
+      });
     }),
 
     archive: tenantProcedure.input(z.object({ tenantMaterialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
@@ -750,7 +756,7 @@ export const podSaasRouter = router({
           supplierNameSnapshot: batch?.supplierName??null,
           technicalSnapshot: batch?.technicalSnapshot??materialDescription(material),
           lotSnapshot: batch?.lot??material.lot,
-          expiresAtSnapshot: batch?.expiresAt??material.expiresAt,
+          expiresAtSnapshot: batch?batch.expiresAt:material.expiresAt,
           consumedAt: nowSql(),
           createdByUserId: ctx.user.id,
         });

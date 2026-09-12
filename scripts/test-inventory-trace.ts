@@ -19,6 +19,7 @@ async function main(){
  const lotA=await a.inventory.receive(receipt);assert.equal((await a.inventory.receive(receipt)).alreadyReceived,true);
  await assert.rejects(a.inventory.receive({...receipt,quantity:'50'}));
  const lotB=await a.inventory.receive({...receipt,receiptKey:randomUUID(),lot:'LOTE-B',quantity:'7',unitCost:'4'});
+ await assert.rejects(a.inventory.updateDetails({tenantMaterialId:m.id,name:'Cartucho teste',unit:'ml',minimumQuantity:'0',unitCost:'9'}));
  const expired=await a.inventory.receive({...receipt,receiptKey:randomUUID(),lot:'VENCIDO',quantity:'1',expiresAt:'2020-01-01'});
  await assert.rejects(a.session.consume({procedureId:2101,tenantMaterialId:m.id,quantity:'1'}));
  await assert.rejects(b.session.consume({procedureId:2202,tenantMaterialId:m.id,batchId:lotA.id,quantity:'1'}));
@@ -40,6 +41,10 @@ async function main(){
  assert.equal(attempts.filter(x=>x.status==='fulfilled').length,1);
  const rows=await a.inventory.list();const material=rows.find(x=>x.id===m.id)!;assert.equal(material.currentQuantity,'8.000');
  assert.ok(materialDescription({name:'Teste',brand:'Marca',configuration:'RL',needleCount:3,diameter:'0.25',packageQuantity:20,purchaseUnit:'cx',unit:'un'}).includes('Embalagem: 20 un / cx'));
+ const legacyExpiryMaterial=await a.inventory.create({ownerArtistId:2101,name:'Material com validade antiga',unit:'un',unitCost:'1',currentQuantity:'0',expiresAt:'2020-01-01T00:00:00Z'});
+ const undated=await a.inventory.receive({tenantMaterialId:legacyExpiryMaterial.id,receiptKey:randomUUID(),supplierId:2101,lot:'SEM-VALIDADE-INFORMADA',quantity:'1',unitCost:'1'});
+ const undatedUse=await a.session.consume({procedureId:2101,tenantMaterialId:legacyExpiryMaterial.id,batchId:undated.id,quantity:'1'});
+ const undatedHistory=await a.session.clientMaterials({clientId:2101});assert.equal(undatedHistory.find(h=>h.id===undatedUse.id)?.expiresAtSnapshot,null);
  await c.end();console.log('PASS: lot receipts, idempotency, supplier/studio isolation, expiry, concurrent stock, exact reversal and immutable client snapshots');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});
