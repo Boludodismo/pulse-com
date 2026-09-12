@@ -1,5 +1,6 @@
 import { EditClientDialog } from "@/components/EditClientDialog";
 import ImportedClientRecords from '@/components/ImportedClientRecords';
+import ImportedAnamnesisSummary from '@/components/ImportedAnamnesisSummary';
 import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { ClientCare } from "@/components/CustomerCarePanel";
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
@@ -625,6 +626,10 @@ export default function ClientProfile() {
           </div>
         </CardContent>
       </Card>
+
+      {can("anamnesis") && !invited && importedAnamneseCount > 0 && (
+        <ImportedAnamnesisSummary sources={importedRecords?.flatMap(record => record.payload.sources) ?? []} />
+      )}
 
       {/* Tabs */}
       <ClientCare clientId={clientId} />
