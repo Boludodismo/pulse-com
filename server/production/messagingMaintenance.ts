@@ -5,6 +5,7 @@ import {normalizeBrazilianPhone} from '../messaging/phone';
 import {decryptIntegrationSecret} from '../messaging/crypto';
 import {BotConversaProvider} from '../messaging/providers/botconversa';
 import {zonedSqlDateTime} from '../../shared/studioClock';
+import {planAnamnesisConsent,applyAnamnesisConsent} from './anamnesisConsentMaintenance';
 
 export function consentIdentityFingerprint(studioId:number, clientId:number, phone:string) {
   return createHash('sha256').update(JSON.stringify({studioId,clientId,phone:normalizeBrazilianPhone(phone)})).digest('hex');
@@ -44,6 +45,12 @@ async function main(){
   if(!Number.isSafeInteger(studioId)||studioId<=0) throw new Error('Informe --studio=<id>.');
   const c=await mysql.createConnection({uri:process.env.DATABASE_URL!,dateStrings:true});
   try {
+    if(args.anamnesis){
+      const result=args.anamnesis==='apply'
+        ?await applyAnamnesisConsent(c,{studioId,actorId:Number(args.actor),hash:args.hash??'',authorizationId:args.authorization??'',expiresAt:args.expires??''})
+        :await planAnamnesisConsent(c,studioId).then(({rows,...summary})=>summary);
+      console.log('[Anamnesis consent]',JSON.stringify(result));return;
+    }
     if(args['grant-client']) console.log('[Messaging maintenance]',JSON.stringify(await repairMissingConsent(c,{studioId,clientId:Number(args['grant-client']),actorId:Number(args.actor),fingerprint:args.fingerprint??'',authorizationId:args.authorization??'',expiresAt:args.expires??''})));
     const now=zonedSqlDateTime(new Date(),'America/Sao_Paulo');
     const cutoff=zonedSqlDateTime(new Date(Date.now()-86400000),'America/Sao_Paulo');
