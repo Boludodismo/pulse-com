@@ -121,7 +121,7 @@ async function main(){
  const batchResult=await applyAnamnesisConsent(c,batch);assert.equal(batchResult.result,'applied');
  assert.equal((await applyAnamnesisConsent(c,batch)).result,'already_applied');
  const [excluded]:any=await c.query('SELECT client_id FROM integration_contacts WHERE client_id IN(51,52,53,54)');assert.equal(excluded.length,0);
- const [revoked]:any=await c.query('SELECT has_whatsapp_opt_in FROM integration_contacts WHERE client_id=42');assert.equal(revoked[0].has_whatsapp_opt_in,0);
+ const [batchRevoked]:any=await c.query('SELECT has_whatsapp_opt_in FROM integration_contacts WHERE client_id=42');assert.equal(batchRevoked[0].has_whatsapp_opt_in,0);
  await c.end();console.log('PASS: original history, tenant isolation, individual and anamnesis batch consent, duplicate evidence, exclusions, rollback and preserved refusals');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});
