@@ -2,7 +2,7 @@ import {materialDescription} from "../../shared/materialDescription";
 import { TECHNICAL_CATALOG_2026, canAddCatalogItemToOperationalStock } from "../../shared/technicalCatalog2026";
 import { assertOwnArtist, canUseMaterial, isInventoryManager, requireInventoryArtist, requireMaterialForArtist, requireOwnedMaterial, type InventoryDatabase, type InventoryContext } from "../inventoryAccess";
 import { TRPCError } from "@trpc/server";
-import { and, asc, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, getTableColumns } from "drizzle-orm";
 import { z } from "zod";
 import {
   appointmentPlannedMaterials,
@@ -585,7 +585,7 @@ export const podSaasRouter = router({
       const client=(await d.select({id:clients.id}).from(clients).where(and(eq(clients.id,input.clientId),eq(clients.studioId,ctx.studioId))).limit(1))[0];
       if(!client)throw new TRPCError({code:"NOT_FOUND",message:"Cliente não encontrado."});
       if(!isInventoryManager(ctx)&&!ctx.artistId)throw new TRPCError({code:"FORBIDDEN",message:"Artista não vinculado."});
-      return d.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,ctx.studioId),eq(procedureInventoryConsumptions.clientId,input.clientId),isInventoryManager(ctx)?undefined:eq(procedureInventoryConsumptions.artistId,ctx.artistId!))).orderBy(desc(procedureInventoryConsumptions.consumedAt));
+      return d.select({...getTableColumns(procedureInventoryConsumptions),artistName:artists.name}).from(procedureInventoryConsumptions).leftJoin(artists,and(eq(artists.id,procedureInventoryConsumptions.artistId),eq(artists.studioId,ctx.studioId))).where(and(eq(procedureInventoryConsumptions.studioId,ctx.studioId),eq(procedureInventoryConsumptions.clientId,input.clientId),isInventoryManager(ctx)?undefined:eq(procedureInventoryConsumptions.artistId,ctx.artistId!))).orderBy(desc(procedureInventoryConsumptions.consumedAt));
     }),
 
     create: tenantProcedure.input(z.object({
