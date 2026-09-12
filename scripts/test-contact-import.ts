@@ -5,6 +5,7 @@ import {ensureContactImportSchema} from '../server/contactImport/schema';
 import {contactImportRouter} from '../server/routers/contactImport';
 import {saveWhatsappConsent} from '../server/messaging/consent';
 import {repairMissingConsent,consentIdentityFingerprint} from '../server/production/messagingMaintenance';
+import {planAnamnesisConsent,applyAnamnesisConsent} from '../server/production/anamnesisConsentMaintenance';
 async function main(){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(process.env.CI,'true');assert.ok(['127.0.0.1','localhost'].includes(url.hostname));assert.equal(url.pathname,'/supplier_test');
  const root=await mysql.createConnection(url.toString());await root.query('CREATE DATABASE contact_import_test CHARACTER SET utf8mb4');await root.end();
@@ -103,6 +104,24 @@ async function main(){
  assert.equal((await repairMissingConsent(c,repair)).result,'already_applied');
  const [repairedConsent]:any=await c.query('SELECT has_whatsapp_opt_in,opted_out_at FROM integration_contacts WHERE client_id=42');
  assert.equal(repairedConsent[0].has_whatsapp_opt_in,0);assert.ok(repairedConsent[0].opted_out_at);
- await c.end();console.log('PASS: original history, session dates, tenant isolation, rollback, shared phones and explicit maintenance with fingerprint, expiration and preserved refusals');
+ await c.query('CREATE TABLE anamnese_submissions(id INT PRIMARY KEY,clientId INT)');
+ await c.query('CREATE TABLE anamnesisRecords(id INT PRIMARY KEY,clientId INT)');
+ await c.query("INSERT INTO clients(id,studioId,name,phone,isArchived) VALUES(50,101,'Ficha nativa','+5511987654321',0),(51,101,'Sem ficha','+5511987654321',0),(52,101,'Sem telefone',NULL,0),(53,101,'Arquivado','+5511987654321',1),(54,202,'Outro estúdio','+5511987654321',0)");
+ await c.query('INSERT INTO anamnese_submissions VALUES(1,50),(2,52),(3,53),(4,54),(5,42)');
+ await c.query('INSERT INTO anamnesisRecords VALUES(1,50)');
+ const batchPlan=await planAnamnesisConsent(c,101);
+ assert.equal(batchPlan.rows.filter(row=>row.clientId===50).length,1);
+ assert.ok(!batchPlan.rows.some(row=>row.clientId===51||row.clientId===54));
+ assert.equal(batchPlan.rows.find(row=>row.clientId===42)?.reason,'revoked');
+ assert.equal(batchPlan.rows.find(row=>row.clientId===52)?.reason,'invalid_phone');
+ assert.equal(batchPlan.rows.find(row=>row.clientId===53)?.reason,'archived');
+ const batch={studioId:101,actorId:999,hash:batchPlan.hash,authorizationId:'fixture_anamnesis_batch',expiresAt:new Date(Date.now()+1800000).toISOString()};
+ await assert.rejects(applyAnamnesisConsent(c,{...batch,actorId:998}));
+ await assert.rejects(applyAnamnesisConsent(c,{...batch,hash:'0'.repeat(64)}));
+ const batchResult=await applyAnamnesisConsent(c,batch);assert.equal(batchResult.result,'applied');
+ assert.equal((await applyAnamnesisConsent(c,batch)).result,'already_applied');
+ const [excluded]:any=await c.query('SELECT client_id FROM integration_contacts WHERE client_id IN(51,52,53,54)');assert.equal(excluded.length,0);
+ const [batchRevoked]:any=await c.query('SELECT has_whatsapp_opt_in FROM integration_contacts WHERE client_id=42');assert.equal(batchRevoked[0].has_whatsapp_opt_in,0);
+ await c.end();console.log('PASS: original history, tenant isolation, individual and anamnesis batch consent, duplicate evidence, exclusions, rollback and preserved refusals');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});
