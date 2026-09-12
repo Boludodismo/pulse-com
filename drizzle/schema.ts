@@ -850,7 +850,7 @@ export const integrationContacts = mysqlTable("integration_contacts", {
   updatedAt: timestamp({ mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   uniqueIndex("integration_contacts_studio_client_unique").on(table.studioId, table.clientId),
-  uniqueIndex("integration_contacts_studio_phone_unique").on(table.studioId, table.normalizedPhone),
+  index("integration_contacts_studio_phone_lookup").on(table.studioId, table.normalizedPhone),
   index("integration_contacts_integration_idx").on(table.integrationId),
 ]);
 

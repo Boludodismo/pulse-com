@@ -7,6 +7,9 @@ import { dispatchTemplateMessage, sendAndLog } from "./service";
 import { interpolateTemplate } from "./provider";
 import { formatAppointmentActionLinks, issueAppointmentActionLinks } from "../appointmentActions";
 import { firstName, formatStudioAddress, useFirstNameInGreeting } from "./messagePresentation";
+import { appointmentInstant } from "../../shared/appointmentTime";
+import { zonedSqlDateTime } from "../../shared/studioClock";
+export { zonedSqlDateTime } from "../../shared/studioClock";
 
 const FALLBACK_BIRTHDAY_TEMPLATE = "Bom dia, {nome_cliente}! 🎉 Feliz aniversário! Desejamos muita alegria e um novo ciclo cheio de boas histórias. Um abraço da equipe {nome_estudio}!";
 
@@ -45,16 +48,6 @@ function zonedNow(timezone: string) {
   return { date: `${get("year")}-${get("month")}-${get("day")}`, time: `${get("hour")}:${get("minute")}` };
 }
 
-export function zonedSqlDateTime(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
-  }).formatToParts(date);
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
-}
-
 function addDays(date: string, days: number) {
   const [year, month, day] = date.split("-").map(Number);
   const result = new Date(Date.UTC(year, month - 1, day + days));
@@ -62,10 +55,10 @@ function addDays(date: string, days: number) {
 }
 
 function dateAndTime(value: string) {
-  const parsed = new Date(value);
+  const parsed = appointmentInstant(value);
   return {
-    date: parsed.toLocaleDateString("pt-BR"),
-    time: parsed.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+    date: parsed.toLocaleDateString("pt-BR", {timeZone:'UTC'}),
+    time: parsed.toLocaleTimeString("pt-BR", { timeZone:'UTC', hour: "2-digit", minute: "2-digit" }),
   };
 }
 

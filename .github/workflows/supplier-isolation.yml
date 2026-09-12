@@ -10,6 +10,9 @@ on:
       - 'server/contactImport/**'
       - 'server/routers/contactImport.ts'
       - 'scripts/test-contact-import.ts'
+      - 'server/messaging/consent.ts'
+      - 'server/routers/messaging.ts'
+      - 'drizzle/schema.ts'
 permissions:
   contents: read
 jobs:
