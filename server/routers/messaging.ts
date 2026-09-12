@@ -1,3 +1,4 @@
+import { consentSearchPattern } from "../../shared/whatsappConsentUi";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, tenantProcedure } from "../_core/trpc";
@@ -15,7 +16,7 @@ import {
   clients,
   appointments,
 } from "../../drizzle/schema";
-import { eq, desc, and, inArray } from "drizzle-orm";
+import { eq, desc, and, inArray, asc, sql } from "drizzle-orm";
 import { interpolateTemplate } from "../messaging/provider";
 import { getOutboundEventIdempotencyKey, getProviderForIntegration, sendAndLog, seedDefaultTemplates, isExpiredAppointmentReminder } from "../messaging/service";
 import { createConnectionKey, encryptIntegrationSecret, maskSecret } from "../messaging/crypto";
@@ -80,7 +81,13 @@ export function assertRetryableMessage<T extends { status: string; clientId: num
 export const messagingRouter = router({
   /** Lista clientes do estúdio e seu opt-in na integração selecionada. */
   listWhatsappConsents: tenantProcedure
-    .input(z.object({ integrationId: z.number().int().positive() }))
+    .input(z.object({
+      integrationId: z.number().int().positive(),
+      search: z.string().trim().max(120).optional(),
+      clientId: z.number().int().positive().optional(),
+      limit: z.number().int().min(1).max(200).default(200),
+      offset: z.number().int().min(0).max(1000000).default(0),
+    }))
     .query(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
@@ -95,7 +102,12 @@ export const messagingRouter = router({
         eq(integrationContacts.clientId, clients.id),
         eq(integrationContacts.studioId, integration.studioId),
         eq(integrationContacts.integrationId, integration.id),
-      )).where(and(eq(clients.studioId, integration.studioId),eq(clients.isArchived,0))).limit(200);
+      )).where(and(
+        eq(clients.studioId, integration.studioId),
+        eq(clients.isArchived, 0),
+        input.clientId === undefined ? undefined : eq(clients.id, input.clientId),
+        input.search ? sql`CONVERT(${clients.name} USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ${consentSearchPattern(input.search)} ESCAPE '='` : undefined,
+      )).orderBy(asc(clients.name), asc(clients.id)).limit(input.limit).offset(input.offset);
     }),
 
   /** Registra revogação ou opt-in informado pelo gestor; não envia mensagens. */
