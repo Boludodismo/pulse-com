@@ -1,3 +1,4 @@
+import ClientMaterialHistory from "@/components/ClientMaterialHistory";
 import { EditClientDialog } from "@/components/EditClientDialog";
 import ImportedClientRecords from '@/components/ImportedClientRecords';
 import ImportedAnamnesisSummary from '@/components/ImportedAnamnesisSummary';
@@ -1649,6 +1650,7 @@ export default function ClientProfile() {
 
         {/* ── Prontuário Técnico (POD Session) ── */}
         {can("pod") && <TabsContent value="procedures">
+          <ClientMaterialHistory clientId={clientId}/>
           <ProceduresTab clientId={clientId} clientName={client?.name ?? ""} />
         </TabsContent>}
       </Tabs>

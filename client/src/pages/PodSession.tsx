@@ -1,3 +1,4 @@
+import ConsumeMaterialBatch from "@/components/ConsumeMaterialBatch";
 import { useState, useEffect, useRef, useCallback } from "react";
 import React, { type ReactNode } from "react";
 import { useParams, useLocation } from "wouter";
@@ -178,6 +179,7 @@ export default function PodSession() {
   const auditConsumptions = podSessionQuery.data?.consumptions ?? [];
   const plannedMaterials = podSessionQuery.data?.plannedMaterials ?? [];
   const tenantMaterials = tenantInventoryQuery.data ?? [];
+  const [batchConsumption,setBatchConsumption]=useState<{materialId:number;quantity:string;plannedMaterialId?:number}|null>(null);
 
   // Agendamento vinculado (se houver)
   const linkedAppointmentQuery = trpc.appointments.getById.useQuery(
@@ -213,6 +215,8 @@ export default function PodSession() {
 
   const consumeTenantMaterialMutation = trpc.pod.session.consume.useMutation({
     onSuccess: () => {
+      setBatchConsumption(null);
+      utils.pod.inventory.batches.invalidate();
       utils.pod.session.get.invalidate({ procedureId });
       utils.pod.inventory.list.invalidate();
       setTenantConsumptionQuantity("1");
@@ -223,6 +227,8 @@ export default function PodSession() {
 
   const revertTenantConsumptionMutation = trpc.pod.session.revertConsumption.useMutation({
     onSuccess: (result) => {
+      setBatchConsumption(null);
+      utils.pod.inventory.batches.invalidate();
       utils.pod.session.get.invalidate({ procedureId });
       utils.pod.inventory.list.invalidate();
       toast.success(result.alreadyReverted ? "Este consumo já estava revertido." : "Consumo revertido e saldo restaurado.");
@@ -674,12 +680,7 @@ export default function PodSession() {
                         key={item.id}
                         type="button"
                         disabled={!stock || isFinished || consumeTenantMaterialMutation.isPending}
-                        onClick={() => consumeTenantMaterialMutation.mutate({
-                          procedureId,
-                          tenantMaterialId: item.tenantMaterialId!,
-                          plannedMaterialId: item.id,
-                          quantity: item.quantityPlanned,
-                        })}
+                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,plannedMaterialId:item.id,quantity:item.quantityPlanned})}
                         className={referenceFullscreen
                           ? "group flex min-h-[70px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-black/30 px-1.5 py-2 text-center text-white shadow-lg transition hover:border-white/30 hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                           : "group max-w-[220px] rounded-xl border border-white/20 bg-black/45 px-3 py-2 text-left text-xs text-white shadow-xl backdrop-blur-md transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
@@ -776,7 +777,7 @@ export default function PodSession() {
                   size="sm"
                   className="h-9 text-xs"
                   disabled={!tenantMaterialId || consumeTenantMaterialMutation.isPending || isFinished}
-                  onClick={() => consumeTenantMaterialMutation.mutate({ procedureId, tenantMaterialId: Number(tenantMaterialId), quantity: tenantConsumptionQuantity })}
+                  onClick={() => setBatchConsumption({materialId:Number(tenantMaterialId),quantity:tenantConsumptionQuantity})}
                 >
                   Baixar
                 </Button>
@@ -789,7 +790,7 @@ export default function PodSession() {
               <div className="max-h-24 space-y-1 overflow-y-auto pr-1">
                 {auditConsumptions.map((consumption) => (
                   <div key={consumption.id} className="flex items-center gap-2 rounded-md bg-background/75 px-2 py-1.5 text-xs">
-                    <span className="min-w-0 flex-1 truncate">{consumption.nameSnapshot} · {consumption.quantity} {consumption.unitSnapshot}</span>
+                    <span className="min-w-0 flex-1 break-words">{consumption.nameSnapshot} · {consumption.quantity} {consumption.unitSnapshot}<br/>Lote: {consumption.lotSnapshot||"não registrado"} · {consumption.supplierNameSnapshot||"fornecedor não registrado"} · Validade: {consumption.expiresAtSnapshot?.slice(0,10).split("-").reverse().join("/")||"não registrada"}</span>
                     <span className={consumption.status === "revertido" ? "text-muted-foreground" : "text-emerald-600"}>{consumption.status === "revertido" ? "Revertido" : "Confirmado"}</span>
                     {consumption.status === "consumido" && !isFinished && (
                       <Button
@@ -812,6 +813,7 @@ export default function PodSession() {
             )}
           </div>
 
+          {batchConsumption&&tenantMaterials.find(m=>m.id===batchConsumption.materialId)&&<ConsumeMaterialBatch material={tenantMaterials.find(m=>m.id===batchConsumption.materialId)!} artistId={procedureQuery.data?.procedure?.artistId??undefined} initialQuantity={batchConsumption.quantity} busy={consumeTenantMaterialMutation.isPending} onClose={()=>setBatchConsumption(null)} onConfirm={(quantity,batchId)=>consumeTenantMaterialMutation.mutate({procedureId,tenantMaterialId:batchConsumption.materialId,plannedMaterialId:batchConsumption.plannedMaterialId,quantity,batchId})}/>}
           {/* Insumos rápidos */}
           <div className="border-b p-3">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Lançamento rápido</p>
