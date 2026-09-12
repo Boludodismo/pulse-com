@@ -4,6 +4,7 @@ import mysql from 'mysql2/promise';
 import {ensureContactImportSchema} from '../server/contactImport/schema';
 import {contactImportRouter} from '../server/routers/contactImport';
 import {saveWhatsappConsent} from '../server/messaging/consent';
+import {repairMissingConsent,consentIdentityFingerprint} from '../server/production/messagingMaintenance';
 async function main(){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(process.env.CI,'true');assert.ok(['127.0.0.1','localhost'].includes(url.hostname));assert.equal(url.pathname,'/supplier_test');
  const root=await mysql.createConnection(url.toString());await root.query('CREATE DATABASE contact_import_test CHARACTER SET utf8mb4');await root.end();
@@ -84,6 +85,24 @@ async function main(){
  assert.equal(JSON.stringify((await c.query('SELECT * FROM clients WHERE studioId=202'))[0]),before);
  const [phoneIndex]:any=await c.query("SHOW INDEX FROM integration_contacts WHERE Key_name='integration_contacts_studio_phone_lookup'");
  assert.equal(phoneIndex.length,2);assert.ok(phoneIndex.every((row:any)=>Number(row.Non_unique)===1));
- await c.end();console.log('PASS: original history, session dates, tenant isolation, rollback and client-scoped consent with shared phones');
+ await c.query('CREATE TABLE users(id INT PRIMARY KEY,role VARCHAR(40),studioId INT,isActive INT)');
+ await c.query("INSERT INTO users VALUES(999,'admin',101,1),(998,'admin',202,1)");
+ await c.query('CREATE TABLE integration_events(id INT AUTO_INCREMENT PRIMARY KEY,studio_id INT,integration_id INT,direction VARCHAR(20),type VARCHAR(100),idempotency_key VARCHAR(128) UNIQUE,payload_hash VARCHAR(64),status VARCHAR(20),processed_at DATETIME)');
+ await c.query("INSERT INTO clients(id,studioId,name,phone) VALUES(42,101,'Manutenção explícita','+5511987654321')");
+ const repair={studioId:101,clientId:42,actorId:999,fingerprint:consentIdentityFingerprint(101,42,'+5511987654321'),authorizationId:'fixture_authorized_repair',expiresAt:new Date(Date.now()+1800000).toISOString()};
+ const protectedBefore=JSON.stringify((await c.query('SELECT * FROM integration_contacts ORDER BY id'))[0]);
+ await assert.rejects(repairMissingConsent(c,{...repair,actorId:998}));
+ await assert.rejects(repairMissingConsent(c,{...repair,fingerprint:'0'.repeat(64)}));
+ await assert.rejects(repairMissingConsent(c,{...repair,expiresAt:'2020-01-01T00:00:00Z'}));
+ await assert.rejects(repairMissingConsent(c,{...repair,clientId:40,fingerprint:consentIdentityFingerprint(101,40,'+5511987654321')}));
+ assert.equal(JSON.stringify((await c.query('SELECT * FROM integration_contacts ORDER BY id'))[0]),protectedBefore);
+ assert.equal((await repairMissingConsent(c,repair)).result,'created');
+ assert.equal((await repairMissingConsent(c,repair)).result,'already_applied');
+ assert.equal(JSON.stringify((await c.query('SELECT * FROM integration_contacts WHERE client_id<>42 ORDER BY id'))[0]),protectedBefore);
+ await c.query('UPDATE integration_contacts SET has_whatsapp_opt_in=0,opted_out_at=NOW() WHERE client_id=42');
+ assert.equal((await repairMissingConsent(c,repair)).result,'already_applied');
+ const [repairedConsent]:any=await c.query('SELECT has_whatsapp_opt_in,opted_out_at FROM integration_contacts WHERE client_id=42');
+ assert.equal(repairedConsent[0].has_whatsapp_opt_in,0);assert.ok(repairedConsent[0].opted_out_at);
+ await c.end();console.log('PASS: original history, session dates, tenant isolation, rollback, shared phones and explicit maintenance with fingerprint, expiration and preserved refusals');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});

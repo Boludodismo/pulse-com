@@ -15,6 +15,7 @@ on:
       - 'drizzle/schema.ts'
       - 'shared/appointmentTime.ts'
       - 'scripts/test-appointment-conflicts.ts'
+      - 'server/production/messagingMaintenance.ts'
 permissions:
   contents: read
 jobs:

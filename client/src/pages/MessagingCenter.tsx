@@ -78,12 +78,12 @@ const MSG_STATUS_COLORS: Record<string, string> = {
 const DELIVERY_STATUS: Record<string, { label: string; className: string }> = {
   pending: { label: "Na fila", className: "bg-yellow-500/20 text-yellow-300" },
   processing: { label: "Processando", className: "bg-blue-500/20 text-blue-300" },
-  completed: { label: "Enviada", className: "bg-green-500/20 text-green-300" },
+  completed: { label: "Aceita pelo provedor", className: "bg-blue-500/20 text-blue-300" },
   retry: { label: "Nova tentativa", className: "bg-amber-500/20 text-amber-300" },
   failed: { label: "Erro", className: "bg-red-500/20 text-red-300" },
   cancelled: { label: "Cancelada", className: "bg-zinc-500/20 text-zinc-300" },
   pendente: { label: "Na fila", className: "bg-yellow-500/20 text-yellow-300" },
-  enviada: { label: "Enviada", className: "bg-green-500/20 text-green-300" },
+  enviada: { label: "Aceita pelo provedor", className: "bg-blue-500/20 text-blue-300" },
   erro: { label: "Erro", className: "bg-red-500/20 text-red-300" },
   cancelada: { label: "Cancelada", className: "bg-zinc-500/20 text-zinc-300" },
   respondida: { label: "Respondida", className: "bg-blue-500/20 text-blue-300" },
@@ -633,7 +633,7 @@ export default function MessagingCenter() {
                   <SelectTrigger className="bg-zinc-800 border-zinc-700 text-white"><SelectValue placeholder="Todos os status" /></SelectTrigger>
                   <SelectContent className="bg-zinc-800 border-zinc-700">
                     <SelectItem value="all" className="text-white hover:bg-zinc-700">Todos os status</SelectItem>
-                    <SelectItem value="enviada" className="text-white hover:bg-zinc-700">Enviadas</SelectItem>
+                    <SelectItem value="enviada" className="text-white hover:bg-zinc-700">Aceitas pelo provedor</SelectItem>
                     <SelectItem value="pendente" className="text-white hover:bg-zinc-700">Na fila</SelectItem>
                     <SelectItem value="erro" className="text-white hover:bg-zinc-700">Com erro</SelectItem>
                     <SelectItem value="respondida" className="text-white hover:bg-zinc-700">Respondidas</SelectItem>
@@ -668,11 +668,12 @@ export default function MessagingCenter() {
                               {msg.trigger && <Badge variant="outline" className="text-xs text-zinc-400 border-zinc-700">{TRIGGER_LABELS[msg.trigger as TriggerType] ?? msg.trigger}</Badge>}
                             </div>
                             <p className="text-zinc-400 text-xs mt-1 line-clamp-2">{msg.message}</p>
+                            {(msg.deliveryStatus === "completed" || msg.deliveryStatus === "enviada") && <p className="mt-1 text-xs text-zinc-400">O provedor aceitou a solicitação. A entrega no WhatsApp ainda não foi confirmada.</p>}
                             {(msg.errorMessage || msg.jobError) && <p className="text-red-400 text-xs mt-1 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {msg.errorMessage ?? msg.jobError}</p>}
                           </div>
                           <div className="flex items-center justify-between gap-3 text-xs sm:block sm:text-right shrink-0">
                             <p className="text-zinc-500">{formatMessageTimestamp(msg.sentAt||msg.createdAt,automationSettings?.timezone)}</p>
-                            <p className="mt-1 text-zinc-400">Tentativas: {msg.attemptCount}/{msg.maxAttempts || 5}</p>
+                            <p className="mt-1 text-zinc-400">Falhas nas tentativas: {msg.attemptCount}/{msg.maxAttempts || 5}</p>
                             {msg.status === "erro" && msg.deliveryStatus === "failed" && (
                               <Button
                                 size="sm"
