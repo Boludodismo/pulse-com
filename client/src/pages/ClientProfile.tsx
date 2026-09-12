@@ -34,6 +34,8 @@ export default function ClientProfile() {
   const { data: appointments, isLoading: appointmentsLoading, error: appointmentsError, refetch: retryAppointments } = trpc.appointments.getByClientId.useQuery({ clientId },{enabled:can("appointments")});
   const { data: anamnesis } = trpc.anamnesis.getByClientId.useQuery({ clientId },{enabled:can("anamnesis")});
   const { data: anamneseSubmissions } = trpc.anamnese.getRequestsByClientId.useQuery({ clientId },{enabled:can("anamnesis")});
+  const { data: importedRecords } = trpc.contactImport.history.useQuery({ clientId },{enabled:can("anamnesis")&&!invited});
+  const importedAnamneseCount = importedRecords?.reduce((total, record) => total + record.payload.sources.filter(source => source.kind === "anamnese").length, 0) ?? 0;
   const { data: transactions } = trpc.transactions.getByClientId.useQuery({ clientId },{enabled:can("finance")});
   const { data: availableMaterials } = trpc.stock.listMaterials.useQuery({ activeOnly: true },{enabled:!invited});
   const { data: gallery } = trpc.gallery.getByClientId.useQuery({ clientId });
@@ -639,9 +641,9 @@ export default function ClientProfile() {
           </TabsTrigger>}
           {can("anamnesis") && <TabsTrigger value="anamnesis" className="flex-1 text-xs sm:text-sm py-2">
             Anamnese
-            {((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0)) > 0 && (
+            {((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0) + importedAnamneseCount) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
-                {Math.min((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0), 99)}
+                {Math.min((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0) + importedAnamneseCount, 99)}
               </span>
             )}
           </TabsTrigger>}
@@ -1108,7 +1110,7 @@ export default function ClientProfile() {
                 )}
 
                 {/* Estado vazio */}
-                {(!anamnesis || anamnesis.length === 0) &&
+                {importedAnamneseCount === 0 && (!anamnesis || anamnesis.length === 0) &&
                   (!anamneseSubmissions || anamneseSubmissions.length === 0) && (
                   <div className="text-center py-8 text-muted-foreground">
                     Nenhuma ficha de anamnese encontrada.
