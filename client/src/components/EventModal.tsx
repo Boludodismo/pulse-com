@@ -1,3 +1,4 @@
+import { ClientWhatsappConsent, useQuickClientConsent } from "./WhatsappConsentControls";
 import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -96,7 +97,6 @@ export function EventModal({
   const [pendingReminders, setPendingReminders] = useState<Array<{date: string; time: string; message: string}>>([]);
   const [automaticReminderTiming, setAutomaticReminderTiming] = useState<"day_before" | "same_day" | "none">("day_before");
   const [automaticReminderTime, setAutomaticReminderTime] = useState<string>("09:00");
-  const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(false);
   const [plannedTenantMaterialId, setPlannedTenantMaterialId] = useState<string | undefined>();
   const [plannedQuantity, setPlannedQuantity] = useState("1");
   const [pendingPlannedMaterials, setPendingPlannedMaterials] = useState<Array<{ tenantMaterialId: number; name: string; unit: string; quantity: string }>>([]);
@@ -127,6 +127,9 @@ export function EventModal({
   const [quickClientName, setQuickClientName] = useState("");
   const [quickClientPhone, setQuickClientPhone] = useState("");
   const [quickClientEmail, setQuickClientEmail] = useState("");
+  const [consentSaving, setConsentSaving] = useState(false);
+  const consentStudioId = Number(selectedStudioId || currentUser?.studioId) || null;
+  const quickConsent = useQuickClientConsent(consentStudioId, isOpen && showQuickClient);
   const CLIENTS_VISIBLE_LIMIT = 50;
   const filteredClients = useMemo(() => {
     const search = clientSearch.toLowerCase().trim();
@@ -276,6 +279,7 @@ export function EventModal({
   // Mutation de cadastro rápido de cliente
   const createClientMutation = trpc.clients.create.useMutation({
     onSuccess: async (newClient: any) => {
+      await quickConsent.afterCreated(newClient);
       await utils.clients.list.invalidate();
       await refetchClients();
       if (newClient?.id) {
@@ -289,7 +293,7 @@ export function EventModal({
       toast.success(`Cliente "${newClient?.name}" cadastrado e selecionado!`);
       notifySync("cliente");
     },
-    onError: (e: any) => toast.error(`Erro ao cadastrar cliente: ${e.message}`),
+    onError: (e: any) => { quickConsent.clearRequest(); toast.error(`Erro ao cadastrar cliente: ${e.message}`); },
   });
 
   const handleQuickClientSave = () => {
@@ -301,6 +305,7 @@ export function EventModal({
       toast.error("Selecione a empresa antes de cadastrar o cliente.");
       return;
     }
+    if (!quickConsent.prepare(quickClientPhone)) return;
     createClientMutation.mutate({
       name: quickClientName.trim(),
       phone: quickClientPhone.trim() || undefined,
@@ -477,7 +482,7 @@ export function EventModal({
     setPendingReminders([]);
     setAutomaticReminderTiming("day_before");
     setAutomaticReminderTime("09:00");
-    setRecordWhatsAppConsent(false);
+    quickConsent.reset();
     setPlannedTenantMaterialId(undefined);
     setPlannedQuantity("1");
     setPendingPlannedMaterials([]);
@@ -603,6 +608,7 @@ export function EventModal({
   };
 
   const handleSubmit = async () => {
+    if (createClientMutation.isPending || consentSaving) { toast.error("Finalize o cadastro e a autorização antes de salvar o agendamento."); return; }
     setSaveError(null);
     if (!clientId || !date || !startTime || !service || !artist) {
       toast.error("Preencha todos os campos obrigatórios");
@@ -664,7 +670,8 @@ export function EventModal({
       paymentMethod: paymentMethod || undefined,
       procedureType: procedureType || undefined,
       procedureTypeOther: procedureType === "outro" ? procedureTypeOther || undefined : undefined,
-      recordWhatsAppConsent,
+      // Authorization is saved explicitly in the client controls, never inferred from scheduling.
+      recordWhatsAppConsent: false,
       ...(automaticReminderTiming !== "none" ? {
         autoReminder: { timing: automaticReminderTiming, sendTime: automaticReminderTime },
       } : {}),
@@ -722,6 +729,7 @@ export function EventModal({
   };
 
   const handleClose = () => {
+    if (createClientMutation.isPending || consentSaving) return;
     onClose();
     resetForm();
   };
@@ -768,6 +776,7 @@ export function EventModal({
                 <Label htmlFor="appointment-studio">Empresa *</Label>
                 <Select
                   value={selectedStudioId}
+                  disabled={createClientMutation.isPending || consentSaving}
                   onValueChange={(value) => {
                     setSelectedStudioId(value);
                     setClientId("");
@@ -790,7 +799,9 @@ export function EventModal({
                 variant="ghost"
                 size="sm"
                 className="h-6 px-2 text-xs text-primary hover:text-primary gap-1"
+                disabled={createClientMutation.isPending || consentSaving}
                 onClick={() => {
+                  quickConsent.reset();
                   setShowQuickClient((v) => !v);
                   if (!showQuickClient) {
                     setQuickClientName(clientSearch); // pré-preenche com o que foi buscado
@@ -828,13 +839,22 @@ export function EventModal({
                     className="h-8 text-sm"
                   />
                 </div>
+                <label className="flex items-start gap-2 rounded-md border border-primary/20 p-2 text-xs">
+                  <input type="checkbox" className="mt-0.5" checked={quickConsent.checked}
+                    disabled={!quickConsent.canAuthorize || !quickClientPhone.trim() || createClientMutation.isPending}
+                    onChange={event => quickConsent.setChecked(event.target.checked)} />
+                  <span><strong>O cliente autorizou receber mensagens do estúdio</strong>
+                    <span className="mt-1 block text-muted-foreground">Ao salvar este cadastro, registrar a autorização no cliente criado. Nenhuma mensagem será enviada agora.</span>
+                    {(!quickConsent.canAuthorize || !quickClientPhone.trim()) && <span className="mt-1 block text-muted-foreground">Informe o telefone. A autorização requer uma integração ativa deste estúdio e permissão de gestor.</span>}
+                  </span>
+                </label>
                 <div className="flex gap-2 pt-1">
                   <Button
                     type="button"
                     size="sm"
                     className="h-7 text-xs flex-1"
                     onClick={handleQuickClientSave}
-                    disabled={createClientMutation.isPending}
+                    disabled={createClientMutation.isPending || consentSaving}
                   >
                     {createClientMutation.isPending ? (
                       <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Salvando...</>
@@ -847,7 +867,8 @@ export function EventModal({
                     variant="ghost"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => setShowQuickClient(false)}
+                    disabled={createClientMutation.isPending || consentSaving}
+                    onClick={() => { quickConsent.reset(); setShowQuickClient(false); }}
                   >
                     Cancelar
                   </Button>
@@ -855,7 +876,7 @@ export function EventModal({
               </div>
             )}
 
-            <Select value={clientId} onValueChange={setClientId}>
+            <Select value={clientId} onValueChange={setClientId} disabled={createClientMutation.isPending || consentSaving}>
               <SelectTrigger>
                 <SelectValue placeholder="Selecione o cliente" />
               </SelectTrigger>
@@ -940,6 +961,10 @@ export function EventModal({
               );
             })()}
           </div>
+
+          {clientId && !showQuickClient && (
+            <ClientWhatsappConsent key={`${consentStudioId}:${clientId}`} clientId={Number(clientId)} studioId={consentStudioId} enabled={isOpen && !createClientMutation.isPending} onBusyChange={setConsentSaving} />
+          )}
 
           {/* Calendário */}
           <div>
@@ -1160,10 +1185,7 @@ export function EventModal({
                   </div>
                 )}
               </div>
-              <label className={`flex items-start gap-2 text-xs text-muted-foreground ${clientId ? "cursor-pointer" : "opacity-60"}`}>
-                <input type="checkbox" checked={recordWhatsAppConsent} disabled={!clientId} onChange={(event) => setRecordWhatsAppConsent(event.target.checked)} className="mt-0.5 rounded" />
-                <span>Autorização do cliente para WhatsApp: ao marcar, registro o opt-in deste cliente neste estúdio para lembretes e confirmações. {clientId ? "" : "Selecione o cliente para autorizar."}</span>
-              </label>
+              <p className="text-xs text-muted-foreground">A autorização de mensagens é gerenciada no painel do cliente acima. Programar um lembrete não concede autorização.</p>
             </div>
           )}
 

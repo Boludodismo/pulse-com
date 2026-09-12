@@ -1,3 +1,4 @@
+import { WhatsappConsentManager } from "@/components/WhatsappConsentControls";
 import CustomerCarePanel from "@/components/CustomerCarePanel";
 import { formatMessageTimestamp } from '@shared/studioClock';
 import { useMemo, useState } from "react";
@@ -126,7 +127,6 @@ export default function MessagingCenter() {
   const [retryDialog, setRetryDialog] = useState(false);
   const [retryTarget, setRetryTarget] = useState<any>(null);
   const [retryConfirmation, setRetryConfirmation] = useState("");
-  const [consentIntegrationId, setConsentIntegrationId] = useState("");
   const {data:automationSettings}=trpc.messaging.getAutomationSettings.useQuery();
   const historyQueryInput = useMemo(() => ({
     limit: 100,
@@ -139,11 +139,6 @@ export default function MessagingCenter() {
   const { data: studios = [], isLoading: loadingStudios } = trpc.saas.studios.useQuery(undefined, { enabled: isSuperadmin });
   const { data: templates = [], isLoading: loadingTemplates } = trpc.messaging.listTemplates.useQuery();
   const { data: messageHistory = [], isLoading: loadingHistory } = trpc.messaging.listMessageHistory.useQuery(historyQueryInput);
-  const activeConsentIntegrationId = consentIntegrationId ? Number(consentIntegrationId) : integrations[0]?.id;
-  const { data: whatsappConsents = [], isLoading: loadingConsents } = trpc.messaging.listWhatsappConsents.useQuery(
-    { integrationId: activeConsentIntegrationId ?? 0 },
-    { enabled: Boolean(activeConsentIntegrationId) },
-  );
 
   // Mutations
   const saveIntegration = trpc.messaging.saveIntegration.useMutation({
@@ -186,13 +181,6 @@ export default function MessagingCenter() {
       toast.success("Nova tentativa criada na fila. O envio ocorrerá após o processamento seguro.");
     },
     onError: (e) => toast.error(e.message),
-  });
-  const setWhatsappConsent = trpc.messaging.setWhatsappConsent.useMutation({
-    onSuccess: () => {
-      utils.messaging.listWhatsappConsents.invalidate();
-      toast.success("Consentimento de WhatsApp atualizado. Nenhuma mensagem foi enviada.");
-    },
-    onError: (error) => toast.error(error.message),
   });
   const saveTemplate = trpc.messaging.saveTemplate.useMutation({
     onSuccess: () => { utils.messaging.listTemplates.invalidate(); toast.success("Template salvo!"); setTemplateDialog(false); },
@@ -567,41 +555,9 @@ export default function MessagingCenter() {
             )}
           </TabsContent>
 
-          {/* ── ABA CONSENTIMENTO ───────────────────────────────────────────── */}
+          {/* Autorizações sincronizadas com o cadastro e o agendamento */}
           <TabsContent value="consents" className="space-y-4">
-            <Card className="border-zinc-700 bg-zinc-900">
-              <CardHeader className="space-y-2">
-                <CardTitle className="flex items-center gap-2 text-white"><ShieldCheck className="h-5 w-5 text-green-400" /> Consentimento de WhatsApp</CardTitle>
-                <CardDescription className="text-zinc-400">Registre somente clientes que autorizaram receber mensagens. Esta ação não envia WhatsApp.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {integrations.length === 0 ? <p className="text-sm text-zinc-400">Cadastre uma integração ativa antes de gerenciar consentimentos.</p> : <>
-                  <Select value={String(activeConsentIntegrationId ?? "")} onValueChange={setConsentIntegrationId}>
-                    <SelectTrigger className="bg-zinc-800 border-zinc-700 text-white"><SelectValue placeholder="Selecione a integração" /></SelectTrigger>
-                    <SelectContent className="bg-zinc-800 border-zinc-700">
-                      {integrations.map((integration: any) => <SelectItem key={integration.id} value={String(integration.id)} className="text-white hover:bg-zinc-700">{integration.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-zinc-300">Sem opt-in ativo, o CRM mantém o cliente fora dos lembretes automáticos, mesmo quando a integração está em produção.</div>
-                  {loadingConsents ? <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /></div> : (
-                    <div className="grid gap-2">
-                      {whatsappConsents.map((contact: any) => {
-                        const optedIn = contact.hasWhatsappOptIn === 1 && !contact.optedOutAt;
-                        return <div key={contact.clientId} className="flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-950/30 p-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0"><p className="truncate text-sm font-medium text-white">{contact.clientName}</p><p className="text-xs text-zinc-500">{maskPhone(contact.phone)} · {optedIn ? "Opt-in ativo" : "Sem opt-in"} · <a href={`/clients/${contact.clientId}`} className="underline">Cadastro #{contact.clientId}</a></p></div>
-                          <Button aria-label={`${optedIn?'Revogar':'Registrar'} opt-in para ${contact.clientName} (#${contact.clientId})`} size="sm" variant="outline" className={optedIn ? "border-red-800 text-red-300" : "border-green-700 text-green-300"} disabled={setWhatsappConsent.isPending || !contact.phone} onClick={() => {
-                            const action = optedIn ? "revogar" : "registrar";
-                            if (!window.confirm(`Confirma ${action} o consentimento de WhatsApp deste cliente? Registre opt-in somente quando houver autorização comprovada.`)) return;
-                            if (activeConsentIntegrationId) setWhatsappConsent.mutate({ integrationId: activeConsentIntegrationId, clientId: contact.clientId, hasWhatsappOptIn: !optedIn });
-                          }}>{optedIn ? "Revogar" : "Registrar opt-in"}</Button>
-                        </div>;
-                      })}
-                      {whatsappConsents.length === 0 && <p className="py-6 text-center text-sm text-zinc-400">Nenhum cliente encontrado neste estúdio.</p>}
-                    </div>
-                  )}
-                </>}
-              </CardContent>
-            </Card>
+            <WhatsappConsentManager />
           </TabsContent>
 
           {/* ── ABA HISTÓRICO ──────────────────────────────────────────────── */}
