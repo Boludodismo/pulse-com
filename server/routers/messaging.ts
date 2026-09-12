@@ -13,10 +13,11 @@ import {
   messageAutomationSettings,
   integrationContacts,
   clients,
+  appointments,
 } from "../../drizzle/schema";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { interpolateTemplate } from "../messaging/provider";
-import { getOutboundEventIdempotencyKey, getProviderForIntegration, sendAndLog, seedDefaultTemplates } from "../messaging/service";
+import { getOutboundEventIdempotencyKey, getProviderForIntegration, sendAndLog, seedDefaultTemplates, isExpiredAppointmentReminder } from "../messaging/service";
 import { createConnectionKey, encryptIntegrationSecret, maskSecret } from "../messaging/crypto";
 import { normalizeBrazilianPhone } from "../messaging/phone";
 import { resolveManualRecipient } from "../messaging/manualRecipient";
@@ -620,6 +621,11 @@ export const messagingRouter = router({
         : and(eq(messageQueue.id, input.messageId), eq(messageQueue.studioId, ctx.studioId));
       const source = (await db.select().from(messageQueue).where(sourceCondition).limit(1))[0];
       assertRetryableMessage(source);
+      if (source.trigger?.startsWith("appointment_reminder_")) {
+        const appointment = source.appointmentId ? (await db.select({date:appointments.date,status:appointments.status}).from(appointments).where(and(eq(appointments.id,source.appointmentId),eq(appointments.studioId,source.studioId))).limit(1))[0] : undefined;
+        const settings = (await db.select({timezone:messageAutomationSettings.timezone}).from(messageAutomationSettings).where(eq(messageAutomationSettings.studioId,source.studioId)).limit(1))[0];
+        if (!appointment || isExpiredAppointmentReminder(source.trigger,appointment.date,appointment.status,Date.now(),settings?.timezone)) throw new TRPCError({code:"BAD_REQUEST",message:"Este lembrete pertence a um agendamento passado ou inativo e não pode ser reenviado."});
+      }
       const integration = await findScopedIntegration(db, source.integrationId, ctx.studioId);
       if (integration.studioId !== source.studioId || !integration.isEnabled || integration.status !== "ativo") {
         throw new TRPCError({ code: "FORBIDDEN", message: "A integração original não está disponível para reenvio nesta empresa." });
@@ -640,7 +646,7 @@ export const messagingRouter = router({
         recipientName: source.recipientName ?? undefined,
         recipientType: source.recipientType,
         message: source.message,
-        trigger: "retry",
+        trigger: source.trigger ?? "custom",
         clientId: source.clientId,
         appointmentId: source.appointmentId ?? undefined,
       });
