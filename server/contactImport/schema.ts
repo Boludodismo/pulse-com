@@ -1,6 +1,11 @@
 import mysql from 'mysql2/promise';
 export async function ensureContactImportSchema() {
  if(process.env.RUN_DB_MIGRATIONS!=='true')return;
+ await initializeContactImportSchema();
+}
+// Explicit manager imports can initialize this additive feature even where
+// replay of the application's general startup migration history is disabled.
+export async function initializeContactImportSchema() {
  const c=await mysql.createConnection(process.env.DATABASE_URL!);
  try {
   await c.query(`CREATE TABLE IF NOT EXISTS client_import_batches (
