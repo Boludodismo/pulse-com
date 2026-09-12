@@ -13,6 +13,8 @@ on:
       - 'server/messaging/consent.ts'
       - 'server/routers/messaging.ts'
       - 'drizzle/schema.ts'
+      - 'shared/appointmentTime.ts'
+      - 'scripts/test-appointment-conflicts.ts'
 permissions:
   contents: read
 jobs:
@@ -43,3 +45,4 @@ jobs:
       - run: pnpm tsx scripts/test-supplier-isolation.ts
       - run: pnpm exec vitest run server/supplier-saas-isolation.test.ts server/_core/legacyStockScope.test.ts
       - run: pnpm tsx scripts/test-contact-import.ts
+      - run: pnpm tsx scripts/test-appointment-conflicts.ts

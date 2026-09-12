@@ -38,6 +38,7 @@ import { buildAutomaticAppointmentReminderMessage, scheduleAutomaticAppointmentR
 import { firstName, formatStudioAddress } from "./messaging/messagePresentation";
 import { buildLegacyAnamneseReviewPayload } from "./anamneseReview";
 import { saveWhatsappConsent } from "./messaging/consent";
+import { formatAppointmentConflictMessage } from "../shared/appointmentTime";
 
 async function recordAppointmentWhatsappConsent(input: { studioId: number; clientId: number }) {
   const connection = await db.getDb();
@@ -645,7 +646,7 @@ export const appRouter = router({
         if (conflictCheck.hasConflict) {
           throw new TRPCError({
             code: "CONFLICT",
-            message: `Conflito de horário: o artista ${input.artist} já possui ${conflictCheck.conflicts.length} agendamento(s) neste horário.`,
+            message: formatAppointmentConflictMessage(input.artist, conflictCheck.conflicts),
           });
         }
 
@@ -840,7 +841,7 @@ export const appRouter = router({
         if (input.data.artistId && !await db.getArtistById(input.data.artistId, activeStudioId)) throw new TRPCError({ code: "FORBIDDEN", message: "Artista não pertence ao estúdio." });
         if ((input.data.date || input.data.duration || input.data.artist || input.data.artistId) && (input.data.status ?? appointmentBefore.status) !== "cancelado") {
           const availability = await db.checkAppointmentConflicts(input.data.artist ?? appointmentBefore.artist, input.data.date ?? appointmentBefore.date, input.data.duration ?? appointmentBefore.duration, input.id, activeStudioId);
-          if (availability.hasConflict) throw new TRPCError({ code: "CONFLICT", message: "Este artista já possui um agendamento neste horário." });
+          if (availability.hasConflict) throw new TRPCError({ code: "CONFLICT", message: formatAppointmentConflictMessage(input.data.artist ?? appointmentBefore.artist, availability.conflicts) });
         }
         const { depositPaid, recordWhatsAppConsent, includeArtistCard, ...restData } = input.data;
         let resolvedArtistId = restData.artistId;
