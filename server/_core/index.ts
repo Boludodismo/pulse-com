@@ -1,6 +1,7 @@
 import { ensureLegacyStockScope } from "./legacyStockScope";
 import { ensureStudioSettingsScope } from "./studioSettingsScope";
 import { ensureAppointmentCardSchema } from "./appointmentCardSchema";
+import { ensureContactImportSchema } from "../contactImport/schema";
 import {ensureStagingArtistInvitationSchema} from './stagingArtistInvitationSchema';
 import {ensureStagingIntelligentInboxSchema} from './stagingIntelligentInboxSchema';
 import { ensureStagingMessagingSchema } from "./stagingMessagingSchema";
@@ -35,6 +36,7 @@ async function startServer() {
   await ensureStudioSettingsScope();
   await ensureLegacyStockScope();
   await ensureAppointmentCardSchema();
+  await ensureContactImportSchema();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {
     await checkS3Storage();

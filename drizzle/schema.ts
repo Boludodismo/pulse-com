@@ -138,7 +138,7 @@ export const clients = mysqlTable("clients", {
 	name: varchar({ length: 255 }).notNull(),
 	email: varchar({ length: 320 }),
 	phone: varchar({ length: 20 }),
-	birthDate: timestamp({ mode: 'string' }),
+	birthDate: datetime({ mode: 'string' }),
 	instagram: varchar({ length: 100 }),
 	cep: varchar({ length: 10 }),
 	street: varchar({ length: 255 }),
