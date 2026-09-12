@@ -16,6 +16,7 @@ export default function CompleteContactImport(){
   <label className="block text-sm font-medium" htmlFor="complete-contact-file">Arquivo completo de contatos (.json)</label>
   <input id="complete-contact-file" type="file" accept=".json,application/json" disabled={running||prepare.isPending} onChange={e=>void load(e.target.files?.[0])}/>
   {prepare.isPending&&<p>Verificando arquivo e conta de destino…</p>}
+  {(prepare.error||apply.error)&&<p role="alert" className="text-red-400">{prepare.error?.message||apply.error?.message}</p>}
   {plan&&<><p className="font-medium">Destino: {plan.studioName} · Estúdio {plan.studioId}</p><p>{plan.total} cadastros: {plan.newClients} novos e {plan.matched} correspondentes. {plan.eligible} atendem ao critério administrativo de autorização.</p><p>{plan.withReview} cadastros têm observações para revisão. Telefones inválidos, compartilhados ou com recusa anterior não recebem nova autorização automática.</p>
    {!plan.integrationReady&&<p>Verifique a integração WhatsApp ativa para concluir as autorizações de envio.</p>}
    <Button onClick={()=>void run()} disabled={running||progress===plan.total}>{running?'Importando…':progress?'Continuar importação':'Importar cadastros e autorizações'}</Button>

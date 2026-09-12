@@ -4,6 +4,7 @@ import mysql, {type Connection, type RowDataPacket, type ResultSetHeader} from '
 import {createHash} from 'node:crypto';
 import {router,tenantProcedure} from '../_core/trpc';
 import {normalizeBrazilianPhone} from '../messaging/phone';
+import {initializeContactImportSchema} from '../contactImport/schema';
 import {chooseExisting,phoneAlias,phoneKey,permissionReason,type Person} from '../contactImport/matching';
 
 const basicSchema=z.object({name:z.string().min(1).max(255),email:z.string().max(320).nullable(),phone:z.string().max(20).nullable(),birthDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),instagram:z.string().max(100).nullable(),docNumber:z.string().max(50).nullable()});
@@ -48,6 +49,7 @@ export const contactImportRouter=router({
   try{
    const state=await context(c,ctx.studioId);
    if(state.studio.name!==bundle.expectedStudioName)throw new TRPCError({code:'FORBIDDEN',message:'O estúdio da sessão não corresponde ao arquivo.'});
+   await initializeContactImportSchema();
    const hash=createHash('sha256').update(input.content).digest('hex');
    await c.execute('INSERT INTO client_import_batches(studio_id,author_id,content_hash,payload_json,before_json) VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)',[ctx.studioId,ctx.user.id,hash,JSON.stringify(bundle),JSON.stringify({clients:state.existing,consents:state.consents,tags:state.tags})]);
    const [batch]=await rows(c,'SELECT id FROM client_import_batches WHERE studio_id=? AND content_hash=?',[ctx.studioId,hash]);
@@ -121,8 +123,15 @@ export const contactImportRouter=router({
   manager(ctx);const c=await connect();try{
    const [batch]=await rows(c,'SELECT id,payload_json,before_json,content_hash FROM client_import_batches WHERE studio_id=? AND id=?',[ctx.studioId,input.batchId]);
    if(!batch)throw new TRPCError({code:'NOT_FOUND'});
-   const records=await rows(c,'SELECT result_json FROM client_import_records WHERE studio_id=? AND batch_id=? ORDER BY id',[ctx.studioId,input.batchId]);
-   return {batchId:Number(batch.id),hash:String(batch.content_hash),total:JSON.parse(batch.payload_json).groups.length,results:records.map(r=>JSON.parse(r.result_json)),before:JSON.parse(batch.before_json)};
+   const records=await rows(c,'SELECT group_key,client_id,payload_json,result_json FROM client_import_records WHERE studio_id=? AND batch_id=? ORDER BY id',[ctx.studioId,input.batchId]);
+   const bundle=validateBundle(batch.payload_json),expected=new Map(bundle.groups.map(g=>[g.key,JSON.stringify(g)]));
+   const stored=records.map(r=>JSON.parse(r.payload_json) as Group);
+   const originalDataVerified=records.length===bundle.groups.length&&records.every(r=>expected.get(r.group_key)===JSON.stringify(JSON.parse(r.payload_json)));
+   const operational=await rows(c,'SELECT c.id,c.birthDate,i.has_whatsapp_opt_in,i.opted_out_at FROM clients c LEFT JOIN integration_contacts i ON i.studio_id=c.studioId AND i.client_id=c.id WHERE c.studioId=?',[ctx.studioId]);
+   const importedIds=new Set(records.map(r=>Number(r.client_id)));
+   const birthdayRules=await rows(c,"SELECT name,enabled,send_time FROM care_rules WHERE studio_id=? AND kind='birthday'",[ctx.studioId]);
+   const settings=await rows(c,'SELECT timezone FROM message_automation_settings WHERE studio_id=?',[ctx.studioId]);
+   return {batchId:Number(batch.id),hash:String(batch.content_hash),total:bundle.groups.length,originalDataVerified,forms:stored.reduce((n,g)=>n+g.sources.filter(s=>s.kind==='anamnese').length,0),botRecords:stored.reduce((n,g)=>n+g.sources.filter(s=>s.kind==='botconversa').length,0),birthdayReady:operational.filter(p=>importedIds.has(p.id)&&p.birthDate&&p.has_whatsapp_opt_in===1&&!p.opted_out_at).length,timezone:settings[0]?.timezone||'America/Sao_Paulo',birthdayRules,results:records.map(r=>JSON.parse(r.result_json)),before:JSON.parse(batch.before_json)};
   }finally{await c.end()}
  }),
 });
