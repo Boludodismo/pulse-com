@@ -7,6 +7,7 @@ import {artistInvitationsRouter} from './routers/artistInvitations';
 import {intelligentInboxRouter} from './routers/intelligentInbox';
 import {studioRelationsRouter} from './routers/studioRelations';
 import { customerCareRouter } from "./routers/customerCare";
+import { contactImportRouter } from "./routers/contactImport";
 import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
 import { assertOwnArtist, isInventoryManager } from "./inventoryAccess";
 import { z } from "zod";
@@ -3163,6 +3164,7 @@ export const appRouter = router({
 
    // ============ CONTACTS IMPORT/EXPORT ROUTER ============
   contacts: contactsRouter,
+  contactImport: contactImportRouter,
   // ============ POD SESSION — EXECUÇÃO TÉCNICA ============
   procedures: proceduresRouter,
   // ============ POD SESSION SaaS — CATÁLOGO, ESTOQUE E AUDITORIA ============

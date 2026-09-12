@@ -1,4 +1,5 @@
 import { EditClientDialog } from "@/components/EditClientDialog";
+import ImportedClientRecords from '@/components/ImportedClientRecords';
 import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { ClientCare } from "@/components/CustomerCarePanel";
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
@@ -742,6 +743,7 @@ export default function ClientProfile() {
 
         {/* Anamnese Tab */}
         {can("anamnesis") && <TabsContent value="anamnesis">
+          <ImportedClientRecords clientId={clientId} />
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
