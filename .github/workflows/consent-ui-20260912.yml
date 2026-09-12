@@ -1,0 +1,69 @@
+name: Isolated consent UI validation
+on:
+  push:
+    branches: ['feature/autorizacoes-busca-agenda-2026-09-12']
+    paths:
+      - 'scripts/apply-consent-ui-20260912.py'
+      - '.github/workflows/consent-ui-20260912.yml'
+permissions:
+  contents: write
+concurrency:
+  group: consent-ui-20260912
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'Boludodismo/pulse-com' && github.ref == 'refs/heads/feature/autorizacoes-busca-agenda-2026-09-12'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      INTELLIGENT_INBOX_ENABLED: 'false'
+      SCHEDULER_MODE: 'disabled'
+      NODE_OPTIONS: '--max-old-space-size=6144'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: |
+          npm install -g pnpm@10.4.1
+          pnpm install --frozen-lockfile
+      - name: Record pre-existing type diagnostics
+        run: pnpm check > /tmp/consent-types-before.txt 2>&1 || true
+      - name: Apply hash-guarded source changes
+        run: python3 scripts/apply-consent-ui-20260912.py
+      - name: Test consent helpers and source integration guards
+        run: pnpm exec vitest run server/whatsappConsentUi.test.ts
+      - name: Reject new TypeScript diagnostics
+        shell: bash
+        run: |
+          pnpm check > /tmp/consent-types-after.txt 2>&1 || true
+          python3 - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import re
+          def diagnostics(path):
+              return Counter(re.sub(r'\(\d+,\d+\)', '(LINE,COLUMN)', line) for line in Path(path).read_text().splitlines() if 'error TS' in line)
+          before = diagnostics('/tmp/consent-types-before.txt')
+          after = diagnostics('/tmp/consent-types-after.txt')
+          introduced = after - before
+          print('Baseline TypeScript errors:', sum(before.values()))
+          print('Updated TypeScript errors:', sum(after.values()))
+          if introduced:
+              for error, count in introduced.items(): print(count, error)
+              raise SystemExit('New TypeScript errors; refusing to commit generated changes.')
+          print('No new TypeScript diagnostics.')
+          PY
+      - name: Build without starting the application
+        run: pnpm build
+      - name: Commit only reviewed source paths to the feature branch
+        shell: bash
+        run: |
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add client/src/pages/MessagingCenter.tsx client/src/components/EventModal.tsx server/routers/messaging.ts shared/whatsappConsentUi.ts client/src/components/WhatsappConsentControls.tsx server/whatsappConsentUi.test.ts
+          git commit -m 'Add searchable client consents and explicit authorization in appointment forms'
+          git push origin HEAD:refs/heads/feature/autorizacoes-busca-agenda-2026-09-12
