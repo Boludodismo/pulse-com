@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS `integration_contacts` (
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `integration_contacts_studio_client_unique` (`studio_id`,`client_id`),
-  UNIQUE KEY `integration_contacts_studio_phone_unique` (`studio_id`,`normalized_phone`),
+  KEY `integration_contacts_studio_phone_lookup` (`studio_id`,`normalized_phone`),
   KEY `integration_contacts_integration_idx` (`integration_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

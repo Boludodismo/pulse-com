@@ -1,4 +1,5 @@
 import CustomerCarePanel from "@/components/CustomerCarePanel";
+import { formatMessageTimestamp } from '@shared/studioClock';
 import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { downloadMessageHistoryCSV } from "@/lib/messagingHistoryCsv";
@@ -126,6 +127,7 @@ export default function MessagingCenter() {
   const [retryTarget, setRetryTarget] = useState<any>(null);
   const [retryConfirmation, setRetryConfirmation] = useState("");
   const [consentIntegrationId, setConsentIntegrationId] = useState("");
+  const {data:automationSettings}=trpc.messaging.getAutomationSettings.useQuery();
   const historyQueryInput = useMemo(() => ({
     limit: 100,
     integrationId: historyIntegrationId === "all" ? undefined : Number(historyIntegrationId),
@@ -586,8 +588,8 @@ export default function MessagingCenter() {
                       {whatsappConsents.map((contact: any) => {
                         const optedIn = contact.hasWhatsappOptIn === 1 && !contact.optedOutAt;
                         return <div key={contact.clientId} className="flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-950/30 p-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0"><p className="truncate text-sm font-medium text-white">{contact.clientName}</p><p className="text-xs text-zinc-500">{maskPhone(contact.phone)} · {optedIn ? "Opt-in ativo" : "Sem opt-in"}</p></div>
-                          <Button size="sm" variant="outline" className={optedIn ? "border-red-800 text-red-300" : "border-green-700 text-green-300"} disabled={setWhatsappConsent.isPending || !contact.phone} onClick={() => {
+                          <div className="min-w-0"><p className="truncate text-sm font-medium text-white">{contact.clientName}</p><p className="text-xs text-zinc-500">{maskPhone(contact.phone)} · {optedIn ? "Opt-in ativo" : "Sem opt-in"} · <a href={`/clients/${contact.clientId}`} className="underline">Cadastro #{contact.clientId}</a></p></div>
+                          <Button aria-label={`${optedIn?'Revogar':'Registrar'} opt-in para ${contact.clientName} (#${contact.clientId})`} size="sm" variant="outline" className={optedIn ? "border-red-800 text-red-300" : "border-green-700 text-green-300"} disabled={setWhatsappConsent.isPending || !contact.phone} onClick={() => {
                             const action = optedIn ? "revogar" : "registrar";
                             if (!window.confirm(`Confirma ${action} o consentimento de WhatsApp deste cliente? Registre opt-in somente quando houver autorização comprovada.`)) return;
                             if (activeConsentIntegrationId) setWhatsappConsent.mutate({ integrationId: activeConsentIntegrationId, clientId: contact.clientId, hasWhatsappOptIn: !optedIn });
@@ -669,7 +671,7 @@ export default function MessagingCenter() {
                             {(msg.errorMessage || msg.jobError) && <p className="text-red-400 text-xs mt-1 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {msg.errorMessage ?? msg.jobError}</p>}
                           </div>
                           <div className="flex items-center justify-between gap-3 text-xs sm:block sm:text-right shrink-0">
-                            <p className="text-zinc-500">{msg.sentAt ? new Date(msg.sentAt).toLocaleString("pt-BR") : new Date(msg.createdAt).toLocaleString("pt-BR")}</p>
+                            <p className="text-zinc-500">{formatMessageTimestamp(msg.sentAt||msg.createdAt,automationSettings?.timezone)}</p>
                             <p className="mt-1 text-zinc-400">Tentativas: {msg.attemptCount}/{msg.maxAttempts || 5}</p>
                             {msg.status === "erro" && msg.deliveryStatus === "failed" && (
                               <Button

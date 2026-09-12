@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import mysql from 'mysql2/promise';
 import {ensureContactImportSchema} from '../server/contactImport/schema';
 import {contactImportRouter} from '../server/routers/contactImport';
+import {saveWhatsappConsent} from '../server/messaging/consent';
 async function main(){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(process.env.CI,'true');assert.ok(['127.0.0.1','localhost'].includes(url.hostname));assert.equal(url.pathname,'/supplier_test');
  const root=await mysql.createConnection(url.toString());await root.query('CREATE DATABASE contact_import_test CHARACTER SET utf8mb4');await root.end();
@@ -13,7 +14,7 @@ async function main(){
  'CREATE TABLE clients(id INT AUTO_INCREMENT PRIMARY KEY,studioId INT NOT NULL,name VARCHAR(255) NOT NULL,email VARCHAR(320),phone VARCHAR(20),birthDate TIMESTAMP NULL,instagram VARCHAR(100),docNumber VARCHAR(50),docType VARCHAR(20),country VARCHAR(50),artistId INT,isArchived INT DEFAULT 0)',
  'CREATE TABLE care_tags(id INT AUTO_INCREMENT PRIMARY KEY,studio_id INT,client_id INT,label VARCHAR(60),UNIQUE(studio_id,client_id,label))',
  'CREATE TABLE whatsapp_integrations(id INT PRIMARY KEY,studio_id INT,is_enabled INT,status VARCHAR(20))',
- 'CREATE TABLE integration_contacts(id INT AUTO_INCREMENT PRIMARY KEY,studio_id INT,integration_id INT,client_id INT,normalized_phone VARCHAR(32),has_whatsapp_opt_in INT DEFAULT 0,opt_in_at TIMESTAMP NULL,opt_in_source VARCHAR(100),opted_out_at TIMESTAMP NULL,UNIQUE(studio_id,client_id),UNIQUE(studio_id,normalized_phone))',
+ 'CREATE TABLE integration_contacts(id INT AUTO_INCREMENT PRIMARY KEY,studio_id INT,integration_id INT,client_id INT,normalized_phone VARCHAR(32),has_whatsapp_opt_in INT DEFAULT 0,opt_in_at TIMESTAMP NULL,opt_in_source VARCHAR(100),opted_out_at TIMESTAMP NULL,UNIQUE(studio_id,client_id),UNIQUE KEY integration_contacts_studio_phone_unique(studio_id,normalized_phone))',
  'CREATE TABLE care_rules(id INT AUTO_INCREMENT PRIMARY KEY,studio_id INT,name VARCHAR(120),kind VARCHAR(20),enabled INT,send_time VARCHAR(5))',
  'CREATE TABLE message_automation_settings(studio_id INT,timezone VARCHAR(80))',
  "INSERT INTO studios VALUES(101,'Estúdio teste'),(202,'Outro estúdio')",
@@ -64,6 +65,25 @@ async function main(){
  await c.query("CREATE TRIGGER import_failure BEFORE INSERT ON client_import_records FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic rollback check'");
  await assert.rejects(owner.importBatch({batchId:rollbackPlan.batchId,offset:0}));
  const [count]:any=await c.query('SELECT COUNT(*) AS n FROM clients WHERE studioId=101');assert.equal(count[0].n,4);assert.equal((await owner.report({batchId:rollbackPlan.batchId})).results.length,0);
- await c.end();console.log('PASS: complete original history, birthday before 1970, existing values/tags, opt-out, tenant boundaries, retry idempotence and transaction rollback');
+ // An explicit grant to a second client sharing a phone must not overwrite the first client.
+ await c.query("INSERT INTO clients(id,studioId,name,phone) VALUES(40,101,'Telefone compartilhado','+5511987654321'),(41,101,'Telefone com outra recusa','+5511987654323')");
+ const [originalConsents]:any=await c.query('SELECT * FROM integration_contacts WHERE client_id IN (10,20) ORDER BY id');
+ const consent={studioId:101,integrationId:1,clientId:40,enabled:true,source:'teste_explicito'};
+ await assert.rejects(saveWhatsappConsent({...consent,clientId:30}),{code:'NOT_FOUND'});
+ await assert.rejects(saveWhatsappConsent({...consent,integrationId:2}),{code:'NOT_FOUND'});
+ await saveWhatsappConsent(consent);
+ await saveWhatsappConsent(consent);
+ const [newConsent]:any=await c.query('SELECT * FROM integration_contacts WHERE studio_id=101 AND client_id=40');
+ assert.equal(newConsent.length,1);assert.equal(newConsent[0].has_whatsapp_opt_in,1);assert.equal(newConsent[0].opt_in_source,'teste_explicito');
+ assert.deepEqual((await c.query('SELECT * FROM integration_contacts WHERE client_id IN (10,20) ORDER BY id'))[0],originalConsents);
+ await saveWhatsappConsent({...consent,enabled:false});
+ const [revoked]:any=await c.query('SELECT * FROM integration_contacts WHERE studio_id=101 AND client_id=40');
+ assert.equal(revoked[0].has_whatsapp_opt_in,0);assert.ok(revoked[0].opted_out_at);
+ await saveWhatsappConsent({...consent,clientId:41});
+ assert.deepEqual((await c.query('SELECT * FROM integration_contacts WHERE client_id IN (10,20) ORDER BY id'))[0],originalConsents);
+ assert.equal(JSON.stringify((await c.query('SELECT * FROM clients WHERE studioId=202'))[0]),before);
+ const [phoneIndex]:any=await c.query("SHOW INDEX FROM integration_contacts WHERE Key_name='integration_contacts_studio_phone_lookup'");
+ assert.equal(phoneIndex.length,2);assert.ok(phoneIndex.every((row:any)=>Number(row.Non_unique)===1));
+ await c.end();console.log('PASS: original history, session dates, tenant isolation, rollback and client-scoped consent with shared phones');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});

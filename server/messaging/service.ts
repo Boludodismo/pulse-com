@@ -1,5 +1,7 @@
 import { getDb } from "../db";
-import { whatsappIntegrations, messageQueue, messageTemplates, integrationContacts, integrationEvents, integrationJobs, appointmentReminders, appointments } from "../../drizzle/schema";
+import { whatsappIntegrations, messageQueue, messageTemplates, integrationContacts, integrationEvents, integrationJobs, appointmentReminders, appointments, messageAutomationSettings } from "../../drizzle/schema";
+import { appointmentInstant } from "../../shared/appointmentTime";
+import { DEFAULT_STUDIO_TIMEZONE, zonedSqlDateTime } from "../../shared/studioClock";
 import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
 import type { ProviderConfig, WhatsAppProvider } from "./provider";
 import { interpolateTemplate } from "./provider";
@@ -95,11 +97,17 @@ export function isExpiredAppointmentReminder(
   appointmentDate: string | null | undefined,
   appointmentStatus: string | null | undefined,
   now = Date.now(),
+  timezone = DEFAULT_STUDIO_TIMEZONE,
 ): boolean {
   if (!trigger?.startsWith("appointment_reminder_") || !appointmentDate) return false;
   if (["cancelado", "concluido", "reagendado"].includes(appointmentStatus ?? "")) return true;
-  const timestamp = Date.parse(appointmentDate.includes("T") ? appointmentDate : appointmentDate.replace(" ", "T"));
-  return Number.isFinite(timestamp) && timestamp <= now;
+  try {
+    const appointmentClock = appointmentInstant(appointmentDate).getTime();
+    const currentClock = appointmentInstant(zonedSqlDateTime(new Date(now), timezone)).getTime();
+    return appointmentClock <= currentClock;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -252,7 +260,9 @@ export async function processPendingIntegrationJobs(limit = 10) {
         if (queueItem?.trigger?.startsWith("appointment_reminder_") && queueItem.appointmentId) {
           const appointment = (await db.select({ date: appointments.date, status: appointments.status }).from(appointments)
             .where(and(eq(appointments.id, queueItem.appointmentId), eq(appointments.studioId, job.studioId))).limit(1))[0];
-          if (!appointment || isExpiredAppointmentReminder(queueItem.trigger, appointment.date, appointment.status)) {
+          const settings = (await db.select({timezone:messageAutomationSettings.timezone}).from(messageAutomationSettings)
+            .where(eq(messageAutomationSettings.studioId, job.studioId)).limit(1))[0];
+          if (!appointment || isExpiredAppointmentReminder(queueItem.trigger, appointment.date, appointment.status, Date.now(), settings?.timezone || DEFAULT_STUDIO_TIMEZONE)) {
             throw new PermanentDeliveryError("Lembrete não enviado porque o agendamento já passou ou não está mais ativo.");
           }
         }

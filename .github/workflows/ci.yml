@@ -35,6 +35,9 @@ jobs:
       - name: Contact import matching
         run: pnpm exec vitest run server/contactImport/matching.test.ts
 
+      - name: Reminder delivery regressions
+        run: pnpm exec vitest run server/messaging.job-worker.test.ts server/messaging.automatic-reminders.test.ts server/messaging.job-claim.test.ts server/messaging.retry-guard.test.ts server/messaging/appointmentReminderSchedule.test.ts server/messaging.studio-clock.test.ts
+
       - name: Build
         env:
           VITE_AUTH_MODE: local

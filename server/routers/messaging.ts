@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, tenantProcedure } from "../_core/trpc";
 import { getDb } from "../db";
+import { saveWhatsappConsent } from "../messaging/consent";
 import {
   whatsappIntegrations,
   messageQueue,
@@ -93,7 +94,7 @@ export const messagingRouter = router({
         eq(integrationContacts.clientId, clients.id),
         eq(integrationContacts.studioId, integration.studioId),
         eq(integrationContacts.integrationId, integration.id),
-      )).where(eq(clients.studioId, integration.studioId)).limit(200);
+      )).where(and(eq(clients.studioId, integration.studioId),eq(clients.isArchived,0))).limit(200);
     }),
 
   /** Registra revogação ou opt-in informado pelo gestor; não envia mensagens. */
@@ -114,25 +115,7 @@ export const messagingRouter = router({
         eq(clients.id, input.clientId), eq(clients.studioId, integration.studioId),
       )).limit(1))[0];
       if (!client?.phone) throw new TRPCError({ code: "BAD_REQUEST", message: "O cliente precisa ter telefone cadastrado antes do consentimento." });
-      const timestamp = new Date().toISOString().slice(0, 19).replace("T", " ");
-      await db.insert(integrationContacts).values({
-        studioId: integration.studioId,
-        integrationId: integration.id,
-        clientId: client.id,
-        normalizedPhone: normalizeBrazilianPhone(client.phone),
-        hasWhatsappOptIn: input.hasWhatsappOptIn ? 1 : 0,
-        optInAt: input.hasWhatsappOptIn ? timestamp : null,
-        optInSource: input.hasWhatsappOptIn ? input.source : null,
-        optedOutAt: input.hasWhatsappOptIn ? null : timestamp,
-      }).onDuplicateKeyUpdate({ set: {
-        integrationId: integration.id,
-        normalizedPhone: normalizeBrazilianPhone(client.phone),
-        hasWhatsappOptIn: input.hasWhatsappOptIn ? 1 : 0,
-        optInAt: input.hasWhatsappOptIn ? timestamp : null,
-        optInSource: input.hasWhatsappOptIn ? input.source : null,
-        optedOutAt: input.hasWhatsappOptIn ? null : timestamp,
-      }});
-      return { ok: true };
+      return await saveWhatsappConsent({studioId:integration.studioId,integrationId:integration.id,clientId:client.id,enabled:input.hasWhatsappOptIn,source:input.source});
     }),
 
   /** Preferências de disparos automáticos, limitadas ao estúdio da sessão. */

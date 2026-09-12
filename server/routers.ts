@@ -37,6 +37,7 @@ import { normalizeBrazilianPhone } from "./messaging/phone";
 import { buildAutomaticAppointmentReminderMessage, scheduleAutomaticAppointmentReminder } from "./messaging/appointmentReminderSchedule";
 import { firstName, formatStudioAddress } from "./messaging/messagePresentation";
 import { buildLegacyAnamneseReviewPayload } from "./anamneseReview";
+import { saveWhatsappConsent } from "./messaging/consent";
 
 async function recordAppointmentWhatsappConsent(input: { studioId: number; clientId: number }) {
   const connection = await db.getDb();
@@ -53,23 +54,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
     )).limit(1))[0];
   if (!integration) return false;
 
-  const timestamp = new Date().toISOString().slice(0, 19).replace("T", " ");
-  await connection.insert(integrationContacts).values({
-    studioId: input.studioId,
-    integrationId: integration.id,
-    clientId: client.id,
-    normalizedPhone: normalizeBrazilianPhone(client.phone),
-    hasWhatsappOptIn: 1,
-    optInAt: timestamp,
-    optInSource: "agendamento_confirmado",
-    optedOutAt: null,
-  }).onDuplicateKeyUpdate({ set: {
-    normalizedPhone: normalizeBrazilianPhone(client.phone),
-    hasWhatsappOptIn: 1,
-    optInAt: timestamp,
-    optInSource: "agendamento_confirmado",
-    optedOutAt: null,
-  }});
+  await saveWhatsappConsent({studioId:input.studioId,integrationId:integration.id,clientId:client.id,enabled:true,source:'agendamento_confirmado'});
   return true;
 }
 
