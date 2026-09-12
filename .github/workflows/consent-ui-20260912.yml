@@ -31,31 +31,38 @@ jobs:
           npm install -g pnpm@10.4.1
           pnpm install --frozen-lockfile
       - name: Record pre-existing type diagnostics
-        run: pnpm check > /tmp/consent-types-before.txt 2>&1 || true
+        run: pnpm check
       - name: Apply hash-guarded source changes
-        run: python3 scripts/apply-consent-ui-20260912.py
+        run: |
+          python3 scripts/apply-consent-ui-20260912.py
+          python3 - <<'PY'
+          from pathlib import Path
+          def edit(path, before, after, expected=1):
+              p = Path(path)
+              text = p.read_text()
+              assert text.count(before) == expected, (path, before, text.count(before))
+              p.write_text(text.replace(before, after))
+          edit('server/routers/messaging.ts', '))).where(and(\n        eq(clients.studioId, integration.studioId),', ')).where(and(\n        eq(clients.studioId, integration.studioId),')
+          controls = 'client/src/components/WhatsappConsentControls.tsx'
+          edit(controls, 'busy = false, source }: {', 'busy = false, source, onBusyChange }: {')
+          edit(controls, 'busy?: boolean; source: string;', 'busy?: boolean; source: string; onBusyChange?: (busy: boolean) => void;')
+          edit(controls, '  const enabled = isWhatsappConsentEnabled(contact);', '  useEffect(() => {\n    onBusyChange?.(save.isPending);\n    return () => onBusyChange?.(false);\n  }, [save.isPending, onBusyChange]);\n  const enabled = isWhatsappConsentEnabled(contact);')
+          edit(controls, 'ClientWhatsappConsent({ clientId, studioId, enabled }: {', 'ClientWhatsappConsent({ clientId, studioId, enabled, onBusyChange }: {')
+          edit(controls, 'clientId: number; studioId: number | null; enabled: boolean;', 'clientId: number; studioId: number | null; enabled: boolean; onBusyChange?: (busy: boolean) => void;')
+          edit(controls, 'source="agendamento_autorizado_pelo_gestor" />', 'source="agendamento_autorizado_pelo_gestor" onBusyChange={onBusyChange} />')
+          modal = 'client/src/components/EventModal.tsx'
+          edit(modal, '  const consentStudioId = ', '  const [consentSaving, setConsentSaving] = useState(false);\n  const consentStudioId = ')
+          edit(modal, 'if (createClientMutation.isPending) { toast.error("Finalize o cadastro do cliente antes de salvar o agendamento."); return; }', 'if (createClientMutation.isPending || consentSaving) { toast.error("Finalize o cadastro e a autorização antes de salvar o agendamento."); return; }')
+          edit(modal, 'if (createClientMutation.isPending) return;', 'if (createClientMutation.isPending || consentSaving) return;')
+          edit(modal, 'enabled={isOpen && !createClientMutation.isPending} />', 'enabled={isOpen && !createClientMutation.isPending} onBusyChange={setConsentSaving} />')
+          p = Path(modal)
+          text = p.read_text().replace('disabled={createClientMutation.isPending}', 'disabled={createClientMutation.isPending || consentSaving}')
+          p.write_text(text)
+          PY
       - name: Test consent helpers and source integration guards
         run: pnpm exec vitest run server/whatsappConsentUi.test.ts
-      - name: Reject new TypeScript diagnostics
-        shell: bash
-        run: |
-          pnpm check > /tmp/consent-types-after.txt 2>&1 || true
-          python3 - <<'PY'
-          from collections import Counter
-          from pathlib import Path
-          import re
-          def diagnostics(path):
-              return Counter(re.sub(r'\(\d+,\d+\)', '(LINE,COLUMN)', line) for line in Path(path).read_text().splitlines() if 'error TS' in line)
-          before = diagnostics('/tmp/consent-types-before.txt')
-          after = diagnostics('/tmp/consent-types-after.txt')
-          introduced = after - before
-          print('Baseline TypeScript errors:', sum(before.values()))
-          print('Updated TypeScript errors:', sum(after.values()))
-          if introduced:
-              for error, count in introduced.items(): print(count, error)
-              raise SystemExit('New TypeScript errors; refusing to commit generated changes.')
-          print('No new TypeScript diagnostics.')
-          PY
+      - name: Validate TypeScript
+        run: pnpm check
       - name: Build without starting the application
         run: pnpm build
       - name: Commit only reviewed source paths to the feature branch
