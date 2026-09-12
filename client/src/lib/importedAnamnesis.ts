@@ -4,6 +4,7 @@ export type ImportedSource = {
   row: number;
   headers: unknown[];
   values: unknown[];
+  confirmedSessionDate?: string;
 };
 
 function field(source: ImportedSource, header: string): unknown {
@@ -58,6 +59,7 @@ export function summarizeAnamnesis(source: ImportedSource) {
   return {
     key: source.key,
     row: source.row,
+    sessionDate: source.confirmedSessionDate ? displayDate({type:'date',iso:source.confirmedSessionDate}) : null,
     amount: typeof amount === "number" && Number.isFinite(amount)
       ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 20 }).format(amount)
       : originalText(amount),

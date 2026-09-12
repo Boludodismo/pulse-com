@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import CompleteContactImport from '@/components/CompleteContactImport';
+import ConfirmImportedSessionDates from '@/components/ConfirmImportedSessionDates';
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -204,6 +205,7 @@ export default function ContactsImportExport() {
         </div>
 
         <CompleteContactImport />
+        <ConfirmImportedSessionDates />
         <Tabs defaultValue="export" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="export">

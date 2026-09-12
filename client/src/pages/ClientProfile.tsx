@@ -628,7 +628,7 @@ export default function ClientProfile() {
       </Card>
 
       {can("anamnesis") && !invited && importedAnamneseCount > 0 && (
-        <ImportedAnamnesisSummary sources={importedRecords?.flatMap(record => record.payload.sources) ?? []} />
+        <ImportedAnamnesisSummary sources={importedRecords?.flatMap(record => record.payload.sources.map(source=>({...source,confirmedSessionDate:record.result.anamnesisSessionDates?.[source.key]?.date}))) ?? []} />
       )}
 
       {/* Tabs */}
