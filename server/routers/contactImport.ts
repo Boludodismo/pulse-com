@@ -6,6 +6,7 @@ import {router,tenantProcedure} from '../_core/trpc';
 import {normalizeBrazilianPhone} from '../messaging/phone';
 import {initializeContactImportSchema} from '../contactImport/schema';
 import {chooseExisting,phoneAlias,phoneKey,permissionReason,type Person} from '../contactImport/matching';
+import {submittedSessionDate,sessionDateStats} from '../contactImport/sessionDates';
 
 const basicSchema=z.object({name:z.string().min(1).max(255),email:z.string().max(320).nullable(),phone:z.string().max(20).nullable(),birthDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),instagram:z.string().max(100).nullable(),docNumber:z.string().max(50).nullable()});
 const sourceSchema=z.object({kind:z.enum(['anamnese','botconversa']),key:z.string(),file:z.string(),sheet:z.string(),row:z.number().int().positive(),headers:z.array(z.unknown()),values:z.array(z.unknown()),metadata:z.unknown().optional()});
@@ -44,6 +45,46 @@ function validateBundle(content:string):Bundle{
  return bundle;
 }
 export const contactImportRouter=router({
+ sessionDateBatches:tenantProcedure.query(async({ctx})=>{
+  manager(ctx);const c=await connect();try{
+   const data=await rows(c,'SELECT b.id AS batch_id,b.content_hash,s.name AS studio_name,r.client_id,r.payload_json,r.result_json FROM client_import_batches b JOIN studios s ON s.id=b.studio_id JOIN client_import_records r ON r.batch_id=b.id AND r.studio_id=b.studio_id WHERE b.studio_id=? ORDER BY b.id DESC,r.id',[ctx.studioId]);
+   const batches=new Map<number,{batchId:number;hash:string;studioId:number;studioName:string;records:any[]}>();
+   for(const row of data){let batch=batches.get(Number(row.batch_id));if(!batch){batch={batchId:Number(row.batch_id),hash:String(row.content_hash),studioId:ctx.studioId,studioName:String(row.studio_name),records:[]};batches.set(batch.batchId,batch)}batch.records.push({clientId:Number(row.client_id),payload:JSON.parse(row.payload_json),result:JSON.parse(row.result_json)})}
+   return Array.from(batches.values()).map(({records,...batch})=>({...batch,...sessionDateStats(records)})).filter(b=>b.forms>0);
+  }finally{await c.end()}
+ }),
+ confirmAnamnesisSessionDates:tenantProcedure.input(z.object({batchId:z.number().int().positive(),hash:z.string().regex(/^[a-f0-9]{64}$/),expectedForms:z.number().int().positive(),expectedClients:z.number().int().positive(),basis:z.literal('submission_date')})).mutation(async({ctx,input})=>{
+  manager(ctx);const c=await connect();try{
+   await c.beginTransaction();
+   const [batch]=await rows(c,'SELECT id,content_hash,payload_json FROM client_import_batches WHERE id=? AND studio_id=? FOR UPDATE',[input.batchId,ctx.studioId]);
+   if(!batch)throw new TRPCError({code:'NOT_FOUND'});
+   if(batch.content_hash!==input.hash)throw new TRPCError({code:'CONFLICT',message:'O lote foi alterado. Atualize a conferência.'});
+   const data=await rows(c,'SELECT r.id,r.client_id,r.payload_json,r.result_json,c.id AS owned_client FROM client_import_records r LEFT JOIN clients c ON c.id=r.client_id AND c.studioId=r.studio_id WHERE r.batch_id=? AND r.studio_id=? ORDER BY r.id FOR UPDATE',[input.batchId,ctx.studioId]);
+   if(data.length!==validateBundle(batch.payload_json).groups.length)throw new TRPCError({code:'CONFLICT',message:'Conclua a importação do lote antes de confirmar as datas.'});
+   const records=data.map(r=>({id:Number(r.id),clientId:Number(r.client_id),owned:!!r.owned_client,payload:JSON.parse(r.payload_json) as Group,result:JSON.parse(r.result_json)}));
+   const before=sessionDateStats(records);
+   if(before.forms!==input.expectedForms||before.clients!==input.expectedClients||before.invalid)throw new TRPCError({code:'CONFLICT',message:'As fichas ou datas disponíveis não correspondem à conferência. Atualize a página.'});
+   const confirmedAt=new Date().toISOString();let updatedForms=0;
+   for(const record of records){
+    let changed=false;
+    for(const source of record.payload.sources){
+     if(source.kind!=='anamnese')continue;
+     if(!record.owned)throw new TRPCError({code:'FORBIDDEN'});
+     const date=submittedSessionDate(source)!;
+     const previous=record.result.anamnesisSessionDates?.[source.key];
+     if(previous){if(previous.date!==date)throw new TRPCError({code:'CONFLICT',message:'Uma ficha já possui outra data de sessão confirmada.'});continue}
+     record.result.anamnesisSessionDates??={};
+     record.result.anamnesisSessionDates[source.key]={date,basis:input.basis,confirmedBy:ctx.user.id,confirmedAt};
+     changed=true;updatedForms++;
+    }
+    if(changed)await c.execute('UPDATE client_import_records SET result_json=? WHERE id=? AND studio_id=? AND batch_id=?',[JSON.stringify(record.result),record.id,ctx.studioId,input.batchId]);
+   }
+   const saved=await rows(c,'SELECT client_id,payload_json,result_json FROM client_import_records WHERE studio_id=? AND batch_id=? ORDER BY id',[ctx.studioId,input.batchId]);
+   const verified=sessionDateStats(saved.map(r=>({clientId:Number(r.client_id),payload:JSON.parse(r.payload_json),result:JSON.parse(r.result_json)})));
+   if(verified.confirmed!==before.forms||saved.some((r,i)=>r.payload_json!==data[i].payload_json))throw new Error('Falha ao conferir as datas salvas.');
+   await c.commit();return {batchId:input.batchId,studioId:ctx.studioId,...verified,updatedForms};
+  }catch(e){await c.rollback();throw e}finally{await c.end()}
+ }),
  prepare:tenantProcedure.input(z.object({content:z.string().max(20000000)})).mutation(async({ctx,input})=>{
   manager(ctx); const bundle=validateBundle(input.content),c=await connect();
   try{

@@ -28,6 +28,7 @@ async function main(){
  const owner=caller(101),other=caller(202);
  const group=(n:number,name:string,kind='botconversa',tags:string[]=[])=>({key:`C${String(n).padStart(5,'0')}`,basic:{name,email:'novo@example.test',phone:`+551198765432${n}`,birthDate:n===1?'1952-04-25':null,instagram:null,docNumber:null},tags:['IMPORTADO',...tags],sources:[{kind,key:`R${n}`,file:'teste.xlsx',sheet:'Teste',row:n+1,headers:['Nome','Resposta','Fórmula'],values:[name,'Resposta integral\ncom acentuação',{type:'formula',formula:'=+55',cached:null}]}],review:[],blockPermission:false});
  const bundle={format:'tatuei-contact-bundle-v1',expectedStudioName:'Estúdio teste',groups:[group(1,'Ana Exemplo','anamnese'),group(2,'Bruno Exemplo','botconversa',['.Nome_Confirmado']),group(3,'Carlos Exemplo','anamnese'),group(4,'Diana Exemplo')],archive:{original:'Preservar'}};
+ for(const [i,g] of bundle.groups.entries()){g.sources[0].headers.push('Carimbo de data/hora');g.sources[0].values.push({type:'datetime',iso:`2024-10-${11+i}T00:15:00`} as any)}
  const before=JSON.stringify((await c.query('SELECT * FROM clients WHERE studioId=202'))[0]);
  const plan=await owner.prepare({content:JSON.stringify(bundle)});assert.equal(plan.matched,2);assert.equal(plan.newClients,2);
  await assert.rejects(other.importBatch({batchId:plan.batchId,offset:0}),{code:'NOT_FOUND'});
@@ -40,6 +41,25 @@ async function main(){
  const repeated=await owner.importBatch({batchId:plan.batchId,offset:0});assert.ok(repeated.results.every(r=>r.repeated));assert.equal((await owner.report({batchId:plan.batchId})).results.length,4);
  assert.equal(JSON.stringify((await c.query('SELECT * FROM clients WHERE studioId=202'))[0]),before);
  const [tags]:any=await c.query('SELECT label FROM care_tags WHERE client_id=10');assert.deepEqual(tags.map((t:any)=>t.label).sort(),['Anterior','IMPORTADO']);
+ const dateBatches=await owner.sessionDateBatches();assert.equal(dateBatches.length,1);assert.equal(dateBatches[0].forms,2);assert.equal(dateBatches[0].confirmed,0);
+ assert.equal((await other.sessionDateBatches()).length,0);
+ const dateInput={batchId:plan.batchId,hash:dateBatches[0].hash,expectedForms:2,expectedClients:2,basis:'submission_date' as const};
+ await assert.rejects(other.confirmAnamnesisSessionDates(dateInput),{code:'NOT_FOUND'});
+ await assert.rejects(owner.confirmAnamnesisSessionDates({...dateInput,expectedForms:3}),{code:'CONFLICT'});
+ await assert.rejects(owner.confirmAnamnesisSessionDates({...dateInput,hash:'0'.repeat(64)}),{code:'CONFLICT'});
+ const [dateBefore]:any=await c.query('SELECT id,payload_json,result_json FROM client_import_records ORDER BY id');
+ await c.query("CREATE TRIGGER session_date_failure BEFORE UPDATE ON client_import_records FOR EACH ROW BEGIN IF NEW.client_id=20 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic date rollback'; END IF; END");
+ await assert.rejects(owner.confirmAnamnesisSessionDates(dateInput));
+ assert.deepEqual((await c.query('SELECT id,payload_json,result_json FROM client_import_records ORDER BY id'))[0],dateBefore);
+ await c.query('DROP TRIGGER session_date_failure');
+ const dates=await owner.confirmAnamnesisSessionDates(dateInput);assert.equal(dates.confirmed,2);assert.equal(dates.updatedForms,2);assert.equal(dates.clients,2);
+ const dateHistory=await owner.history({clientId:10});assert.equal(dateHistory[0].result.anamnesisSessionDates.R1.date,'2024-10-11');assert.equal(dateHistory[0].result.anamnesisSessionDates.R1.confirmedBy,1);assert.equal(dateHistory[0].result.anamnesisSessionDates.R1.basis,'submission_date');assert.deepEqual(dateHistory[0].payload.sources,bundle.groups[0].sources);
+ assert.equal((await owner.report({batchId:plan.batchId})).originalDataVerified,true);
+ const savedDates=JSON.stringify((await c.query('SELECT id,payload_json,result_json FROM client_import_records ORDER BY id'))[0]);
+ assert.equal((await owner.confirmAnamnesisSessionDates(dateInput)).updatedForms,0);
+ assert.equal(JSON.stringify((await c.query('SELECT id,payload_json,result_json FROM client_import_records ORDER BY id'))[0]),savedDates);
+ const [untouchedBot]:any=await c.query("SELECT result_json FROM client_import_records WHERE group_key='C00002'");assert.equal(JSON.parse(untouchedBot[0].result_json).anamnesisSessionDates,undefined);
+ assert.equal(JSON.stringify((await c.query('SELECT * FROM clients WHERE studioId=202'))[0]),before);
  const rollbackBundle={...bundle,groups:[{...group(5,'Reversão Exemplo','anamnese'),key:'C00010'}]};const rollbackPlan=await owner.prepare({content:JSON.stringify(rollbackBundle)});
  await c.query("CREATE TRIGGER import_failure BEFORE INSERT ON client_import_records FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic rollback check'");
  await assert.rejects(owner.importBatch({batchId:rollbackPlan.batchId,offset:0}));
