@@ -116,10 +116,8 @@ export default function ResetPassword() {
     <div className="flex items-center justify-center min-h-screen bg-background">
       <div className="w-full max-w-sm px-4">
         <div className="flex flex-col items-center gap-2 mb-8">
-          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center">
-            <Lock className="w-6 h-6 text-primary-foreground" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">POD CRM</h1>
+          <img src="/tatuei-logo.png" alt="Logo tatuei.com" className="w-16 h-16 object-contain" />
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">tatuei.com</h1>
           <p className="text-sm text-muted-foreground">Redefinir senha</p>
         </div>
 

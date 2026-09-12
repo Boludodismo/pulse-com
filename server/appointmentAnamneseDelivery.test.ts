@@ -1,0 +1,21 @@
+import { beforeEach, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ getDb: vi.fn(), sendAndLog: vi.fn() }));
+vi.mock("./db", () => ({ getDb: mocks.getDb }));
+vi.mock("./messaging/service", () => ({ sendAndLog: mocks.sendAndLog }));
+import { queueAnamneseAfterCustomerAction } from "./appointmentActions";
+import { anamneseRequests } from "../drizzle/schema";
+beforeEach(() => { vi.clearAllMocks(); mocks.sendAndLog.mockResolvedValue({ success: true, queued: true }); });
+it("grava validade SQL UTC e enfileira o link criado para o cliente", async () => {
+ const rows = [[{ id: 14, clientId: 98 }], [{ id: 98, name: "Cliente Teste", phone: "5500000000000", email: null }], [], [], []];
+ const values = vi.fn(async (data: any) => { expect(data.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/); return [{ insertId: 123 }]; });
+ const insert = vi.fn(() => ({ values }));
+ mocks.getDb.mockResolvedValue({ select: () => { const chain: any = { from: () => chain, where: () => chain, orderBy: () => chain, limit: async () => rows.shift() }; return chain; }, insert });
+ const before = Date.now();
+ const result = await queueAnamneseAfterCustomerAction({ studioId: 7, appointmentId: 14, action: "late", actionEventKey: "test:14:late" });
+ expect(insert).toHaveBeenCalledWith(anamneseRequests);
+ const expiry = new Date(values.mock.calls[0][0].expiresAt.replace(" ", "T") + "Z").getTime();
+ expect(expiry - before).toBeGreaterThan(7 * 86400000 - 2000);
+ expect(expiry - before).toBeLessThan(7 * 86400000 + 2000);
+ expect(result.queued).toBe(true);
+ expect(mocks.sendAndLog).toHaveBeenCalledWith(expect.objectContaining({ studioId: 7, clientId: 98, recipientType: "client", message: expect.stringContaining(result.anamneseUrl!), idempotencyKey: "appointment-anamnese-action:test:14:late" }));
+});

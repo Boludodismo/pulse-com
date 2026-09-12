@@ -1,0 +1,1 @@
+ALTER TABLE `passwordResetTokens` MODIFY COLUMN `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP;

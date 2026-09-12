@@ -1,0 +1,1 @@
+ALTER TABLE `calendars` ADD `userId` int NOT NULL;

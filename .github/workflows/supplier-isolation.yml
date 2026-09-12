@@ -1,0 +1,53 @@
+name: Supplier tenant isolation
+on:
+  pull_request:
+    paths:
+      - 'server/db.ts'
+      - 'server/routers.ts'
+      - 'server/_core/legacyStockScope*'
+      - 'scripts/test-supplier-isolation.ts'
+      - '.github/workflows/supplier-isolation.yml'
+      - 'server/contactImport/**'
+      - 'server/routers/contactImport.ts'
+      - 'scripts/test-contact-import.ts'
+      - 'server/messaging/consent.ts'
+      - 'server/routers/messaging.ts'
+      - 'drizzle/schema.ts'
+      - 'shared/appointmentTime.ts'
+      - 'scripts/test-appointment-conflicts.ts'
+      - 'server/production/messagingMaintenance.ts'
+      - 'server/routers/podSaas.ts'
+      - 'server/_core/inventoryTraceSchema.ts'
+      - 'scripts/test-inventory-trace.ts'
+permissions:
+  contents: read
+jobs:
+  mysql-isolation:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: supplier_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -prootpass"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      DATABASE_URL: mysql://root:rootpass@127.0.0.1:3306/supplier_test
+      RUN_DB_MIGRATIONS: 'true'
+      MIGRATION_BASELINE_INDEX: '0'
+      AUTH_MODE: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable && corepack prepare pnpm@10.4.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tsx scripts/test-supplier-isolation.ts
+      - run: pnpm exec vitest run server/supplier-saas-isolation.test.ts server/_core/legacyStockScope.test.ts
+      - run: pnpm tsx scripts/test-contact-import.ts
+      - run: pnpm tsx scripts/test-appointment-conflicts.ts
+      - run: pnpm tsx scripts/test-inventory-trace.ts

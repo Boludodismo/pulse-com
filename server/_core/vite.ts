@@ -13,6 +13,7 @@ let viteLoaded = false;
 async function ensureViteLoaded() {
   if (!viteLoaded && process.env.NODE_ENV === "development") {
     const viteModule = await import("vite");
+    const tailwindModule = await import("@tailwindcss/vite");
     createViteServer = viteModule.createServer;
     
     // Create minimal vite config inline without importing vite.config.ts
@@ -28,6 +29,10 @@ async function ensureViteLoaded() {
           "@assets": path.resolve(__dirname, "../..", "attached_assets"),
         },
       },
+      esbuild: {
+        jsx: "automatic",
+      },
+      plugins: [tailwindModule.default()],
     };
     viteLoaded = true;
   }

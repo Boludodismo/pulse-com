@@ -1,0 +1,1 @@
+ALTER TABLE `appointments` ADD `confirmationStatus` enum('pendente','confirmado','nao_confirmado','atraso','chegada_antecipada') DEFAULT 'pendente';

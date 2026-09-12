@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
-import { UNAUTHED_ERR_MSG } from '@shared/const';
 import React from "react";
+import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
@@ -14,11 +14,6 @@ const queryClient = new QueryClient();
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
   if (typeof window === "undefined") return;
-  const authMode = (import.meta.env.VITE_AUTH_MODE as string) || "local";
-
-  // Local authentication is rendered by DashboardLayout. Redirecting to an
-  // OAuth URL here would fail because OAuth variables are not configured.
-  if (authMode === "local") return;
 
   const isUnauthorized = error.message === UNAUTHED_ERR_MSG;
 

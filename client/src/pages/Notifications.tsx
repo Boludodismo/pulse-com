@@ -1,6 +1,5 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Bell, Send, CheckCircle, XCircle, Calendar, Clock, User, Loader2,
   MessageSquare, Zap, ExternalLink, Pencil, Trash2, AlertCircle
@@ -41,7 +41,6 @@ function fromInputDatetime(val: string): string {
 
 export default function Notifications() {
   const utils = trpc.useUtils();
-  const baseUrl = window.location.origin;
 
   // Estado para modal de edição de lembrete
   const [editReminder, setEditReminder] = useState<{
@@ -57,9 +56,8 @@ export default function Notifications() {
   const [editScheduledAt, setEditScheduledAt] = useState("");
   const [editMessage, setEditMessage] = useState("");
 
-  // Estado para link WhatsApp gerado (envio imediato)
-  const [whatsAppLinks, setWhatsAppLinks] = useState<Record<number, string>>({});
   const [generatingLink, setGeneratingLink] = useState<number | null>(null);
+  const [selectedAppointmentIds, setSelectedAppointmentIds] = useState<number[]>([]);
 
   // Queries
   const { data: upcomingAppointments, isLoading: loadingAppointments } = trpc.notifications.getUpcomingAppointments.useQuery();
@@ -84,6 +82,30 @@ export default function Notifications() {
     onError: () => toast.error("Erro ao enviar lembretes"),
   });
 
+  const sendSelectedReminders = trpc.notifications.sendSelectedReminders.useMutation({
+    onSuccess: (result) => {
+      if (result.sent > 0) toast.success(`${result.sent} lembrete(s) enviado(s) com sucesso.`);
+      if (result.failed > 0) toast.error(`${result.failed} lembrete(s) não puderam ser enviados. Verifique telefone e integração.`);
+      setSelectedAppointmentIds([]);
+      utils.notifications.getNotificationLogs.invalidate();
+    },
+    onError: (error) => toast.error(error.message || "Não foi possível enviar os lembretes selecionados."),
+  });
+
+  const selectableAppointments = (upcomingAppointments || []).filter((appointment) => Boolean(appointment.clientPhone));
+  const selectedCount = selectedAppointmentIds.length;
+  const allSelectableSelected = selectableAppointments.length > 0 && selectedCount === selectableAppointments.length;
+
+  function toggleAppointmentSelection(id: number) {
+    setSelectedAppointmentIds((previous) => (
+      previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id]
+    ));
+  }
+
+  function toggleAllSelectable() {
+    setSelectedAppointmentIds(allSelectableSelected ? [] : selectableAppointments.map((appointment) => appointment.id));
+  }
+
   const updateReminder = trpc.notifications.updateReminder.useMutation({
     onSuccess: () => {
       toast.success("Lembrete atualizado!");
@@ -102,7 +124,8 @@ export default function Notifications() {
     onError: () => toast.error("Erro ao remover lembrete"),
   });
 
-  // Gerar link WhatsApp imediato para um agendamento (sem criar lembrete)
+  // Envia pelo BotConversa usando o mesmo template, variáveis e links públicos
+  // seguros do fluxo automático. Nenhum número ou URL é montado no navegador.
   async function handleSendNow(appointment: {
     id: number;
     clientName: string | null;
@@ -117,37 +140,25 @@ export default function Notifications() {
     }
     setGeneratingLink(appointment.id);
     try {
-      const result = await utils.appointments.generateWhatsAppLink.fetch({ id: appointment.id });
-      const token = result.token;
-      const confirmUrl = `${baseUrl}/confirmar?id=${appointment.id}&token=${token}`;
-      const msg =
-        `Olá ${appointment.clientName || "cliente"}! ` +
-        `Seu agendamento é dia ${formatDate(appointment.date)} às ${formatTime(appointment.date)} ` +
-        `(${appointment.service} com ${appointment.artist}).\n\n` +
-        `Responda sobre seu horário de forma rápida:\n${confirmUrl}\n\n` +
-        `Opções disponíveis: confirmar, avisar atraso, informar que não poderá comparecer ou solicitar reagendamento.`;
-      const link = buildWhatsAppLink(appointment.clientPhone, msg);
-      setWhatsAppLinks((prev) => ({ ...prev, [appointment.id]: link }));
-      window.open(link, "_blank");
-    } catch {
-      toast.error("Erro ao gerar link WhatsApp");
+      const result = await sendSelectedReminders.mutateAsync({ appointmentIds: [appointment.id] });
+      if (result.sent) toast.success("Lembrete enfileirado pelo BotConversa.");
+      if (result.failed) toast.error(result.details[0]?.error || "Não foi possível enviar pelo BotConversa.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao enviar lembrete pelo BotConversa");
     } finally {
       setGeneratingLink(null);
     }
   }
 
-  // Gerar link WhatsApp para um lembrete agendado (com a mensagem já definida)
-  function handleOpenReminderLink(reminder: {
-    clientPhone: string | null;
-    message: string;
-  }) {
-    if (!reminder.clientPhone) {
-      toast.error("Cliente sem telefone cadastrado");
-      return;
-    }
-    const link = buildWhatsAppLink(reminder.clientPhone, reminder.message);
-    window.open(link, "_blank");
-  }
+  const sendPendingReminderNow = trpc.notifications.sendPendingReminderNow.useMutation({
+    onSuccess: () => {
+      toast.success("Lembrete encaminhado à fila segura do BotConversa.");
+      setEditReminder(null);
+      refetchPending();
+      utils.notifications.getNotificationLogs.invalidate();
+    },
+    onError: (error) => toast.error(error.message || "Não foi possível encaminhar o lembrete."),
+  });
 
   // Abrir modal de edição de lembrete
   function openEditReminder(r: typeof pendingReminders extends (infer T)[] | undefined ? T : never) {
@@ -190,7 +201,7 @@ export default function Notifications() {
   };
 
   return (
-    <DashboardLayout>
+    <>
       <div className="space-y-4 sm:space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
@@ -199,14 +210,14 @@ export default function Notifications() {
             <p className="text-muted-foreground text-xs sm:text-sm">Gerencie lembretes automáticos de agendamentos</p>
           </div>
           <Button
-            onClick={() => sendReminders.mutate()}
-            disabled={sendReminders.isPending || !upcomingAppointments || upcomingAppointments.length === 0}
+    onClick={() => sendSelectedReminders.mutate({ appointmentIds: selectedAppointmentIds })}
+            disabled={sendSelectedReminders.isPending || selectedCount === 0}
             size="sm" className="sm:size-default w-full sm:w-auto text-xs sm:text-sm"
           >
-            {sendReminders.isPending ? (
+            {sendSelectedReminders.isPending ? (
               <><Loader2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4 animate-spin" /><span className="hidden sm:inline">Enviando...</span><span className="sm:hidden">Env...</span></>
             ) : (
-              <><Send className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" /><span className="hidden sm:inline">Enviar Lembretes Agora</span><span className="sm:hidden">Enviar</span></>
+              <><Send className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" /><span className="hidden sm:inline">Enviar selecionados ({selectedCount})</span><span className="sm:hidden">Enviar ({selectedCount})</span></>
             )}
           </Button>
         </div>
@@ -275,7 +286,7 @@ export default function Notifications() {
               Agendamentos Próximos (24h)
             </CardTitle>
             <CardDescription>
-              Clique em "Enviar Agora" para gerar e abrir o link WhatsApp imediatamente
+              Selecione os clientes e envie pelo provedor conectado. O botão individual continua disponível para abrir o WhatsApp manualmente.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -289,9 +300,25 @@ export default function Notifications() {
               </div>
             ) : (
               <div className="space-y-4">
+                <label className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm font-medium cursor-pointer hover:bg-muted/40">
+                  <Checkbox
+                    checked={allSelectableSelected}
+                    onCheckedChange={toggleAllSelectable}
+                    aria-label="Selecionar todos os clientes com telefone"
+                  />
+                  Selecionar todos os clientes com telefone ({selectableAppointments.length})
+                </label>
                 {upcomingAppointments.map((appointment) => (
                   <div key={appointment.id} className="rounded-lg border p-4 space-y-3">
                     <div className="flex items-start justify-between gap-3">
+                      <div className="pt-0.5">
+                        <Checkbox
+                          checked={selectedAppointmentIds.includes(appointment.id)}
+                          disabled={!appointment.clientPhone}
+                          onCheckedChange={() => toggleAppointmentSelection(appointment.id)}
+                          aria-label={`Selecionar ${appointment.clientName || "cliente"}`}
+                        />
+                      </div>
                       <div className="space-y-1 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <User className="h-4 w-4 text-muted-foreground" />
@@ -334,21 +361,6 @@ export default function Notifications() {
                       </div>
                     </div>
 
-                    {/* Link gerado — aparece após clicar em Enviar Agora */}
-                    {whatsAppLinks[appointment.id] && (
-                      <div className="rounded-md bg-green-500/10 border border-green-500/30 p-3 text-sm">
-                        <p className="text-xs text-muted-foreground mb-1">Link gerado — clique para abrir novamente:</p>
-                        <a
-                          href={whatsAppLinks[appointment.id]}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-green-600 hover:text-green-500 font-medium break-all"
-                        >
-                          <ExternalLink className="h-3 w-3 shrink-0" />
-                          Abrir WhatsApp
-                        </a>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -410,13 +422,14 @@ export default function Notifications() {
                             size="sm"
                             variant="outline"
                             className="text-green-600 border-green-600 hover:bg-green-50"
+                            disabled={sendPendingReminderNow.isPending}
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleOpenReminderLink(r);
+                              sendPendingReminderNow.mutate({ id: r.id });
                             }}
                           >
-                            <ExternalLink className="mr-1 h-3 w-3" />
-                            Enviar
+                            {sendPendingReminderNow.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
+                            Enviar pelo BotConversa
                           </Button>
                         )}
                         <Button
@@ -474,12 +487,6 @@ export default function Notifications() {
                               {log.type === "whatsapp_primary" ? "WhatsApp Auto" : "WhatsApp Reenvio"}
                             </Badge>
                           )}
-                          {log.type === "appointment_response" && (
-                            <Badge variant="outline" className="text-orange-500 border-orange-500 text-xs">
-                              <Bell className="mr-1 h-3 w-3" />
-                              Resposta do cliente
-                            </Badge>
-                          )}
                         </div>
                         <div className="text-sm text-muted-foreground">
                           {log.clientName && (
@@ -490,9 +497,6 @@ export default function Notifications() {
                           <div className="mt-1 flex items-center gap-1">
                             <Clock className="h-3 w-3" />{formatDateTime(log.sentAt)}
                           </div>
-                          {log.type === "appointment_response" && log.message && (
-                            <p className="mt-2 text-foreground">{log.message}</p>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -556,17 +560,18 @@ export default function Notifications() {
                 </p>
               </div>
 
-              {/* Link WhatsApp direto */}
+              {/* Envio seguro pela fila BotConversa */}
               {editReminder.clientPhone && (
                 <div className="rounded-md bg-green-500/10 border border-green-500/30 p-3">
-                  <p className="text-xs text-muted-foreground mb-2">Enviar agora sem esperar o horário agendado:</p>
+                  <p className="text-xs text-muted-foreground mb-2">Enviar agora pela fila segura do BotConversa:</p>
                   <Button
                     size="sm"
                     className="bg-green-600 hover:bg-green-700 text-white w-full"
-                    onClick={() => handleOpenReminderLink({ clientPhone: editReminder.clientPhone, message: editMessage })}
+                    disabled={sendPendingReminderNow.isPending}
+                    onClick={() => sendPendingReminderNow.mutate({ id: editReminder.id })}
                   >
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                    Abrir WhatsApp e Enviar Agora
+                    {sendPendingReminderNow.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                    Enviar agora pelo BotConversa
                   </Button>
                 </div>
               )}
@@ -596,6 +601,6 @@ export default function Notifications() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </DashboardLayout>
+    </>
   );
 }

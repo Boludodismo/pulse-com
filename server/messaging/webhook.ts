@@ -1,6 +1,7 @@
+import { recordCareWhatsappReply } from "./customerCare";
 import { getDb } from "../db";
 import { messageQueue, appointments } from "../../drizzle/schema";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { dispatchTemplateMessage } from "./service";
 
 /**
@@ -8,7 +9,9 @@ import { dispatchTemplateMessage } from "./service";
  * - "1" → confirma agendamento
  * - "2" → solicita remarcação
  */
-export async function handleWebhookReply(phone: string, message: string) {
+export async function handleWebhookReply(phone: string, message: string, studioId?: number, eventKey?: string) {
+  if (!studioId) throw new Error("Empresa obrigatória para receber mensagens.");
+  if (await recordCareWhatsappReply(studioId,phone,message,eventKey)) return;
   const db = await getDb();
   if (!db) return;
 
@@ -20,7 +23,9 @@ export async function handleWebhookReply(phone: string, message: string) {
   const recentMessages = await db
     .select()
     .from(messageQueue)
-    .where(eq(messageQueue.recipientPhone, normalizedPhone))
+    .where(studioId != null
+      ? and(eq(messageQueue.recipientPhone, normalizedPhone), eq(messageQueue.studioId, studioId))
+      : eq(messageQueue.recipientPhone, normalizedPhone))
     .orderBy(desc(messageQueue.createdAt))
     .limit(5);
 
@@ -41,7 +46,7 @@ export async function handleWebhookReply(phone: string, message: string) {
     .limit(1);
 
   const apt = aptRows[0];
-  if (!apt) return;
+  if (!apt || apt.studioId !== studioId) return;
 
   const aptDate = new Date(apt.date.replace(" ", "T"));
   const dataFormatada = aptDate.toLocaleDateString("pt-BR");
@@ -50,7 +55,7 @@ export async function handleWebhookReply(phone: string, message: string) {
   if (reply === "1") {
     // Cliente confirmou
     await db.update(appointments)
-      .set({ confirmationStatus: "confirmado", confirmationDelayMinutes: null, confirmationAttention: "none" })
+      .set({ confirmationStatus: "confirmado" })
       .where(eq(appointments.id, appointmentId));
 
     // Marca mensagem como respondida
@@ -73,7 +78,7 @@ export async function handleWebhookReply(phone: string, message: string) {
   } else if (reply === "2") {
     // Cliente solicitou remarcação
     await db.update(appointments)
-      .set({ status: "reagendado", confirmationStatus: "nao_confirmado", confirmationDelayMinutes: null, confirmationAttention: "pending" })
+      .set({ status: "reagendado", confirmationStatus: "nao_confirmado" })
       .where(eq(appointments.id, appointmentId));
 
     await db.update(messageQueue)

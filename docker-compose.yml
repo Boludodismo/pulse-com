@@ -7,10 +7,10 @@ services:
     container_name: podcrm_db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?defina DB_ROOT_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
       MYSQL_DATABASE: ${DB_NAME:-podcrm}
       MYSQL_USER: ${DB_USER:-podcrm}
-      MYSQL_PASSWORD: ${DB_PASS:?defina DB_PASS}
+      MYSQL_PASSWORD: ${DB_PASS:-podcrm123}
     ports:
       - "${DB_PORT:-3306}:3306"
     volumes:
@@ -32,16 +32,20 @@ services:
       - "${PORT:-8080}:8080"
     environment:
       # Database
-      DATABASE_URL: mysql://${DB_USER:-podcrm}:${DB_PASS:?defina DB_PASS}@db:3306/${DB_NAME:-podcrm}
+      DATABASE_URL: mysql://${DB_USER:-podcrm}:${DB_PASS:-podcrm123}@db:3306/${DB_NAME:-podcrm}
+      RUN_DB_MIGRATIONS: ${RUN_DB_MIGRATIONS:-true}
+      MIGRATION_BASELINE_INDEX: ${MIGRATION_BASELINE_INDEX:-14}
       
       # Auth mode
       AUTH_MODE: ${AUTH_MODE:-local}
       LOCAL_ADMIN_EMAIL: ${LOCAL_ADMIN_EMAIL:-admin@podcrm.local}
-      LOCAL_ADMIN_PASSWORD: ${LOCAL_ADMIN_PASSWORD:?defina LOCAL_ADMIN_PASSWORD}
+      LOCAL_ADMIN_PASSWORD: ${LOCAL_ADMIN_PASSWORD:-admin123}
       LOCAL_ADMIN_NAME: ${LOCAL_ADMIN_NAME:-Admin}
+      LOCAL_STUDIO_NAME: ${LOCAL_STUDIO_NAME:-Meu Estúdio}
+      SCHEDULER_MODE: ${SCHEDULER_MODE:-local}
       
       # JWT
-      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
       
       # Storage
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-disabled}
@@ -60,11 +64,13 @@ services:
       PORT: 8080
       VITE_APP_TITLE: ${VITE_APP_TITLE:-POD CRM}
       VITE_APP_LOGO: ${VITE_APP_LOGO:-}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 3
