@@ -950,3 +950,6 @@ export const inventoryBatches = mysqlTable("inventory_batches", {
  receivedQuantity: decimal({precision:12,scale:3}).notNull(), remainingQuantity: decimal({precision:12,scale:3}).notNull(),
  unitCost: decimal({precision:12,scale:4}).notNull(), receivedAt: datetime({mode:'string'}).notNull(), createdByUserId: int().notNull(),
 }, t=>[uniqueIndex('inventory_batch_receipt_unique').on(t.studioId,t.receiptKey),index('inventory_batch_material_idx').on(t.studioId,t.tenantMaterialId)]);
+
+// Keep workflow tables visible to the schema tooling as well as runtime migrations.
+export { inventoryLoans, inventoryLoanEvents, inventoryNotices, inventoryAlertPreferences } from "./inventoryWorkflowSchema";
