@@ -1,0 +1,1 @@
+ALTER TABLE `artists` ADD `color` varchar(7);

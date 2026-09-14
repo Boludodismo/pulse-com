@@ -73,7 +73,7 @@ export function exportFinancialReportToPDF(data: ExportData) {
   // Cabeçalho
   doc.setFontSize(22);
   doc.setTextColor(249, 115, 22); // Laranja
-  doc.text("POD CRM", pageWidth / 2, yPosition, { align: "center" });
+  doc.text("tatuei.com", pageWidth / 2, yPosition, { align: "center" });
 
   yPosition += 8;
   doc.setFontSize(16);

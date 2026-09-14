@@ -1,6 +1,8 @@
 import * as React from "react";
 
-const MOBILE_BREAKPOINT = 768;
+// Tablets em retrato não têm largura útil suficiente para o conteúdo do CRM
+// ao lado da navegação fixa de 280px; por isso usam o menu em sobreposição.
+const MOBILE_BREAKPOINT = 1024;
 
 export function useIsMobile() {
   const [isMobile, setIsMobile] = React.useState<boolean | undefined>(

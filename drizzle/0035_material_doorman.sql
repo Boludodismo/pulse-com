@@ -1,0 +1,1 @@
+ALTER TABLE `technical_procedures` ADD `appointmentId` int;

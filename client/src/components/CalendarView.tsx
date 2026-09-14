@@ -67,12 +67,12 @@ export function CalendarView({ visibleCalendars }: CalendarViewProps) {
     .filter((apt) => !apt.calendarId || visibleCalendars.includes(apt.calendarId))
     .map((apt) => {
       const calendar = calendars.find((c) => c.id === apt.calendarId);
-      const startDate = new Date(apt.date);
+      const startDate = new Date(apt.date.replace(" ", "T"));
       const endDate = new Date(startDate.getTime() + apt.duration * 60 * 1000);
 
       return {
         id: apt.id.toString(),
-        title: `${apt.clientName || "Cliente"} — ${apt.clientPhone || "Sem telefone"}`,
+        title: `${apt.service} — ${apt.artist}`,
         start: startDate,
         end: endDate,
         backgroundColor: calendar?.color || "#f97316",
@@ -80,13 +80,10 @@ export function CalendarView({ visibleCalendars }: CalendarViewProps) {
         textColor: "#ffffff",
         extendedProps: {
           clientId: apt.clientId,
-          clientName: apt.clientName,
-          clientPhone: apt.clientPhone,
           calendarId: apt.calendarId,
           status: apt.status,
           notes: apt.notes,
           artist: apt.artist,
-          service: apt.service,
           duration: apt.duration,
         },
       };

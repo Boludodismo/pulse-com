@@ -9,14 +9,7 @@ type UseAuthOptions = {
 };
 
 export function useAuth(options?: UseAuthOptions) {
-  const { redirectOnUnauthenticated = false } = options ?? {};
-  const authMode = (import.meta.env.VITE_AUTH_MODE as string) || "local";
-  // Avoid constructing the OAuth URL in local-auth deployments. The OAuth
-  // environment variables are intentionally absent there, and `new URL()`
-  // would otherwise throw before the local login screen can render.
-  const redirectPath =
-    options?.redirectPath ??
-    (redirectOnUnauthenticated && authMode !== "local" ? getLoginUrl() : "/");
+  const { redirectOnUnauthenticated = false, redirectPath } = options ?? {};
   const utils = trpc.useUtils();
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
@@ -71,9 +64,11 @@ export function useAuth(options?: UseAuthOptions) {
     if (meQuery.isLoading || logoutMutation.isPending) return;
     if (state.user) return;
     if (typeof window === "undefined") return;
-    if (window.location.pathname === redirectPath) return;
+    if ((import.meta.env.VITE_AUTH_MODE as string) === "local" && !redirectPath) return;
+    const target = redirectPath ?? getLoginUrl();
+    if (window.location.pathname === target) return;
 
-    window.location.href = redirectPath
+    window.location.href = target
   }, [
     redirectOnUnauthenticated,
     redirectPath,

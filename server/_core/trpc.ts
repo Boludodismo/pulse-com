@@ -1,7 +1,9 @@
+import {assertInvitedArtistAccess} from '../invitedArtistAccess';
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
+import { isUserAccessActive } from "../saas";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -17,6 +19,12 @@ const requireUser = t.middleware(async opts => {
     throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
   }
 
+  if (!(await isUserAccessActive(ctx.user))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Acesso suspenso ou expirado." });
+  }
+
+  await assertInvitedArtistAccess(ctx.user, opts.path, opts.type, await opts.getRawInput());
+
   return next({
     ctx: {
       ...ctx,
@@ -26,6 +34,26 @@ const requireUser = t.middleware(async opts => {
 });
 
 export const protectedProcedure = t.procedure.use(requireUser);
+
+// Procedimento para rotas de dados de uma empresa: tenant sempre vem da sessão.
+export const tenantProcedure = protectedProcedure.use(
+  t.middleware(async ({ ctx, next }) => {
+    if (!ctx.user) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
+    }
+    if (!ctx.user.studioId) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Usuário sem empresa ativa vinculada." });
+    }
+    return next({
+      ctx: {
+        ...ctx,
+        user: ctx.user,
+        studioId: ctx.user.studioId,
+        artistId: ctx.user.role === "collaborator" ? ctx.user.artistId : null,
+      },
+    });
+  }),
+);
 
 // Middleware para SUPER ADMIN (acesso global a todos os estúdios)
 export const superAdminProcedure = t.procedure.use(
@@ -76,7 +104,7 @@ export const adminProcedure = t.procedure.use(
 );
 
 // Middleware para COLABORADOR (acesso restrito aos próprios dados)
-export const collaboratorProcedure = t.procedure.use(
+export const collaboratorProcedure = protectedProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
@@ -109,7 +137,7 @@ export const collaboratorProcedure = t.procedure.use(
 
 // Middleware legado: artistProcedure agora aceita admin e collaborator
 // Admin vê tudo do estúdio, collaborator vê apenas seus dados
-export const artistProcedure = t.procedure.use(
+export const artistProcedure = protectedProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
@@ -122,8 +150,9 @@ export const artistProcedure = t.procedure.use(
       throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado. Apenas administradores e colaboradores." });
     }
 
-    // Validar studioId (exceto para superadmin)
-    if (!ctx.user.studioId && ctx.user.role !== 'superadmin') {
+    // Perfis de tenant precisam ter empresa; o superadmin global pode escolher
+    // explicitamente a empresa em cada procedimento que manipula dados de tenant.
+    if (!ctx.user.studioId && ctx.user.role !== "superadmin") {
       throw new TRPCError({ code: "FORBIDDEN", message: "Usuário não vinculado a um estúdio." });
     }
 
@@ -138,7 +167,7 @@ export const artistProcedure = t.procedure.use(
         user: ctx.user,
         studioId: ctx.user.studioId || null,
         // Passa o artistId para contexto (null para admins = acesso total ao estúdio)
-        artistId: ctx.user.role === 'admin' ? null : ctx.user.artistId,
+        artistId: ctx.user.role === 'collaborator' ? ctx.user.artistId : null,
       },
     });
   }),

@@ -106,6 +106,24 @@ function toIcsDateTime(dateStr: string): string {
 }
 
 /**
+ * Mantém o horário de negócio como horário local de São Paulo no arquivo ICS.
+ * Isso evita conversões implícitas por dispositivo ao importar no Apple/iCloud.
+ */
+function toIcsLocalDateTime(dateStr: string): string {
+  const [datePart, timePart = "00:00:00"] = dateStr.split(" ");
+  return `${datePart.replace(/-/g, "")}T${timePart.replace(/:/g, "")}`;
+}
+
+function addMinutesToIcsLocalDateTime(dateStr: string, minutesToAdd: number): string {
+  const [datePart, timePart = "00:00:00"] = dateStr.split(" ");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour, minute, second = "0"] = timePart.split(":");
+  const end = new Date(Date.UTC(year, month - 1, day, Number(hour), Number(minute), Number(second)) + minutesToAdd * 60_000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${end.getUTCFullYear()}${pad(end.getUTCMonth() + 1)}${pad(end.getUTCDate())}T${pad(end.getUTCHours())}${pad(end.getUTCMinutes())}${pad(end.getUTCSeconds())}`;
+}
+
+/**
  * Formata valor monetário em reais
  */
 function formatCurrency(value?: number | null): string {
@@ -276,20 +294,9 @@ function buildDescription(opts: IcsOptions): string {
 export function generateIcs(opts: IcsOptions): string {
   const { appointment, client } = opts;
 
-  const dtStart = toIcsDateTime(appointment.date);
-
-  // Calcular horário de fim
-  const startDate = new Date(
-    parseInt(appointment.date.slice(0, 4)),
-    parseInt(appointment.date.slice(5, 7)) - 1,
-    parseInt(appointment.date.slice(8, 10)),
-    parseInt(appointment.date.slice(11, 13)),
-    parseInt(appointment.date.slice(14, 16)),
-    0
-  );
-  const endDate = new Date(startDate.getTime() + appointment.duration * 60 * 1000 + 3 * 60 * 60 * 1000);
+  const dtStart = toIcsLocalDateTime(appointment.date);
+  const dtEnd = addMinutesToIcsLocalDateTime(appointment.date, appointment.duration);
   const pad = (n: number) => String(n).padStart(2, "0");
-  const dtEnd = `${endDate.getUTCFullYear()}${pad(endDate.getUTCMonth() + 1)}${pad(endDate.getUTCDate())}T${pad(endDate.getUTCHours())}${pad(endDate.getUTCMinutes())}${pad(endDate.getUTCSeconds())}Z`;
 
   // UID único para o evento
   const uid = `appointment-${appointment.id}@tatuei.com`;
@@ -299,7 +306,7 @@ export function generateIcs(opts: IcsOptions): string {
   const dtstamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
 
   // Título do evento
-  const summary = icsEscape(`${client.name} — ${client.phone?.trim() || "Sem telefone"}`);
+  const summary = icsEscape(`${appointment.service} — ${client.name} (${appointment.artist})`);
 
   // Descrição completa
   const description = buildDescription(opts);
@@ -337,11 +344,21 @@ export function generateIcs(opts: IcsOptions): string {
     "METHOD:PUBLISH",
     "X-WR-CALNAME:POD CRM - Agendamentos",
     "X-WR-TIMEZONE:America/Sao_Paulo",
+    "BEGIN:VTIMEZONE",
+    "TZID:America/Sao_Paulo",
+    "X-LIC-LOCATION:America/Sao_Paulo",
+    "BEGIN:STANDARD",
+    "TZOFFSETFROM:-0300",
+    "TZOFFSETTO:-0300",
+    "TZNAME:BRT",
+    "DTSTART:19700101T000000",
+    "END:STANDARD",
+    "END:VTIMEZONE",
     "BEGIN:VEVENT",
     foldLine(`UID:${uid}`),
     foldLine(`DTSTAMP:${dtstamp}`),
-    foldLine(`DTSTART:${dtStart}`),
-    foldLine(`DTEND:${dtEnd}`),
+    foldLine(`DTSTART;TZID=America/Sao_Paulo:${dtStart}`),
+    foldLine(`DTEND;TZID=America/Sao_Paulo:${dtEnd}`),
     foldLine(`SUMMARY:${summary}`),
     foldLine(`DESCRIPTION:${description}`),
     ...(location ? [foldLine(`LOCATION:${location}`)] : []),
@@ -377,8 +394,10 @@ export function generateGoogleCalendarUrl(opts: IcsOptions): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const dtEnd = `${endDate.getUTCFullYear()}${pad(endDate.getUTCMonth() + 1)}${pad(endDate.getUTCDate())}T${pad(endDate.getUTCHours())}${pad(endDate.getUTCMinutes())}${pad(endDate.getUTCSeconds())}`;
 
-  const title = encodeURIComponent(`${client.name} — ${client.phone?.trim() || "Sem telefone"}`);
-  const details = encodeURIComponent(buildDescription(opts));
+  const title = encodeURIComponent(`${appointment.service} — ${client.name}`);
+  const details = encodeURIComponent(
+    `Artista: ${appointment.artist}\nCliente: ${client.name}${client.phone ? `\nTelefone: ${client.phone}` : ""}${appointment.notes ? `\nObservações: ${appointment.notes}` : ""}${opts.confirmationLink ? `\nLink de confirmação: ${opts.confirmationLink}` : ""}`
+  );
   const location = encodeURIComponent(opts.studio?.address || opts.studio?.name || "");
 
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${dtStart}/${dtEnd}&details=${details}&location=${location}`;

@@ -25,6 +25,15 @@ export default function Dashboard() {
     }).format(cents / 100);
   };
 
+  const formatCompactCurrency = (cents: number) => {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      notation: 'compact',
+      maximumFractionDigits: 1,
+    }).format(cents / 100);
+  };
+
   const formatDate = (date: Date | string | null) => {
     if (!date) return "-";
     return new Date(date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
@@ -109,7 +118,10 @@ export default function Dashboard() {
               <Skeleton className="h-8 w-32" />
             ) : (
               <>
-                <div className="text-2xl font-bold">{formatCurrency(metrics?.totalRevenue || 0)}</div>
+                <div className="font-bold tabular-nums" title={formatCurrency(metrics?.totalRevenue || 0)}>
+                  <span className="text-xl sm:hidden">{formatCompactCurrency(metrics?.totalRevenue || 0)}</span>
+                  <span className="hidden text-2xl sm:block">{formatCurrency(metrics?.totalRevenue || 0)}</span>
+                </div>
                 <p className="text-xs text-muted-foreground">Em todas as transações</p>
               </>
             )}
@@ -165,7 +177,7 @@ export default function Dashboard() {
                         {index + 1}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{client.name}</p>
+                        <p className="font-medium whitespace-normal break-words leading-snug">{client.name}</p>
                         <p className="text-sm text-muted-foreground">
                           {formatCurrency(client.totalSpent)}
                         </p>
@@ -220,7 +232,7 @@ export default function Dashboard() {
                         <Cake className="h-5 w-5 text-primary" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{client.name}</p>
+                        <p className="font-medium whitespace-normal break-words leading-snug">{client.name}</p>
                         <p className="text-sm text-muted-foreground">
                           {client.phone || "Sem telefone"}
                         </p>

@@ -4,21 +4,22 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertTriangle, FileText, User, Calendar } from "lucide-react";
+import { AlertTriangle, FileText, User } from "lucide-react";
 import { useLocation } from "wouter";
 
 export default function RiskAlerts() {
   const [, setLocation] = useLocation();
   const [filterLevel, setFilterLevel] = useState<string>("all");
 
-  // Buscar todas as fichas de anamnese com risco
-  const { data: allAnamnesis, isLoading } = trpc.anamnesis.getRiskAlerts.useQuery();
+  // Une a ficha pública atual e o histórico legado, uma prioridade por cliente.
+  const { data: allAnamnesis, isLoading } = trpc.anamnesis.riskAlerts.useQuery();
 
   // Filtrar por nível de risco
+  const priorityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
   const filteredAnamnesis = allAnamnesis?.filter((record) => {
     if (filterLevel === "all") return true;
     return record.riskLevel === filterLevel;
-  }) || [];
+  }).sort((a, b) => priorityOrder[b.riskLevel] - priorityOrder[a.riskLevel]) || [];
 
   // Contar por nível de risco
   const criticalCount = allAnamnesis?.filter(r => r.riskLevel === "critical").length || 0;
@@ -46,7 +47,7 @@ export default function RiskAlerts() {
   const getRiskLabel = (level: string) => {
     switch (level) {
       case "critical":
-        return "🚨 Bloqueio preventivo";
+        return "🚨 Risco Crítico";
       case "high":
         return "⚠️ Risco Alto";
       case "medium":
@@ -73,7 +74,10 @@ export default function RiskAlerts() {
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Alertas de Risco</h1>
         <p className="text-muted-foreground text-xs sm:text-sm">
-          Triagem operacional de condições autodeclaradas e histórico de atenção
+          Prioridades baseadas nas informações relatadas na ficha mais recente de cada cliente
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Estes alertas apoiam a triagem do estúdio e não substituem avaliação ou diagnóstico médico.
         </p>
       </div>
 
@@ -83,12 +87,12 @@ export default function RiskAlerts() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-red-500" />
-              Bloqueio preventivo
+              Risco Crítico
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold text-red-500">{criticalCount}</p>
-            <p className="text-xs text-muted-foreground mt-1">Não prosseguir automaticamente</p>
+            <p className="text-xs text-muted-foreground mt-1">Requer atenção imediata</p>
           </CardContent>
         </Card>
 
@@ -127,7 +131,7 @@ export default function RiskAlerts() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold text-green-500">{lowCount}</p>
-            <p className="text-xs text-muted-foreground mt-1">Sem fator autodeclarado</p>
+            <p className="text-xs text-muted-foreground mt-1">Sem preocupações</p>
           </CardContent>
         </Card>
       </div>
@@ -167,8 +171,7 @@ export default function RiskAlerts() {
           ) : (
             <div className="space-y-4">
               {filteredAnamnesis.map((record) => {
-                let riskFactors: any[] = [];
-                try { riskFactors = record.riskFactors ? JSON.parse(record.riskFactors) : []; } catch {}
+                const riskFactors = record.riskFactors || [];
 
                 return (
                   <Card key={record.id} className="border-l-4" style={{
@@ -195,9 +198,6 @@ export default function RiskAlerts() {
                           <div className="flex items-center gap-2 text-sm">
                             <User className="h-4 w-4 text-muted-foreground" />
                             <span className="font-medium">{record.clientName}</span>
-                            <Badge variant="secondary" className="text-[10px]">
-                              {record.source === "public_link" ? "Ficha via link" : "Ficha manual"}
-                            </Badge>
                           </div>
                         </div>
                         <div className="flex gap-2">
@@ -209,11 +209,16 @@ export default function RiskAlerts() {
                             <User className="h-4 w-4 mr-2" />
                             Ver Cliente
                           </Button>
-                          {record.source === "manual" && (
-                            <Button variant="outline" size="sm" onClick={() => window.open(`/anamnese/view/${record.id}`, '_blank')}>
-                              <FileText className="h-4 w-4 mr-2" /> Ver Ficha
-                            </Button>
-                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => record.source === "legacy"
+                              ? window.open(`/anamnese/view/${record.sourceId}`, '_blank')
+                              : setLocation(`/clients/${record.clientId}`)}
+                          >
+                            <FileText className="h-4 w-4 mr-2" />
+                            Ver Ficha
+                          </Button>
                         </div>
                       </div>
 
@@ -225,15 +230,15 @@ export default function RiskAlerts() {
                             Fatores de Risco Identificados
                           </h4>
                           <div className="space-y-2">
-                            {riskFactors.map((factor: any, index: number) => (
-                              <div key={index} className="flex items-start gap-2 text-sm">
-                                <span className="font-medium text-muted-foreground min-w-[100px]">
+                            {riskFactors.map((factor: { category: string; description: string; severity: string }, index: number) => (
+                              <div key={index} className="flex flex-wrap items-start gap-2 text-sm">
+                                <Badge variant="outline" className={getRiskBadgeClass(factor.severity)}>
+                                  {factor.severity === "critical" ? "Crítico" : factor.severity === "high" ? "Alto" : factor.severity === "medium" ? "Médio" : "Baixo"}
+                                </Badge>
+                                <span className="font-medium text-muted-foreground min-w-[90px]">
                                   {factor.category}:
                                 </span>
-                                <span>
-                                  {factor.description}
-                                  {factor.guidance && <span className="block text-muted-foreground mt-1">Conduta sugerida: {factor.guidance}</span>}
-                                </span>
+                                <span className="min-w-0 flex-1">{factor.description}</span>
                               </div>
                             ))}
                           </div>
@@ -247,9 +252,6 @@ export default function RiskAlerts() {
           )}
         </CardContent>
       </Card>
-      <p className="text-xs text-muted-foreground">
-        Esta triagem usa informações declaradas pelo cliente e serve como apoio operacional. Não substitui avaliação, diagnóstico ou liberação de profissional de saúde.
-      </p>
     </div>
   );
 }

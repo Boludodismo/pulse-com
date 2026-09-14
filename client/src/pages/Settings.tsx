@@ -7,25 +7,38 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Settings as SettingsIcon, Building2, Palette, Clock, Users, Loader2, Plus, Pencil, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
 
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, "0")}:00`);
+
 export default function Settings() {
   const utils = trpc.useUtils();
   
   const { data: settings, isLoading } = trpc.settings.get.useQuery();
+  const { data: automationSettings } = trpc.messaging.getAutomationSettings.useQuery();
   const { data: artists } = trpc.artists.list.useQuery();
   
   const updateSettings = trpc.settings.update.useMutation({
     onSuccess: () => {
       toast.success("Configurações salvas com sucesso!");
       utils.settings.get.invalidate();
+      utils.auth.me.invalidate();
+      utils.saas.studios.invalidate();
     },
     onError: () => {
       toast.error("Erro ao salvar configurações");
     },
+  });
+  const updateAutomationSettings = trpc.messaging.updateAutomationSettings.useMutation({
+    onSuccess: () => {
+      utils.messaging.getAutomationSettings.invalidate();
+      toast.success("Automação do BotConversa salva com sucesso!");
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const createArtist = trpc.artists.create.useMutation({
@@ -70,12 +83,13 @@ export default function Settings() {
   });
 
   const [notificationSettings, setNotificationSettings] = useState({
-    enableBirthdayReminders: settings?.enableBirthdayReminders === 1,
-    enableAppointmentReminders: settings?.enableAppointmentReminders === 1,
-    reminderDaysBefore: settings?.reminderDaysBefore ?? 1,
-    reminderSendTime: settings?.reminderSendTime ?? "09:00",
-    reminderResend: settings?.reminderResend === 1,
-    reminderResendTime: settings?.reminderResendTime ?? "18:00",
+    enableBirthdayReminders: automationSettings?.birthdayMessagesEnabled === 1,
+    enableAppointmentReminders: automationSettings?.appointmentRemindersEnabled === 1,
+    reminderDaysBefore: automationSettings?.appointmentDaysBefore ?? 1,
+    reminderSendTime: automationSettings?.appointmentSendTime ?? "10:00",
+    enableOneHourReminder: automationSettings?.oneHourRemindersEnabled === 1,
+    reminderResend: false,
+    reminderResendTime: "18:00",
   });
 
   // Sincroniza os estados quando os dados do servidor chegarem
@@ -96,15 +110,19 @@ export default function Settings() {
       primaryColor: settings.primaryColor || "#f97316",
       secondaryColor: settings.secondaryColor || "#fed7aa",
     });
-    setNotificationSettings({
-      enableBirthdayReminders: settings.enableBirthdayReminders === 1,
-      enableAppointmentReminders: settings.enableAppointmentReminders === 1,
-      reminderDaysBefore: settings.reminderDaysBefore ?? 1,
-      reminderSendTime: settings.reminderSendTime ?? "09:00",
-      reminderResend: settings.reminderResend === 1,
-      reminderResendTime: settings.reminderResendTime ?? "18:00",
-    });
   }, [settings]);
+
+  useEffect(() => {
+    if (!automationSettings) return;
+    setNotificationSettings((current) => ({
+      ...current,
+      enableBirthdayReminders: automationSettings.birthdayMessagesEnabled === 1,
+      enableAppointmentReminders: automationSettings.appointmentRemindersEnabled === 1,
+      reminderDaysBefore: automationSettings.appointmentDaysBefore ?? 1,
+      reminderSendTime: automationSettings.appointmentSendTime ?? "10:00",
+      enableOneHourReminder: automationSettings.oneHourRemindersEnabled === 1,
+    }));
+  }, [automationSettings]);
 
   const [artistDialogOpen, setArtistDialogOpen] = useState(false);
   const [newArtist, setNewArtist] = useState({
@@ -125,13 +143,13 @@ export default function Settings() {
   };
 
   const handleSaveNotifications = () => {
-    updateSettings.mutate({
-      enableBirthdayReminders: notificationSettings.enableBirthdayReminders ? 1 : 0,
-      enableAppointmentReminders: notificationSettings.enableAppointmentReminders ? 1 : 0,
-      reminderDaysBefore: notificationSettings.reminderDaysBefore,
-      reminderSendTime: notificationSettings.reminderSendTime,
-      reminderResend: notificationSettings.reminderResend ? 1 : 0,
-      reminderResendTime: notificationSettings.reminderResendTime,
+    updateAutomationSettings.mutate({
+      appointmentRemindersEnabled: notificationSettings.enableAppointmentReminders,
+      appointmentDaysBefore: notificationSettings.reminderDaysBefore,
+      appointmentSendTime: notificationSettings.reminderSendTime,
+      oneHourRemindersEnabled: notificationSettings.enableOneHourReminder,
+      birthdayMessagesEnabled: notificationSettings.enableBirthdayReminders,
+      birthdaySendTime: "09:00",
     });
   };
 
@@ -540,7 +558,7 @@ export default function Settings() {
                   <div className="space-y-0.5">
                     <Label htmlFor="birthdayReminders">Lembretes de Aniversário</Label>
                     <p className="text-sm text-muted-foreground">
-                      Receba notificações de aniversários de clientes
+                      Envie uma mensagem automática pelo BotConversa no aniversário do cliente
                     </p>
                   </div>
                   <Switch
@@ -559,7 +577,7 @@ export default function Settings() {
                   <div className="space-y-0.5">
                     <Label htmlFor="appointmentReminders">Lembretes de Agendamento</Label>
                     <p className="text-sm text-muted-foreground">
-                      Receba notificações de agendamentos próximos
+                      Envie uma mensagem automática pelo BotConversa antes dos agendamentos
                     </p>
                   </div>
                   <Switch
@@ -574,8 +592,8 @@ export default function Settings() {
                   />
                 </div>
 
-                <Button onClick={handleSaveNotifications} disabled={updateSettings.isPending}>
-                  {updateSettings.isPending ? (
+                <Button onClick={handleSaveNotifications} disabled={updateAutomationSettings.isPending}>
+                  {updateAutomationSettings.isPending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Salvando...
@@ -592,7 +610,7 @@ export default function Settings() {
               <CardHeader>
                 <CardTitle>Lembrete WhatsApp</CardTitle>
                 <CardDescription>
-                  Configure como e quando os lembretes serão enviados aos clientes via WhatsApp
+                  Configure quando o CRM cria os jobs de lembrete para o BotConversa.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -611,51 +629,45 @@ export default function Settings() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="reminderSendTime">Horário do envio</Label>
-                    <Input
-                      id="reminderSendTime"
-                      type="time"
+                    <Select
                       value={notificationSettings.reminderSendTime}
-                      onChange={(e) => setNotificationSettings({ ...notificationSettings, reminderSendTime: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">Horário em que o lembrete será enviado</p>
+                      onValueChange={(value) => setNotificationSettings({ ...notificationSettings, reminderSendTime: value })}
+                    >
+                      <SelectTrigger id="reminderSendTime">
+                        <SelectValue placeholder="Escolha uma hora" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {HOUR_OPTIONS.map((hour) => <SelectItem key={hour} value={hour}>{hour}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Escolha uma hora inteira entre 00:00 e 23:00</p>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="reminderResend">Reenviar lembrete</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Enviar um segundo lembrete no mesmo dia
-                    </p>
+                <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-muted/30 p-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="oneHourReminder">Lembrete automático uma hora antes</Label>
+                    <p className="text-xs text-muted-foreground">Envia ao cliente com opt-in e ao artista atribuído no agendamento, quando ambos tiverem telefone válido.</p>
                   </div>
                   <Switch
-                    id="reminderResend"
-                    checked={notificationSettings.reminderResend}
-                    onCheckedChange={(checked) => setNotificationSettings({ ...notificationSettings, reminderResend: checked })}
+                    id="oneHourReminder"
+                    checked={notificationSettings.enableOneHourReminder}
+                    onCheckedChange={(checked) => setNotificationSettings({ ...notificationSettings, enableOneHourReminder: checked })}
                   />
                 </div>
 
-                {notificationSettings.reminderResend && (
-                  <div className="space-y-2">
-                    <Label htmlFor="reminderResendTime">Horário do reenvio</Label>
-                    <Input
-                      id="reminderResendTime"
-                      type="time"
-                      value={notificationSettings.reminderResendTime}
-                      onChange={(e) => setNotificationSettings({ ...notificationSettings, reminderResendTime: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">Horário do segundo envio</p>
-                  </div>
-                )}
+                <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  O reenvio de falhas é manual e fica na aba <strong>Histórico</strong> da Central de Mensagens. Ele não bloqueia os lembretes automáticos.
+                </div>
 
-                <Button onClick={handleSaveNotifications} disabled={updateSettings.isPending}>
-                  {updateSettings.isPending ? (
+                <Button onClick={handleSaveNotifications} disabled={updateAutomationSettings.isPending}>
+                  {updateAutomationSettings.isPending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Salvando...
                     </>
                   ) : (
-                    "Salvar Configurações WhatsApp"
+                    "Salvar Automação BotConversa"
                   )}
                 </Button>
               </CardContent>

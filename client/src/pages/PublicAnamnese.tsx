@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRoute } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,7 @@ function normaliseDateValue(value: string): string {
   // Raw 8-digit string
   if (/^\d{8}$/.test(value)) return applyDateMask(value);
   // ISO date (YYYY-MM-DD or timestamp)
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10).split("-").reverse().join("/");
   const d = new Date(value);
   if (!isNaN(d.getTime())) return d.toLocaleDateString("pt-BR");
   return value;
@@ -66,9 +67,12 @@ export default function PublicAnamnese() {
   const [currentStep, setCurrentStep] = useState(0);
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionPending = useRef(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isCompleted, setIsCompleted] = useState(false);
   const [attemptedNext, setAttemptedNext] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [isReviewMode, setIsReviewMode] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
 
   const { data, isLoading, error } = trpc.anamnese.getRequestByToken.useQuery(
@@ -78,20 +82,16 @@ export default function PublicAnamnese() {
 
   const submitMutation = trpc.anamnese.submitAnamnese.useMutation({
     onSuccess: () => {
-      // setIsCompleted primeiro para desmontar o formulário, depois toast
-      // no próximo tick para evitar o erro removeChild durante reconciliação do React
+      // A resposta do servidor confirma a gravação. A página pública não deve
+      // chamar o teste administrativo de sincronização nem depender de um toast.
       setIsCompleted(true);
-      setTimeout(() => {
-        toast.success("Anamnese enviada com sucesso!", {
-          description: "Obrigado por preencher. O estúdio receberá suas informações.",
-        });
-      }, 0);
+      setIsSubmitting(false);
+      submissionPending.current = false;
     },
     onError: (err) => {
+      submissionPending.current = false;
       setIsSubmitting(false);
-      setTimeout(() => {
-        toast.error("Erro ao enviar", { description: err.message });
-      }, 0);
+      setSubmissionError(err.message || "Não foi possível enviar. Tente novamente.");
     },
   });
 
@@ -105,8 +105,9 @@ export default function PublicAnamnese() {
       ];
       const dateStr = `${today.getDate()} de ${months[today.getMonth()]} de ${today.getFullYear()}`;
 
-      if (data.isEditing && data.existingPayload) {
-        setIsEditMode(true);
+      if (data.existingPayload) {
+        setIsEditMode(Boolean(data.isEditing));
+        setIsReviewMode(Boolean(data.isReview));
         const payload = data.existingPayload as Record<string, any>;
         // Normalise date field in existing payload
         if (payload.client_dob) {
@@ -118,7 +119,7 @@ export default function PublicAnamnese() {
         });
       } else {
         const rawDob = data.client.birthDate
-          ? new Date(data.client.birthDate).toLocaleDateString("pt-BR")
+          ? normaliseDateValue(String(data.client.birthDate))
           : "";
         setFormData({
           client_name: data.client.name || "",
@@ -169,7 +170,7 @@ export default function PublicAnamnese() {
     );
   }
 
-  if (error) {
+  if (error && !isCompleted) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-4">
         <Card className="max-w-md w-full border-zinc-800 bg-zinc-900">
@@ -185,7 +186,7 @@ export default function PublicAnamnese() {
 
   if (isCompleted) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-4">
+      <div key="completed" role="status" className="min-h-screen flex items-center justify-center bg-zinc-950 p-4">
         <Card className="max-w-md w-full border-zinc-800 bg-zinc-900 text-center">
           <CardHeader>
             <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-4" />
@@ -247,7 +248,8 @@ export default function PublicAnamnese() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
+    if (submissionPending.current || isCompleted) return;
     setAttemptedNext(true);
     if (!canGoNext()) {
       toast.error("Campos obrigatórios", {
@@ -255,12 +257,14 @@ export default function PublicAnamnese() {
       });
       return;
     }
+    submissionPending.current = true;
+    setSubmissionError(null);
     setIsSubmitting(true);
-    await submitMutation.mutateAsync({
+    submitMutation.mutate({
       token,
       payload: formData,
       // null (sem submissão anterior) deve virar undefined para não acionar o modo edição
-      submissionId: data?.existingSubmissionId != null ? data.existingSubmissionId : undefined,
+      submissionId: data?.isEditing && data.existingSubmissionId != null ? data.existingSubmissionId : undefined,
     });
   };
 
@@ -291,7 +295,7 @@ export default function PublicAnamnese() {
           return (
             <div key={field.key} className="space-y-1.5">
               <Label className="text-zinc-300 text-sm">
-                {field.label}
+                <span>{field.label}</span>
                 {field.required && <span className="text-orange-400 ml-1">*</span>}
               </Label>
               <Input
@@ -312,10 +316,14 @@ export default function PublicAnamnese() {
         return (
           <div key={field.key} className="space-y-1.5">
             <Label className="text-zinc-300 text-sm">
-              {field.label}
+              <span>{field.label}</span>
               {field.required && <span className="text-orange-400 ml-1">*</span>}
             </Label>
             <Input
+              id={field.key}
+              aria-label={field.label}
+              type={field.key === "emergency_contact_phone" ? "tel" : "text"}
+              inputMode={field.key === "emergency_contact_phone" ? "tel" : undefined}
               value={value}
               onChange={(e) => handleFieldChange(field.key, e.target.value)}
               placeholder={field.placeholder || field.label}
@@ -330,7 +338,7 @@ export default function PublicAnamnese() {
         return (
           <div key={field.key} className="space-y-1.5">
             <Label className="text-zinc-300 text-sm">
-              {field.label}
+              <span>{field.label}</span>
               {field.required && <span className="text-orange-400 ml-1">*</span>}
             </Label>
             <div className="relative">
@@ -366,7 +374,7 @@ export default function PublicAnamnese() {
         return (
           <div key={field.key} className="space-y-1.5">
             <Label className="text-zinc-300 text-sm">
-              {field.label}
+              <span>{field.label}</span>
               {field.required && <span className="text-orange-400 ml-1">*</span>}
             </Label>
             <Textarea
@@ -387,7 +395,7 @@ export default function PublicAnamnese() {
         return (
           <div key={field.key} className="space-y-2">
             <Label className="text-zinc-300 text-sm">
-              {field.label}
+              <span>{field.label}</span>
               {field.required && <span className="text-orange-400 ml-1">*</span>}
             </Label>
             <RadioGroup
@@ -446,7 +454,7 @@ export default function PublicAnamnese() {
                 htmlFor={field.key}
                 className="font-normal cursor-pointer leading-relaxed text-zinc-300 text-sm"
               >
-                {field.label}
+                <span>{field.label}</span>
                 {field.required && <span className="text-orange-400 ml-1">*</span>}
               </Label>
             </div>
@@ -466,17 +474,19 @@ export default function PublicAnamnese() {
   const progressPercent = Math.round(((currentStep + 1) / steps.length) * 100);
 
   return (
-    <div className="min-h-screen bg-zinc-950 p-4 py-8">
+    <div key="form" lang="pt-BR" className="min-h-screen bg-zinc-950 p-4 py-8">
       {/* Header */}
       <div className="max-w-2xl mx-auto mb-6 text-center">
         <h1 className="text-2xl font-bold text-white tracking-tight">
           {anamneseSchema.title}
         </h1>
         <p className="text-zinc-400 text-sm mt-1">{anamneseSchema.subtitle}</p>
-        {isEditMode && (
+        {(isEditMode || isReviewMode) && (
           <div className="mt-3 inline-flex items-center gap-2 bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs px-3 py-1.5 rounded-full">
             <span className="h-1.5 w-1.5 rounded-full bg-orange-400 animate-pulse" />
-            Modo Edição — seus dados estão pré-preenchidos. Corrija o que precisar e envie novamente.
+            <span>{isEditMode
+              ? "Modo Edição — seus dados estão pré-preenchidos. Corrija o que precisar e envie novamente."
+              : "Revisão de ficha — seus dados anteriores foram carregados. Atualize somente o que mudou."}</span>
           </div>
         )}
       </div>
@@ -523,6 +533,9 @@ export default function PublicAnamnese() {
           <CardContent className="pt-6 space-y-5">
             {currentStepData.fields.map(renderField)}
 
+            {submissionError && (
+              <p role="alert" className="text-red-400 text-sm">{submissionError}</p>
+            )}
             <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-0 sm:justify-between pt-4 border-t border-zinc-800">
               <Button
                 variant="outline"
@@ -531,7 +544,7 @@ export default function PublicAnamnese() {
                 className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-white text-xs sm:text-sm"
               >
                 <ChevronLeft className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                Anterior
+                <span>Anterior</span>
               </Button>
 
               {currentStep < steps.length - 1 ? (
@@ -540,7 +553,7 @@ export default function PublicAnamnese() {
                   disabled={isSubmitting}
                   className="bg-orange-500 hover:bg-orange-600 text-white text-xs sm:text-sm"
                 >
-                  Próximo
+                  <span>Próximo</span>
                   <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4 ml-1" />
                 </Button>
               ) : (
@@ -549,14 +562,12 @@ export default function PublicAnamnese() {
                   disabled={isSubmitting}
                   className="bg-orange-500 hover:bg-orange-600 text-white text-xs sm:text-sm w-full sm:w-auto"
                 >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 mr-2 animate-spin" />
-                      Enviando...
-                    </>
-                  ) : (
-                    "Enviar Ficha"
-                  )}
+                  <span className="inline-flex items-center gap-2" translate="no">
+                    {isSubmitting && (
+                      <Loader2 aria-hidden="true" className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
+                    )}
+                    <span>{isSubmitting ? "Enviando..." : "Enviar Ficha"}</span>
+                  </span>
                 </Button>
               )}
             </div>

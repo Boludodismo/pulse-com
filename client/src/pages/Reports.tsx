@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import DashboardLayout from "@/components/DashboardLayout";
 import { ArtistRevenueChart } from "@/components/ArtistRevenueChart";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -7,8 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { TrendingUp, TrendingDown, DollarSign, CreditCard, Calendar, Download, Package, User, ChevronDown, ChevronUp } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, CreditCard, Calendar, Download, Package, User, ChevronDown, ChevronUp, FileSpreadsheet } from "lucide-react";
 import { exportFinancialReportToPDF } from "@/lib/exportPDF";
+import { exportFinancialReportToCSV } from "@/lib/exportCSV";
 import { toast } from "sonner";
 
 const COLORS = ["#fb923c", "#f97316", "#ea580c", "#c2410c", "#92220c"];
@@ -154,9 +154,37 @@ export default function Reports() {
     }
   };
 
+  const handleExportCSV = () => {
+    try {
+      if (!summary || !transactions || !categoryData || !paymentData) {
+        toast.error("Aguarde o carregamento dos dados.");
+        return;
+      }
+
+      const periodNames: Record<string, string> = {
+        "current-month": "Mês Atual",
+        "last-3-months": "Últimos 3 Meses",
+        "last-6-months": "Últimos 6 Meses",
+        "last-12-months": "Últimos 12 Meses",
+        "current-year": "Ano Atual",
+      };
+
+      exportFinancialReportToCSV({
+        period: periodNames[period] || period,
+        summary,
+        transactions,
+        categoryBreakdown: categoryData,
+        paymentMethodBreakdown: paymentData,
+      });
+      toast.success("Relatório CSV exportado com sucesso!");
+    } catch (error) {
+      console.error("Erro ao exportar CSV:", error);
+      toast.error("Erro ao exportar CSV. Tente novamente.");
+    }
+  };
+
   return (
-    <DashboardLayout>
-      <div className="space-y-6">
+    <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -189,6 +217,16 @@ export default function Reports() {
             >
               <Download className="h-4 w-4" />
               <span className="hidden sm:inline">Exportar </span>PDF
+            </Button>
+            <Button
+              onClick={handleExportCSV}
+              disabled={isLoading}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              <span className="hidden sm:inline">Exportar </span>CSV
             </Button>
           </div>
         </div>
@@ -288,7 +326,7 @@ export default function Reports() {
                     }}
                   />
                   <Legend />
-                  <Bar dataKey="revenue" fill="#a855f7" name="Receita" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="revenue" fill="var(--primary)" name="Receita" radius={[8, 8, 0, 0]} />
                   <Bar dataKey="expenses" fill="#ef4444" name="Despesas" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -439,7 +477,7 @@ export default function Reports() {
         <Card className="mt-4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5 text-violet-400" />
+              <Package className="h-5 w-5 text-primary" />
               Insumos por Artista
             </CardTitle>
             <CardDescription>Custo de materiais por artista no período selecionado</CardDescription>
@@ -457,7 +495,7 @@ export default function Reports() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
                   <div className="bg-muted/40 rounded-lg p-3 text-center">
                     <p className="text-xs text-muted-foreground">Total de Sessões</p>
-                    <p className="text-2xl font-bold text-violet-400">{consumableReport.totalSessions}</p>
+                    <p className="text-2xl font-bold text-primary">{consumableReport.totalSessions}</p>
                   </div>
                   <div className="bg-muted/40 rounded-lg p-3 text-center">
                     <p className="text-xs text-muted-foreground">Custo Total de Insumos</p>
@@ -483,8 +521,8 @@ export default function Reports() {
                       onClick={() => setExpandedArtist(expandedArtist === artist.artistName ? null : artist.artistName)}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-violet-500/20 flex items-center justify-center">
-                          <User className="h-4 w-4 text-violet-400" />
+                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
+                          <User className="h-4 w-4 text-primary" />
                         </div>
                         <div>
                           <p className="font-medium">{artist.artistName}</p>
@@ -553,6 +591,5 @@ export default function Reports() {
           </CardContent>
         </Card>
       </div>
-    </DashboardLayout>
   );
 }

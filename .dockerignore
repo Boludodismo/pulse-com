@@ -11,7 +11,6 @@ pnpm-debug.log*
 .DS_Store
 .vscode
 .idea
-.manus
 *.test.ts
 *.spec.ts
 coverage

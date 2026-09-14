@@ -1,0 +1,1 @@
+ALTER TABLE `notificationLogs` MODIFY COLUMN `type` enum('appointment_reminder','birthday_reminder','whatsapp_primary','whatsapp_resend') NOT NULL;

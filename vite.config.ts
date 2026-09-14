@@ -10,7 +10,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Base plugins that are always needed
-const plugins = [react({ jsxRuntime: "automatic" }), tailwindcss(), vitePluginManusRuntime()];
+const plugins = [react(), tailwindcss(), vitePluginManusRuntime()];
+
+// Add dev-only plugins in development
+if (process.env.NODE_ENV === "development") {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { jsxLocPlugin } = require("@builder.io/vite-plugin-jsx-loc");
+    plugins.push(jsxLocPlugin());
+  } catch (e) {
+    console.debug("Dev plugins not available");
+  }
+}
 
 export default defineConfig({
   plugins,

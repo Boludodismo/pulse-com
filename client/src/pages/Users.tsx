@@ -12,8 +12,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import { Plus, Search, Edit, Trash2, Power, PowerOff, UserCircle, KeyRound, Eye } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { UserProfilePhotoField } from "@/components/UserProfilePhotoField";
 
 export default function Users() {
   const [, navigate] = useLocation();
@@ -36,8 +34,6 @@ export default function Users() {
     role: "collaborator" as "superadmin" | "admin" | "collaborator",
     studioId: null as number | null,
     artistId: null as number | null,
-    profilePhotoUrl: null as string | null,
-    profilePhotoKey: null as string | null,
   });
   const [newPassword, setNewPassword] = useState("");
   const [createError, setCreateError] = useState("");
@@ -89,9 +85,9 @@ export default function Users() {
   });
 
   const updateUserMutation = trpc.users.update.useMutation({
-    onSuccess: async () => {
+    onSuccess: () => {
       toast.success("Usuário atualizado com sucesso!");
-      await Promise.all([utils.users.list.invalidate(), utils.auth.me.invalidate()]);
+      utils.users.list.invalidate();
       setIsEditModalOpen(false);
       setSelectedUser(null);
     },
@@ -121,8 +117,6 @@ export default function Users() {
       role: "collaborator",
       studioId: null,
       artistId: null,
-      profilePhotoUrl: null,
-      profilePhotoKey: null,
     });
     setCreateError("");
   };
@@ -149,8 +143,6 @@ export default function Users() {
         role: formData.role,
         studioId: formData.studioId,
         artistId: formData.artistId,
-        profilePhotoUrl: formData.profilePhotoUrl,
-        profilePhotoKey: formData.profilePhotoKey,
       });
     } else {
       if (!formData.openId || !formData.name) {
@@ -171,8 +163,6 @@ export default function Users() {
       role: user.role,
       studioId: user.studioId,
       artistId: user.artistId,
-      profilePhotoUrl: user.profilePhotoUrl ?? null,
-      profilePhotoKey: user.profilePhotoKey ?? null,
     });
     setIsEditModalOpen(true);
   };
@@ -195,8 +185,6 @@ export default function Users() {
       email: formData.email || undefined,
       role: formData.role,
       artistId: formData.artistId,
-      profilePhotoUrl: formData.profilePhotoUrl,
-      profilePhotoKey: formData.profilePhotoKey,
     });
   };
 
@@ -231,7 +219,7 @@ export default function Users() {
 
   const getRoleBadge = (role: string) => {
     const variants: Record<string, { variant: any; label: string }> = {
-      superadmin: { variant: "destructive", label: "Super Admin" },
+      superadmin: { variant: "destructive", label: "Superadministrador" },
       admin: { variant: "default", label: "Admin" },
       collaborator: { variant: "secondary", label: "Colaborador" },
     };
@@ -283,11 +271,11 @@ export default function Users() {
             </div>
             <Select value={roleFilter} onValueChange={setRoleFilter}>
               <SelectTrigger className="w-full sm:w-[140px] text-xs sm:text-sm">
-                <SelectValue placeholder="Role" />
+                <SelectValue placeholder="Perfil" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todos os roles</SelectItem>
-                <SelectItem value="superadmin">Super Admin</SelectItem>
+                <SelectItem value="all">Todos os perfis</SelectItem>
+                <SelectItem value="superadmin">Superadministrador</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
                 <SelectItem value="collaborator">Colaborador</SelectItem>
               </SelectContent>
@@ -312,13 +300,59 @@ export default function Users() {
               ))}
             </div>
           ) : filteredUsers && filteredUsers.length > 0 ? (
-            <div className="overflow-x-auto">
-            <Table>
+            <>
+            <div className="space-y-3 sm:hidden">
+              {filteredUsers.map((user) => {
+                const linkedArtist = artists?.find((artist) => artist.id === user.artistId);
+                return (
+                  <div key={user.id} className="rounded-xl border bg-card p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <button
+                        onClick={() => navigate(`/users/${user.id}`)}
+                        className="flex min-w-0 items-start gap-2 text-left hover:text-orange-400"
+                      >
+                        <UserCircle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+                        <span className="break-words font-medium underline decoration-dotted underline-offset-4">
+                          {user.name || "Sem nome"}
+                        </span>
+                      </button>
+                      {getStatusBadge(user.isActive)}
+                    </div>
+                    <p className="mt-2 break-all text-xs text-muted-foreground">{user.email || "Sem e-mail"}</p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {getRoleBadge(user.role)}
+                      {linkedArtist && <Badge variant="outline">Artista: {linkedArtist.name}</Badge>}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1 border-t pt-2">
+                      <Button variant="ghost" size="icon" onClick={() => navigate(`/users/${user.id}`)} title="Ver detalhes" aria-label="Ver detalhes">
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleEdit(user)} title="Editar" aria-label="Editar usuário">
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleToggleStatus(user)} title={user.isActive === 1 ? "Desativar" : "Ativar"} aria-label={user.isActive === 1 ? "Desativar usuário" : "Ativar usuário"}>
+                        {user.isActive === 1 ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
+                      </Button>
+                      {authMode === "local" && (
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenSetPassword(user)} title="Redefinir senha" aria-label="Redefinir senha">
+                          <KeyRound className="h-4 w-4 text-blue-500" />
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" onClick={() => handleDeleteConfirm(user)} title="Excluir" aria-label="Excluir usuário">
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="hidden overflow-x-auto sm:block">
+            <Table className="min-w-[680px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-xs sm:text-sm">Nome</TableHead>
+                  <TableHead className="min-w-[210px] text-xs sm:text-sm">Nome</TableHead>
                   <TableHead className="hidden sm:table-cell text-xs sm:text-sm">Email</TableHead>
-                  <TableHead className="text-xs sm:text-sm">Role</TableHead>
+                  <TableHead className="min-w-[130px] text-xs sm:text-sm">Perfil</TableHead>
                   <TableHead className="hidden md:table-cell text-xs sm:text-sm">Artista Vinculado</TableHead>
                   <TableHead className="text-xs sm:text-sm">Status</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
@@ -329,27 +363,22 @@ export default function Users() {
                   const linkedArtist = artists?.find((a) => a.id === user.artistId);
                   return (
                     <TableRow key={user.id}>
-                      <TableCell className="font-medium">
+                      <TableCell className="min-w-[210px] font-medium">
                         <button
                           onClick={() => navigate(`/users/${user.id}`)}
                           className="flex items-center gap-2 hover:text-orange-400 transition-colors cursor-pointer text-left"
                         >
-                          <Avatar className="h-9 w-9 border shrink-0">
-                            {user.profilePhotoUrl && <AvatarImage src={user.profilePhotoUrl} alt={`Foto de ${user.name || "usuário"}`} className="object-cover" />}
-                            <AvatarFallback className="text-xs">
-                              {(user.name || "U").trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="underline decoration-dotted underline-offset-4">
+                          <UserCircle className="h-5 w-5 text-muted-foreground" />
+                          <span className="whitespace-normal break-words underline decoration-dotted underline-offset-4">
                             {user.name || "Sem nome"}
                           </span>
                         </button>
                       </TableCell>
                       <TableCell>{user.email || "-"}</TableCell>
-                      <TableCell>{getRoleBadge(user.role)}</TableCell>
+                      <TableCell className="min-w-[130px]">{getRoleBadge(user.role)}</TableCell>
                       <TableCell>{linkedArtist ? linkedArtist.name : "-"}</TableCell>
                       <TableCell>{getStatusBadge(user.isActive)}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="min-w-[210px] text-right">
                         <div className="flex justify-end gap-1">
                           <Button variant="ghost" size="icon" onClick={() => navigate(`/users/${user.id}`)} title="Ver detalhes">
                             <Eye className="h-4 w-4" />
@@ -386,6 +415,7 @@ export default function Users() {
               </TableBody>
             </Table>
             </div>
+            </>
           ) : (
             <div className="text-center py-12">
               <UserCircle className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
@@ -458,7 +488,7 @@ export default function Users() {
 
       {/* Modal de Criação */}
       <Dialog open={isCreateModalOpen} onOpenChange={(open) => { setIsCreateModalOpen(open); if (!open) setCreateError(""); }}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Criar Novo Usuário</DialogTitle>
             <DialogDescription>Preencha os dados do novo usuário</DialogDescription>
@@ -482,13 +512,6 @@ export default function Users() {
               />
             </div>
             )}
-            <UserProfilePhotoField
-              name={formData.name}
-              profilePhotoUrl={formData.profilePhotoUrl}
-              profilePhotoKey={formData.profilePhotoKey}
-              onChange={(photo) => setFormData({ ...formData, ...photo })}
-              disabled={createUserMutation.isPending || createLocalUserMutation.isPending}
-            />
             <div>
               <Label htmlFor="name">
                 Nome <span className="text-red-500">*</span>
@@ -575,19 +598,12 @@ export default function Users() {
 
       {/* Modal de Edição */}
       <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Editar Usuário</DialogTitle>
             <DialogDescription>Atualize os dados do usuário</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <UserProfilePhotoField
-              name={formData.name}
-              profilePhotoUrl={formData.profilePhotoUrl}
-              profilePhotoKey={formData.profilePhotoKey}
-              onChange={(photo) => setFormData({ ...formData, ...photo })}
-              disabled={updateUserMutation.isPending}
-            />
             <div>
               <Label htmlFor="edit-name">
                 Nome <span className="text-red-500">*</span>

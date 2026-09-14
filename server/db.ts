@@ -1,25 +1,18 @@
-import {
-  eq,
-  desc,
-  and,
-  gte,
-  lte,
-  or,
-  like,
-  sql,
-  ne,
-  inArray,
-  isNull,
-} from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
+import { clientPatchFromAnamnese } from "../shared/clientPersonal";
+import { parseAnamneseExpiry } from "./anamneseTime";
+import { anamneseExpiryForDatabase } from "./anamneseTime";
+import { appointmentInstant, appointmentsOverlap } from "../shared/appointmentTime";
+import { eq, desc, and, gte, lte, or, like, sql, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import {
-  InsertUser,
-  users,
-  clients,
-  appointments,
-  anamnesisRecords,
-  transactions,
-  clientNotes,
+import { 
+  InsertUser, 
+  users, 
+  clients, 
+  appointments, 
+  anamnesisRecords, 
+  transactions, 
+  clientNotes, 
   galleryImages,
   notificationLogs,
   studioSettings,
@@ -29,7 +22,6 @@ import {
   calendars,
   anamneseRequests,
   anamneseSubmissions,
-  anamnesisRiskHistory,
   studios,
   InsertClient,
   InsertAppointment,
@@ -44,7 +36,6 @@ import {
   InsertCalendar,
   InsertAnamneseRequest,
   InsertAnamneseSubmission,
-  InsertAnamnesisRiskHistory,
   suppliers,
   materials,
   stockMovements,
@@ -58,36 +49,19 @@ import {
   appointmentReminders,
   InsertAppointmentReminder,
   AppointmentReminder,
-  postSaleFollowups,
-  salesLeads,
-  waitlistEntries,
-  InsertSalesLead,
-  InsertWaitlistEntry,
   collaboratorRates,
-  procedureKits,
-  procedureKitItems,
-  technicalProcedures,
-  procedureConsumables,
-  procedureEvents,
-  catalogBrands,
-  catalogProductLines,
-  catalogVariants,
-  supplierCatalogOfferings,
-  materialLots,
+  studioInvitations,
+  userModulePermissions,
+  integrationSchedules,
 } from "../drizzle/schema";
-import { ENV } from "./_core/env";
-import { POST_SALE_STAGES, type PostSaleStage } from "../shared/postSale";
+import { ENV } from './_core/env';
 
 // ============ DATE HELPERS ============
 /** Converte Date | string | null para string ISO (YYYY-MM-DD HH:MM:SS) compatível com MySQL mode:'string' */
 export function toDateStr(d: Date | string | null | undefined): string {
-  if (!d) return new Date().toISOString().slice(0, 19).replace("T", " ");
-  if (typeof d === "string") {
-    // Normalize ISO timestamps such as 2026-08-24T18:00:00.000Z to the
-    // DATETIME/TIMESTAMP representation expected by MySQL.
-    return d.includes("T") ? d.slice(0, 19).replace("T", " ") : d;
-  }
-  return d.toISOString().slice(0, 19).replace("T", " ");
+  if (!d) return new Date().toISOString().slice(0, 19).replace('T', ' ');
+  if (typeof d === 'string') return d;
+  return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
 /**
@@ -95,7 +69,7 @@ export function toDateStr(d: Date | string | null | undefined): string {
  * Usa o horário local do servidor para evitar deslocamento de fuso.
  */
 export function toLocalDateStr(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const pad = (n: number) => String(n).padStart(2, '0');
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
@@ -104,9 +78,9 @@ export function toLocalDateStr(d: Date): string {
 
 /** Formata Date | string | null para exibição no frontend */
 export function formatDate(d: Date | string | null | undefined): string {
-  if (!d) return "";
-  const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleDateString("pt-BR");
+  if (!d) return '';
+  const date = typeof d === 'string' ? new Date(d) : d;
+  return date.toLocaleDateString('pt-BR');
 }
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -121,6 +95,23 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+export async function getIntegrationScheduleByTaskUid(taskUid: string) {
+  const database = await getDb();
+  if (!database) return null;
+  return (await database.select().from(integrationSchedules)
+    .where(eq(integrationSchedules.scheduleCronTaskUid, taskUid)).limit(1))[0] ?? null;
+}
+
+export async function recordIntegrationScheduleRun(id: number, result: { error?: string | null }) {
+  const database = await getDb();
+  if (!database) return;
+  await database.update(integrationSchedules).set({
+    lastRunAt: toDateStr(new Date()),
+    lastError: result.error ?? null,
+    updatedAt: toDateStr(new Date()),
+  }).where(eq(integrationSchedules.id, id));
 }
 
 // ============ USER HELPERS ============
@@ -156,9 +147,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     textFields.forEach(assignNullable);
 
     if (user.lastSignedIn !== undefined) {
-      const normalizedLastSignedIn = toDateStr(user.lastSignedIn);
-      values.lastSignedIn = normalizedLastSignedIn;
-      updateSet.lastSignedIn = normalizedLastSignedIn;
+      values.lastSignedIn = toDateStr(new Date(user.lastSignedIn));
+      updateSet.lastSignedIn = toDateStr(new Date(user.lastSignedIn));
     }
     if (user.role !== undefined) {
       values.role = user.role;
@@ -189,11 +179,7 @@ export async function getUserByEmail(email: string) {
     console.warn("[Database] Cannot get user: database not available");
     return undefined;
   }
-  const result = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, email.trim().toLowerCase()))
-    .limit(1);
+  const result = await db.select().from(users).where(eq(users.email, email.trim().toLowerCase())).limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 export async function getUserByOpenId(openId: string) {
@@ -203,22 +189,18 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
-  const result = await db
-    .select()
-    .from(users)
-    .where(eq(users.openId, openId))
-    .limit(1);
+  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 
-export async function listAllUsers() {
+export async function listAllUsers(studioId?: number) {
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot list users: database not available");
     return [];
   }
 
-  const result = await db.select().from(users).orderBy(desc(users.createdAt));
+  const result = await db.select().from(users).where(studioId ? eq(users.studioId, studioId) : undefined).orderBy(desc(users.createdAt));
   return result;
 }
 
@@ -233,17 +215,7 @@ export async function getUserById(id: number) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-export async function createUser(data: {
-  openId: string;
-  name?: string;
-  email?: string;
-  role?: "superadmin" | "admin" | "collaborator";
-  studioId?: number | null;
-  artistId?: number | null;
-  passwordHash?: string;
-  profilePhotoUrl?: string | null;
-  profilePhotoKey?: string | null;
-}) {
+export async function createUser(data: { openId: string; name?: string; email?: string; role?: "superadmin" | "admin" | "collaborator"; studioId?: number | null; artistId?: number | null; passwordHash?: string }) {
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot create user: database not available");
@@ -259,28 +231,12 @@ export async function createUser(data: {
     artistId: data.artistId ?? null,
     isActive: 1,
     passwordHash: data.passwordHash ?? null,
-    profilePhotoUrl: data.profilePhotoUrl ?? null,
-    profilePhotoKey: data.profilePhotoKey ?? null,
   });
 
   return result;
 }
 
-export async function updateUser(
-  id: number,
-  data: {
-    name?: string;
-    email?: string;
-    role?: "superadmin" | "admin" | "collaborator";
-    studioId?: number | null;
-    artistId?: number | null;
-    isActive?: number;
-    passwordHash?: string;
-    lastSignedIn?: string;
-    profilePhotoUrl?: string | null;
-    profilePhotoKey?: string | null;
-  },
-) {
+export async function updateUser(id: number, data: { name?: string; email?: string; role?: "superadmin" | "admin" | "collaborator"; studioId?: number | null; artistId?: number | null; isActive?: number; passwordHash?: string; lastSignedIn?: string }) {
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot update user: database not available");
@@ -294,16 +250,9 @@ export async function updateUser(
   if (data.studioId !== undefined) updateData.studioId = data.studioId;
   if (data.artistId !== undefined) updateData.artistId = data.artistId;
   if (data.isActive !== undefined) updateData.isActive = data.isActive;
-  if (data.passwordHash !== undefined)
-    updateData.passwordHash = data.passwordHash;
-  if (data.profilePhotoUrl !== undefined)
-    updateData.profilePhotoUrl = data.profilePhotoUrl;
-  if (data.profilePhotoKey !== undefined)
-    updateData.profilePhotoKey = data.profilePhotoKey;
-  if (data.lastSignedIn !== undefined) {
-    updateData.lastSignedIn = toDateStr(data.lastSignedIn);
-  }
-  const result = await db.update(users).set(updateData).where(eq(users.id, id));
+  if (data.passwordHash !== undefined) updateData.passwordHash = data.passwordHash;
+  if (data.lastSignedIn !== undefined) updateData.lastSignedIn = toDateStr(new Date(data.lastSignedIn));
+  const result = await db.update(users).set(updateData).where(eq(users.id, id));;
   return result;
 }
 
@@ -320,55 +269,45 @@ export async function deleteUser(id: number) {
 
 // ============ CLIENT HELPERS ============
 
-export async function listClients(
-  studioId?: number | null,
-  artistId?: number | null,
-) {
+export async function listClients(studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
-
-  const conditions = [];
-
-  // Filtrar por studioId (obrigatório exceto para superadmin)
+  const conditions = [eq(clients.isArchived, 0)];
   if (studioId !== null && studioId !== undefined) {
     conditions.push(eq(clients.studioId, studioId));
   }
-
+  
   // Se artistId for fornecido (colaborador), filtra apenas seus clientes
   // Se for null (admin ou superadmin), retorna todos do estúdio
   if (artistId !== null && artistId !== undefined) {
     conditions.push(eq(clients.artistId, artistId));
   }
-
-  const result =
-    conditions.length > 0
-      ? await db
-          .select()
-          .from(clients)
-          .where(and(...conditions))
-          .orderBy(desc(clients.createdAt))
-      : await db.select().from(clients).orderBy(desc(clients.createdAt));
+  
+  const result = conditions.length > 0
+    ? await db.select().from(clients).where(and(...conditions)).orderBy(desc(clients.createdAt))
+    : await db.select().from(clients).orderBy(desc(clients.createdAt));
   return result;
 }
 
-export async function searchClients(
-  term: string,
-  startDate?: Date,
-  endDate?: Date,
-) {
+export async function searchClients(term: string, startDate?: Date, endDate?: Date, studioId?: number | null) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const searchTerm = `%${term}%`;
-
+  
   const conditions = [
+    eq(clients.isArchived, 0),
     or(
       like(clients.name, searchTerm),
       like(clients.email, searchTerm),
       like(clients.phone, searchTerm),
-    ),
+      sql`EXISTS (SELECT 1 FROM care_tags t WHERE t.client_id = ${clients.id} AND t.studio_id = ${clients.studioId} AND t.label LIKE ${searchTerm})`
+    )
   ];
-
+  if (studioId !== null && studioId !== undefined) {
+    conditions.push(eq(clients.studioId, studioId));
+  }
+  
   // Adicionar filtro de período se fornecido
   if (startDate) {
     conditions.push(gte(clients.createdAt, toDateStr(startDate)));
@@ -376,47 +315,43 @@ export async function searchClients(
   if (endDate) {
     conditions.push(lte(clients.createdAt, toDateStr(endDate)));
   }
-
+  
   const result = await db
     .select()
     .from(clients)
     .where(and(...conditions))
     .orderBy(desc(clients.createdAt))
     .limit(10);
-
+  
   return result;
 }
 
 export async function getClientById(id: number) {
   const db = await getDb();
   if (!db) return null;
-
-  const result = await db
-    .select()
-    .from(clients)
-    .where(eq(clients.id, id))
-    .limit(1);
+  
+  const result = await db.select().from(clients).where(eq(clients.id, id)).limit(1);
   return result.length > 0 ? result[0] : null;
 }
 
 export async function createClient(data: InsertClient) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   const result = await db.insert(clients).values(data);
   const insertId = Number(result[0].insertId);
-
+  
   // Retorna o cliente criado
   const client = await getClientById(insertId);
   if (!client) throw new Error("Failed to retrieve created client");
-
+  
   return client;
 }
 
 export async function updateClient(id: number, data: Partial<InsertClient>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   await db.update(clients).set(data).where(eq(clients.id, id));
   return { success: true };
 }
@@ -424,7 +359,7 @@ export async function updateClient(id: number, data: Partial<InsertClient>) {
 export async function deleteClient(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   await db.delete(clients).where(eq(clients.id, id));
   return { success: true };
 }
@@ -432,29 +367,26 @@ export async function deleteClient(id: number) {
 export async function updateClientLoyaltyLevel(id: number) {
   const db = await getDb();
   if (!db) return;
-
+  
   const client = await getClientById(id);
   if (!client) return;
-
+  
   let newLevel: "Bronze" | "Prata" | "Ouro" = "Bronze";
-
+  
   if (client.totalSpent >= 100000 || client.appointmentCount >= 5) {
     newLevel = "Ouro";
   } else if (client.totalSpent >= 50000 || client.appointmentCount >= 3) {
     newLevel = "Prata";
   }
-
+  
   if (newLevel !== client.loyaltyLevel) {
-    await db
-      .update(clients)
-      .set({ loyaltyLevel: newLevel })
-      .where(eq(clients.id, id));
+    await db.update(clients).set({ loyaltyLevel: newLevel }).where(eq(clients.id, id));
   }
 }
 
 // ============ APPOINTMENT HELPERS ============
 
-export async function listAppointments(studioId?: number | null) {
+export async function listAppointments(studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
@@ -468,10 +400,10 @@ export async function listAppointments(studioId?: number | null) {
       duration: appointments.duration,
       service: appointments.service,
       artist: appointments.artist,
+      artistId: appointments.artistId,
+      includeArtistCard: appointments.includeArtistCard,
       status: appointments.status,
       confirmationStatus: appointments.confirmationStatus,
-      confirmationDelayMinutes: appointments.confirmationDelayMinutes,
-      confirmationAttention: appointments.confirmationAttention,
       notes: appointments.notes,
       referenceImageUrl: appointments.referenceImageUrl,
       referenceImageKey: appointments.referenceImageKey,
@@ -481,16 +413,21 @@ export async function listAppointments(studioId?: number | null) {
       signalStatus: appointments.signalStatus,
       paymentStatus: appointments.paymentStatus,
       paymentMethod: appointments.paymentMethod,
+      procedureType: appointments.procedureType,
+      procedureTypeOther: appointments.procedureTypeOther,
       createdAt: appointments.createdAt,
       updatedAt: appointments.updatedAt,
       studioId: appointments.studioId,
       clientName: clients.name,
-      clientPhone: clients.phone,
-      clientEmail: clients.email,
     })
     .from(appointments)
     .leftJoin(clients, eq(appointments.clientId, clients.id));
 
+  if (studioId != null && artistId != null) {
+    return await baseQuery
+      .where(and(eq(appointments.studioId, studioId), eq(appointments.artistId, artistId)))
+      .orderBy(desc(appointments.date));
+  }
   if (studioId != null) {
     return await baseQuery
       .where(eq(appointments.studioId, studioId))
@@ -499,61 +436,59 @@ export async function listAppointments(studioId?: number | null) {
   return await baseQuery.orderBy(desc(appointments.date));
 }
 
-export async function getAppointmentsByClientId(clientId: number) {
+export async function getAppointmentsByClientId(clientId: number, studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
-  const result = await db
+  const query = db
     .select()
     .from(appointments)
-    .where(eq(appointments.clientId, clientId))
-    .orderBy(desc(appointments.date));
+    .where(
+      studioId != null && artistId != null
+        ? and(eq(appointments.clientId, clientId), eq(appointments.studioId, studioId), eq(appointments.artistId, artistId))
+        : studioId != null
+          ? and(eq(appointments.clientId, clientId), eq(appointments.studioId, studioId))
+          : eq(appointments.clientId, clientId),
+    );
 
-  return result;
+  return await query.orderBy(desc(appointments.date));
 }
 
 export async function getAppointmentById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-
+  
   const result = await db
     .select()
     .from(appointments)
     .where(eq(appointments.id, id))
     .limit(1);
-
+  
   return result[0];
 }
 
 export async function createAppointment(data: InsertAppointment) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   const result = await db.insert(appointments).values(data);
   const insertId = Number(result[0].insertId);
-
+  
   // Incrementar appointmentCount do cliente
   await db
     .update(clients)
     .set({ appointmentCount: sql`${clients.appointmentCount} + 1` })
     .where(eq(clients.id, data.clientId));
-
+  
   // Atualizar nível de fidelidade
   await updateClientLoyaltyLevel(data.clientId);
-
+  
   // Retornar o agendamento criado
-  const appointment = await db
-    .select()
-    .from(appointments)
-    .where(eq(appointments.id, insertId))
-    .limit(1);
+  const appointment = await db.select().from(appointments).where(eq(appointments.id, insertId)).limit(1);
   return appointment[0];
 }
 
-export async function updateAppointment(
-  id: number,
-  data: Partial<InsertAppointment>,
-) {
+export async function updateAppointment(id: number, data: Partial<InsertAppointment>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(appointments).set(data).where(eq(appointments.id, id));
@@ -567,242 +502,24 @@ export async function deleteAppointment(id: number) {
   return { success: true };
 }
 
-// ============ PÓS-VENDA AUTOMÁTICO ============
-
-function addDaysAtTen(dateValue: string, days: number) {
-  const base = new Date(dateValue.replace(" ", "T"));
-  base.setDate(base.getDate() + days);
-  base.setHours(10, 0, 0, 0);
-  return toLocalDateStr(base);
-}
-
-export async function syncPostSaleFollowupsForAppointment(
-  appointment: typeof appointments.$inferSelect,
-) {
-  const database = await getDb();
-  if (!database) return;
-
-  if (appointment.status !== "concluido") {
-    await database
-      .update(postSaleFollowups)
-      .set({ status: "cancelled" })
-      .where(
-        and(
-          eq(postSaleFollowups.appointmentId, appointment.id),
-          inArray(postSaleFollowups.status, [
-            "scheduled",
-            "due",
-            "postponed",
-            "failed",
-          ]),
-        ),
-      );
-    return;
-  }
-
-  const existing = await database
-    .select()
-    .from(postSaleFollowups)
-    .where(eq(postSaleFollowups.appointmentId, appointment.id));
-  const now = toLocalDateStr(new Date());
-
-  for (const item of POST_SALE_STAGES) {
-    const scheduledAt = addDaysAtTen(appointment.date, item.days);
-    const status =
-      scheduledAt <= now ? ("due" as const) : ("scheduled" as const);
-    const found = existing.find((row) => row.stage === item.stage);
-    if (found) {
-      if (!["sent", "completed"].includes(found.status)) {
-        await database
-          .update(postSaleFollowups)
-          .set({
-            clientId: appointment.clientId,
-            artistId: appointment.artistId,
-            studioId: appointment.studioId,
-            scheduledAt,
-            status,
-            lastError: null,
-          })
-          .where(eq(postSaleFollowups.id, found.id));
-      }
-    } else {
-      await database.insert(postSaleFollowups).values({
-        appointmentId: appointment.id,
-        clientId: appointment.clientId,
-        artistId: appointment.artistId,
-        studioId: appointment.studioId,
-        stage: item.stage,
-        scheduledAt,
-        status,
-        deliveryMode: "manual",
-      });
-    }
-  }
-}
-
-export async function refreshDuePostSaleFollowups() {
-  const database = await getDb();
-  if (!database) return;
-  await database
-    .update(postSaleFollowups)
-    .set({ status: "due" })
-    .where(
-      and(
-        inArray(postSaleFollowups.status, ["scheduled", "postponed"]),
-        lte(postSaleFollowups.scheduledAt, toLocalDateStr(new Date())),
-      ),
-    );
-}
-
-export async function listPostSaleFollowups(studioId?: number | null) {
-  const database = await getDb();
-  if (!database) return [];
-  await refreshDuePostSaleFollowups();
-  const query = database
-    .select({
-      id: postSaleFollowups.id,
-      appointmentId: postSaleFollowups.appointmentId,
-      clientId: postSaleFollowups.clientId,
-      artistId: postSaleFollowups.artistId,
-      studioId: postSaleFollowups.studioId,
-      stage: postSaleFollowups.stage,
-      scheduledAt: postSaleFollowups.scheduledAt,
-      status: postSaleFollowups.status,
-      deliveryMode: postSaleFollowups.deliveryMode,
-      message: postSaleFollowups.message,
-      source: postSaleFollowups.source,
-      referenceDate: postSaleFollowups.referenceDate,
-      anniversaryYears: postSaleFollowups.anniversaryYears,
-      sentAt: postSaleFollowups.sentAt,
-      completedAt: postSaleFollowups.completedAt,
-      lastError: postSaleFollowups.lastError,
-      clientName: clients.name,
-      clientPhone: clients.phone,
-      clientEmail: clients.email,
-      appointmentDate: appointments.date,
-      artistName: sql<
-        string | null
-      >`COALESCE(${appointments.artist}, ${postSaleFollowups.artistNameSnapshot})`,
-      service: sql<
-        string | null
-      >`COALESCE(${appointments.service}, ${postSaleFollowups.serviceSnapshot})`,
-    })
-    .from(postSaleFollowups)
-    .leftJoin(clients, eq(postSaleFollowups.clientId, clients.id))
-    .leftJoin(
-      appointments,
-      eq(postSaleFollowups.appointmentId, appointments.id),
-    );
-  const condition =
-    studioId != null
-      ? and(
-          eq(postSaleFollowups.studioId, studioId),
-          ne(postSaleFollowups.status, "cancelled"),
-        )
-      : ne(postSaleFollowups.status, "cancelled");
-  return await query.where(condition).orderBy(postSaleFollowups.scheduledAt);
-}
-
-export async function getPostSaleFollowup(id: number) {
-  const rows = await listPostSaleFollowups();
-  return rows.find((row) => row.id === id);
-}
-
-export async function updatePostSaleFollowup(
-  id: number,
-  data: {
-    status?:
-      | "scheduled"
-      | "due"
-      | "sent"
-      | "completed"
-      | "postponed"
-      | "cancelled"
-      | "failed";
-    deliveryMode?: "manual" | "automatic";
-    scheduledAt?: string;
-    message?: string | null;
-    sentAt?: string | null;
-    completedAt?: string | null;
-    lastError?: string | null;
-  },
-) {
-  const database = await getDb();
-  if (!database) throw new Error("Database not available");
-  await database
-    .update(postSaleFollowups)
-    .set(data)
-    .where(eq(postSaleFollowups.id, id));
-  return { success: true };
-}
-
-export async function listDueAutomaticPostSaleFollowups() {
-  const database = await getDb();
-  if (!database) return [];
-  await refreshDuePostSaleFollowups();
-  return await database
-    .select({
-      id: postSaleFollowups.id,
-      appointmentId: postSaleFollowups.appointmentId,
-      clientId: postSaleFollowups.clientId,
-      stage: postSaleFollowups.stage,
-      message: postSaleFollowups.message,
-      anniversaryYears: postSaleFollowups.anniversaryYears,
-      clientName: clients.name,
-      clientPhone: clients.phone,
-      artistName: sql<
-        string | null
-      >`COALESCE(${appointments.artist}, ${postSaleFollowups.artistNameSnapshot})`,
-      service: sql<
-        string | null
-      >`COALESCE(${appointments.service}, ${postSaleFollowups.serviceSnapshot})`,
-    })
-    .from(postSaleFollowups)
-    .leftJoin(clients, eq(postSaleFollowups.clientId, clients.id))
-    .leftJoin(
-      appointments,
-      eq(postSaleFollowups.appointmentId, appointments.id),
-    )
-    .where(
-      and(
-        eq(postSaleFollowups.status, "due"),
-        eq(postSaleFollowups.deliveryMode, "automatic"),
-      ),
-    );
-}
-
-export async function backfillPostSaleFollowups() {
-  const database = await getDb();
-  if (!database) return;
-  const completed = await database
-    .select()
-    .from(appointments)
-    .where(eq(appointments.status, "concluido"));
-  for (const appointment of completed) {
-    await syncPostSaleFollowupsForAppointment(appointment);
-  }
-}
-
 export async function checkAppointmentConflicts(
   artist: string,
   date: Date | string,
   duration: number,
   excludeId?: number,
+  studioId?: number
 ) {
   const db = await getDb();
   if (!db) return { hasConflict: false, conflicts: [] };
-  // Calcular horário de início e fim do novo agendamento
-  const startTime = new Date(typeof date === "string" ? date : date);
-  const endTime = new Date(startTime.getTime() + duration * 60000); // duration em minutos
-  // Buscar todos os agendamentos do mesmo artista no mesmo dia
-  const dayStart = new Date(startTime);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(startTime);
-  dayEnd.setHours(23, 59, 59, 999);
+  if (!studioId) throw new Error("Estúdio obrigatório para verificar disponibilidade.");
+  const startTime = appointmentInstant(date);
+  if (!Number.isFinite(startTime.getTime())) throw new Error("Data inválida.");
+  const endTime = new Date(startTime.getTime() + duration * 60000);
   let query = db
     .select({
       id: appointments.id,
       clientId: appointments.clientId,
+      clientName: clients.name,
       date: appointments.date,
       duration: appointments.duration,
       service: appointments.service,
@@ -810,32 +527,30 @@ export async function checkAppointmentConflicts(
       status: appointments.status,
     })
     .from(appointments)
+    .leftJoin(clients, and(eq(clients.id, appointments.clientId), eq(clients.studioId, appointments.studioId)))
     .where(
       and(
         eq(appointments.artist, artist),
-        gte(appointments.date, toDateStr(dayStart)),
-        lte(appointments.date, toDateStr(dayEnd)),
-        ne(appointments.status, "cancelado"), // Ignorar agendamentos cancelados
-      ),
+        eq(appointments.studioId, studioId),
+        lte(appointments.date, toDateStr(endTime)),
+        sql`DATE_ADD(${appointments.date}, INTERVAL ${appointments.duration} MINUTE) > ${toDateStr(startTime)}`,
+        ne(appointments.status, "cancelado") // Ignorar agendamentos cancelados
+      )
     );
   const existingAppointments = await query;
   // Filtrar conflitos
-  const conflicts = existingAppointments.filter((apt) => {
+  const conflicts = existingAppointments.filter(apt => {
     // Excluir o próprio agendamento ao editar
     if (excludeId && apt.id === excludeId) return false;
-    const aptStart = new Date(apt.date);
-    const aptEnd = new Date(aptStart.getTime() + apt.duration * 60000);
-
-    // Verificar sobreposição de intervalos
-    // Há conflito se: (startTime < aptEnd) && (endTime > aptStart)
-    return startTime < aptEnd && endTime > aptStart;
+    return appointmentsOverlap(date, duration, apt.date, apt.duration);
   });
 
   return {
     hasConflict: conflicts.length > 0,
-    conflicts: conflicts.map((c) => ({
+    conflicts: conflicts.map(c => ({
       id: c.id,
       clientId: c.clientId,
+      clientName: c.clientName,
       date: c.date,
       duration: c.duration,
       service: c.service,
@@ -849,186 +564,89 @@ export async function checkAppointmentConflicts(
 export async function getAllAnamnesis() {
   const db = await getDb();
   if (!db) return [];
-
+  
   const result = await db
     .select()
     .from(anamnesisRecords)
     .orderBy(desc(anamnesisRecords.createdAt));
-
+  
   return result;
 }
 
-export async function getRiskAlerts(studioId: number) {
-  const db = await getDb();
-  if (!db) return [];
+/** Fontes de anamnese visíveis no tenant para a tela consolidada de riscos. */
+export async function getRiskAlertSources(studioId: number, artistId: number | null) {
+  const database = await getDb();
+  if (!database) return { submissions: [], legacy: [] };
 
-  const manual = await db
-    .select({
-      id: anamnesisRecords.id,
-      clientId: anamnesisRecords.clientId,
-      clientName: clients.name,
-      createdAt: anamnesisRecords.createdAt,
-      riskLevel: anamnesisRecords.riskLevel,
-      riskFactors: anamnesisRecords.riskFactors,
-    })
-    .from(anamnesisRecords)
-    .innerJoin(clients, eq(clients.id, anamnesisRecords.clientId))
-    .where(eq(clients.studioId, studioId));
+  const visibility = artistId == null
+    ? eq(clients.studioId, studioId)
+    : and(eq(clients.studioId, studioId), or(eq(clients.artistId, artistId), eq(appointments.artistId, artistId)));
 
-  const publicLink = await db
-    .select({
-      id: anamneseSubmissions.id,
-      clientId: anamneseSubmissions.clientId,
-      clientName: clients.name,
-      createdAt: anamneseSubmissions.createdAt,
-      riskLevel: anamneseSubmissions.riskLevel,
-      riskFactors: anamneseSubmissions.riskFactors,
-    })
-    .from(anamneseSubmissions)
+  const submissions = await database.select({
+    id: anamneseSubmissions.id,
+    clientId: anamneseSubmissions.clientId,
+    clientName: clients.name,
+    appointmentId: anamneseSubmissions.appointmentId,
+    payloadJson: anamneseSubmissions.payloadJson,
+    createdAt: anamneseSubmissions.createdAt,
+  }).from(anamneseSubmissions)
     .innerJoin(clients, eq(clients.id, anamneseSubmissions.clientId))
-    .where(eq(clients.studioId, studioId));
+    .leftJoin(appointments, eq(appointments.id, anamneseSubmissions.appointmentId))
+    .where(visibility)
+    .orderBy(desc(anamneseSubmissions.createdAt));
 
-  return [
-    ...manual.map((item) => ({ ...item, source: "manual" as const })),
-    ...publicLink.map((item) => ({ ...item, source: "public_link" as const })),
-  ].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-}
-
-export async function createAnamnesisRiskHistory(
-  data: InsertAnamnesisRiskHistory,
-) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(anamnesisRiskHistory).values(data);
-  return Number(result[0].insertId);
-}
-
-export async function getAnamnesisRiskHistoryByClientId(
-  clientId: number,
-  studioId: number,
-) {
-  const db = await getDb();
-  if (!db) return [];
-  return db
-    .select()
-    .from(anamnesisRiskHistory)
-    .where(
-      and(
-        eq(anamnesisRiskHistory.clientId, clientId),
-        eq(anamnesisRiskHistory.studioId, studioId),
-      ),
-    )
-    .orderBy(desc(anamnesisRiskHistory.createdAt));
-}
-
-/** Classifica fichas antigas criadas antes da versão de riscos do formulário público. */
-export async function backfillAnamneseSubmissionRisks() {
-  const db = await getDb();
-  if (!db) return 0;
-  const pending = await db
-    .select({
-      submission: anamneseSubmissions,
-      studioId: clients.studioId,
-    })
-    .from(anamneseSubmissions)
-    .innerJoin(clients, eq(clients.id, anamneseSubmissions.clientId))
-    .where(isNull(anamneseSubmissions.riskFactors));
-  const { calculatePublicAnamneseRisk, RISK_ASSESSMENT_VERSION } =
-    await import("./riskAssessment");
-  for (const item of pending) {
-    let payload: Record<string, unknown> = {};
-    try {
-      payload = JSON.parse(item.submission.payloadJson);
-    } catch {}
-    const risk = calculatePublicAnamneseRisk(payload);
-    const riskData = {
-      riskLevel: risk.riskLevel,
-      riskFactors: JSON.stringify(risk.riskFactors),
-      riskVersion: RISK_ASSESSMENT_VERSION,
-    };
-    await db
-      .update(anamneseSubmissions)
-      .set(riskData)
-      .where(eq(anamneseSubmissions.id, item.submission.id));
-    await db.insert(anamnesisRiskHistory).values({
-      studioId: item.studioId,
-      clientId: item.submission.clientId,
-      appointmentId: item.submission.appointmentId,
-      submissionId: item.submission.id,
-      source: "public_link",
-      eventType: "created",
-      ...riskData,
-    });
-  }
-  const manualPending = await db
-    .select({
-      record: anamnesisRecords,
-      studioId: clients.studioId,
-    })
-    .from(anamnesisRecords)
+  const legacy = await database.select({
+    id: anamnesisRecords.id,
+    clientId: anamnesisRecords.clientId,
+    clientName: clients.name,
+    appointmentId: anamnesisRecords.appointmentId,
+    riskLevel: anamnesisRecords.riskLevel,
+    riskFactors: anamnesisRecords.riskFactors,
+    createdAt: anamnesisRecords.createdAt,
+  }).from(anamnesisRecords)
     .innerJoin(clients, eq(clients.id, anamnesisRecords.clientId))
-    .leftJoin(
-      anamnesisRiskHistory,
-      eq(anamnesisRiskHistory.anamnesisRecordId, anamnesisRecords.id),
-    )
-    .where(isNull(anamnesisRiskHistory.id));
-  for (const item of manualPending) {
-    await db.insert(anamnesisRiskHistory).values({
-      studioId: item.studioId,
-      clientId: item.record.clientId,
-      appointmentId: item.record.appointmentId,
-      anamnesisRecordId: item.record.id,
-      source: "manual",
-      eventType: "created",
-      riskLevel: item.record.riskLevel,
-      riskFactors: item.record.riskFactors || "[]",
-      riskVersion: RISK_ASSESSMENT_VERSION,
-    });
-  }
-  return pending.length + manualPending.length;
+    .leftJoin(appointments, eq(appointments.id, anamnesisRecords.appointmentId))
+    .where(visibility)
+    .orderBy(desc(anamnesisRecords.createdAt));
+
+  return { submissions, legacy };
 }
 
 export async function getAnamnesisByClientId(clientId: number) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const result = await db
     .select()
     .from(anamnesisRecords)
     .where(eq(anamnesisRecords.clientId, clientId))
     .orderBy(desc(anamnesisRecords.id));
-
+  
   return result;
 }
 
 export async function getAnamnesisById(id: number) {
   const db = await getDb();
   if (!db) return null;
-
+  
   const result = await db
     .select()
     .from(anamnesisRecords)
     .where(eq(anamnesisRecords.id, id))
     .limit(1);
-
+  
   return result[0] || null;
 }
 
 export async function createAnamnesis(data: InsertAnamnesisRecord) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   const result = await db.insert(anamnesisRecords).values(data);
   const insertId = Number(result[0].insertId);
-
+  
   // Retornar o registro criado
-  const anamnesis = await db
-    .select()
-    .from(anamnesisRecords)
-    .where(eq(anamnesisRecords.id, insertId))
-    .limit(1);
+  const anamnesis = await db.select().from(anamnesisRecords).where(eq(anamnesisRecords.id, insertId)).limit(1);
   return anamnesis[0];
 }
 
@@ -1037,104 +655,91 @@ export async function createAnamnesis(data: InsertAnamnesisRecord) {
 export async function listTransactions(studioId?: number | null) {
   const db = await getDb();
   if (!db) return [];
-
+  
   // Bug 8: filtrar por studioId quando fornecido
   if (studioId != null) {
-    const result = await db
-      .select()
-      .from(transactions)
+    const result = await db.select().from(transactions)
       .where(eq(transactions.studioId, studioId))
       .orderBy(desc(transactions.date));
     return result;
   }
-  const result = await db
-    .select()
-    .from(transactions)
-    .orderBy(desc(transactions.date));
+  const result = await db.select().from(transactions).orderBy(desc(transactions.date));
   return result;
 }
 
 export async function getTransactionsByClientId(clientId: number) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const result = await db
     .select()
     .from(transactions)
     .where(eq(transactions.clientId, clientId))
     .orderBy(desc(transactions.date));
-
+  
   return result;
 }
 
-export async function getTransactionsByDateRange(
-  startDate: string,
-  endDate: string,
-) {
+export async function getTransactionsByDateRange(startDate: string, endDate: string, studioId?: number | null) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const startStr = startDate;
   const endStr = endDate;
-
+  
   const result = await db
     .select()
     .from(transactions)
-    .where(
-      and(gte(transactions.date, startStr), lte(transactions.date, endStr)),
-    )
+    .where(and(
+      gte(transactions.date, startStr),
+      lte(transactions.date, endStr),
+      ...(studioId ? [eq(transactions.studioId, studioId)] : []),
+    ))
     .orderBy(desc(transactions.date));
-
+  
   return result;
 }
 
 export async function createTransaction(data: InsertTransaction) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   const result = await db.insert(transactions).values(data);
   const insertId = Number(result[0].insertId);
-
+  
   // Se for entrada e tiver clientId, atualizar totalSpent
   if (data.type === "entrada" && data.clientId) {
     await db
       .update(clients)
       .set({ totalSpent: sql`${clients.totalSpent} + ${data.amount}` })
       .where(eq(clients.id, data.clientId));
-
+    
     // Atualizar nível de fidelidade
     await updateClientLoyaltyLevel(data.clientId);
   }
-
+  
   // Retornar a transação criada
-  const transaction = await db
-    .select()
-    .from(transactions)
-    .where(eq(transactions.id, insertId))
-    .limit(1);
+  const transaction = await db.select().from(transactions).where(eq(transactions.id, insertId)).limit(1);
   return transaction[0];
 }
 
 export async function getTransactionById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-
+  
   const result = await db
     .select()
     .from(transactions)
     .where(eq(transactions.id, id))
     .limit(1);
-
+  
   return result[0];
 }
 
-export async function updateTransaction(
-  id: number,
-  data: Partial<InsertTransaction>,
-) {
+export async function updateTransaction(id: number, data: Partial<InsertTransaction>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   await db.update(transactions).set(data).where(eq(transactions.id, id));
   return { success: true };
 }
@@ -1142,7 +747,7 @@ export async function updateTransaction(
 export async function deleteTransaction(id: number) {
   const db = await getDb();
   if (!db) return false;
-
+  
   await db.delete(transactions).where(eq(transactions.id, id));
   return true;
 }
@@ -1152,36 +757,32 @@ export async function deleteTransaction(id: number) {
 export async function getNotesByClientId(clientId: number) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const result = await db
     .select()
     .from(clientNotes)
     .where(eq(clientNotes.clientId, clientId))
     .orderBy(desc(clientNotes.createdAt));
-
+  
   return result;
 }
 
 export async function createNote(data: InsertClientNote) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   const result = await db.insert(clientNotes).values(data);
   const insertId = Number(result[0].insertId);
-
+  
   // Retornar a nota criada
-  const note = await db
-    .select()
-    .from(clientNotes)
-    .where(eq(clientNotes.id, insertId))
-    .limit(1);
+  const note = await db.select().from(clientNotes).where(eq(clientNotes.id, insertId)).limit(1);
   return note[0];
 }
 
 export async function deleteNote(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   await db.delete(clientNotes).where(eq(clientNotes.id, id));
   return { success: true };
 }
@@ -1191,162 +792,151 @@ export async function deleteNote(id: number) {
 export async function getGalleryByClientId(clientId: number) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const result = await db
     .select()
     .from(galleryImages)
     .where(eq(galleryImages.clientId, clientId))
     .orderBy(desc(galleryImages.createdAt));
-
+  
   return result;
 }
 
 export async function createGalleryImage(data: InsertGalleryImage) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   const result = await db.insert(galleryImages).values(data);
   const insertId = Number(result[0].insertId);
-
+  
   // Retornar o registro criado
-  const image = await db
-    .select()
-    .from(galleryImages)
-    .where(eq(galleryImages.id, insertId))
-    .limit(1);
+  const image = await db.select().from(galleryImages).where(eq(galleryImages.id, insertId)).limit(1);
   return image[0];
 }
 
 export async function deleteGalleryImage(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
+  
   await db.delete(galleryImages).where(eq(galleryImages.id, id));
   return { success: true };
 }
 
 // ============ DASHBOARD HELPERS ============
 
-export async function getTopClients(limit: number = 5) {
+function requireDashboardStudio(studioId: number) {
+  if (!Number.isSafeInteger(studioId) || studioId <= 0) throw new TRPCError({code:'FORBIDDEN',message:'Selecione um estúdio para consultar o dashboard.'});
+}
+
+export async function getTopClients(limit: number, studioId: number) {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
-
+  
   const result = await db
     .select()
     .from(clients)
+    .where(and(eq(clients.isArchived, 0), eq(clients.studioId, studioId)))
     .orderBy(desc(clients.totalSpent))
     .limit(limit);
-
+  
   return result;
 }
 
-export async function getUpcomingBirthdays(daysAhead: number = 30) {
+export async function getUpcomingBirthdays(daysAhead: number, studioId: number | null) {
+  // null is reserved for the background birthday scheduler across studios.
+  if (studioId !== null) requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
-
+  
   const today = new Date();
   const futureDate = new Date();
   futureDate.setDate(today.getDate() + daysAhead);
-
+  
   // Buscar todos os clientes com birthDate
   const allClients = await db
     .select()
     .from(clients)
-    .where(sql`${clients.birthDate} IS NOT NULL`);
-
+    .where(and(eq(clients.isArchived, 0), sql`${clients.birthDate} IS NOT NULL`, studioId === null ? undefined : eq(clients.studioId, studioId)));
+  
   // Filtrar clientes com aniversário nos próximos N dias
-  const upcomingBirthdays = allClients.filter((client) => {
+  const upcomingBirthdays = allClients.filter(client => {
     if (!client.birthDate) return false;
-
+    
     const birthDate = new Date(client.birthDate);
-    const thisYearBirthday = new Date(
-      today.getFullYear(),
-      birthDate.getMonth(),
-      birthDate.getDate(),
-    );
-
+    const thisYearBirthday = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
+    
     // Se o aniversário já passou este ano, considerar o próximo ano
     if (thisYearBirthday < today) {
       thisYearBirthday.setFullYear(today.getFullYear() + 1);
     }
-
+    
     return thisYearBirthday >= today && thisYearBirthday <= futureDate;
   });
-
+  
   // Ordenar por data de aniversário
   upcomingBirthdays.sort((a, b) => {
     const aDate = new Date(a.birthDate!);
     const bDate = new Date(b.birthDate!);
-    const aThisYear = new Date(
-      today.getFullYear(),
-      aDate.getMonth(),
-      aDate.getDate(),
-    );
-    const bThisYear = new Date(
-      today.getFullYear(),
-      bDate.getMonth(),
-      bDate.getDate(),
-    );
-
+    const aThisYear = new Date(today.getFullYear(), aDate.getMonth(), aDate.getDate());
+    const bThisYear = new Date(today.getFullYear(), bDate.getMonth(), bDate.getDate());
+    
     if (aThisYear < today) aThisYear.setFullYear(today.getFullYear() + 1);
     if (bThisYear < today) bThisYear.setFullYear(today.getFullYear() + 1);
-
+    
     return aThisYear.getTime() - bThisYear.getTime();
   });
-
+  
   return upcomingBirthdays;
 }
 
-export async function getDashboardMetrics() {
+export async function getDashboardMetrics(studioId: number) {
+  requireDashboardStudio(studioId);
   const db = await getDb();
-  if (!db)
-    return {
-      totalClients: 0,
-      totalAppointments: 0,
-      totalRevenue: 0,
-      upcomingBirthdaysCount: 0,
-    };
-
+  if (!db) return {
+    totalClients: 0,
+    totalAppointments: 0,
+    totalRevenue: 0,
+    upcomingBirthdaysCount: 0
+  };
+  
   // Total de clientes
-  const clientsCount = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(clients);
+  const clientsCount = await db.select({ count: sql<number>`count(*)` }).from(clients).where(and(eq(clients.isArchived, 0),eq(clients.studioId,studioId)));
   const totalClients = clientsCount[0]?.count || 0;
-
+  
   // Total de agendamentos
-  const appointmentsCount = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(appointments);
+  const appointmentsCount = await db.select({ count: sql<number>`count(*)` }).from(appointments).where(eq(appointments.studioId,studioId));
   const totalAppointments = appointmentsCount[0]?.count || 0;
-
+  
   // Receita total (soma de todas as transações tipo "entrada")
   const revenueSum = await db
     .select({ sum: sql<number>`COALESCE(SUM(${transactions.amount}), 0)` })
     .from(transactions)
-    .where(eq(transactions.type, "entrada"));
+    .where(and(eq(transactions.type, "entrada"),eq(transactions.studioId,studioId)));
   const totalRevenue = revenueSum[0]?.sum || 0;
-
+  
   // Aniversariantes nos próximos 30 dias
-  const birthdays = await getUpcomingBirthdays(30);
+  const birthdays = await getUpcomingBirthdays(30, studioId);
   const upcomingBirthdaysCount = birthdays.length;
-
+  
   return {
     totalClients,
     totalAppointments,
     totalRevenue,
-    upcomingBirthdaysCount,
+    upcomingBirthdaysCount
   };
 }
 
+
 // ============ REPORTS HELPERS ============
 
-export async function getMonthlyRevenue(startDate: string, endDate: string) {
+export async function getMonthlyRevenue(startDate: string, endDate: string, studioId?: number | null) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const startStr = startDate;
   const endStr = endDate;
-
+  
   const result = await db
     .select({
       month: sql<string>`DATE_FORMAT(${transactions.date}, '%Y-%m')`,
@@ -1355,12 +945,16 @@ export async function getMonthlyRevenue(startDate: string, endDate: string) {
     })
     .from(transactions)
     .where(
-      and(gte(transactions.date, startStr), lte(transactions.date, endStr)),
+      and(
+        gte(transactions.date, startStr),
+        lte(transactions.date, endStr),
+        ...(studioId ? [eq(transactions.studioId, studioId)] : []),
+      )
     )
     .groupBy(sql`DATE_FORMAT(${transactions.date}, '%Y-%m')`)
     .orderBy(sql`DATE_FORMAT(${transactions.date}, '%Y-%m')`);
-
-  return result.map((r) => ({
+  
+  return result.map(r => ({
     month: r.month,
     revenue: Number(r.revenue),
     expenses: Number(r.expenses),
@@ -1368,13 +962,13 @@ export async function getMonthlyRevenue(startDate: string, endDate: string) {
   }));
 }
 
-export async function getCategoryBreakdown(startDate: string, endDate: string) {
+export async function getCategoryBreakdown(startDate: string, endDate: string, studioId?: number | null) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const startStr = startDate;
   const endStr = endDate;
-
+  
   const result = await db
     .select({
       category: transactions.category,
@@ -1387,25 +981,23 @@ export async function getCategoryBreakdown(startDate: string, endDate: string) {
         eq(transactions.type, "entrada"),
         gte(transactions.date, startStr),
         lte(transactions.date, endStr),
-      ),
+        ...(studioId ? [eq(transactions.studioId, studioId)] : []),
+      )
     )
     .groupBy(transactions.category)
     .orderBy(desc(sql`COALESCE(SUM(${transactions.amount}), 0)`));
-
-  return result.map((r) => ({
+  
+  return result.map(r => ({
     category: r.category,
     total: Number(r.total),
     count: Number(r.count),
   }));
 }
 
-export async function getPaymentMethodBreakdown(
-  startDate: string,
-  endDate: string,
-) {
+export async function getPaymentMethodBreakdown(startDate: string, endDate: string, studioId?: number | null) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const result = await db
     .select({
       paymentMethod: transactions.paymentMethod,
@@ -1418,28 +1010,28 @@ export async function getPaymentMethodBreakdown(
         eq(transactions.type, "entrada"),
         gte(transactions.date, toDateStr(startDate)),
         lte(transactions.date, toDateStr(endDate)),
-      ),
+        ...(studioId ? [eq(transactions.studioId, studioId)] : []),
+      )
     )
     .groupBy(transactions.paymentMethod)
     .orderBy(desc(sql`COALESCE(SUM(${transactions.amount}), 0)`));
-
-  return result.map((r) => ({
+  
+  return result.map(r => ({
     paymentMethod: r.paymentMethod,
     total: Number(r.total),
     count: Number(r.count),
   }));
 }
 
-export async function getFinancialSummary(startDate: string, endDate: string) {
+export async function getFinancialSummary(startDate: string, endDate: string, studioId?: number | null) {
   const db = await getDb();
-  if (!db)
-    return {
-      totalRevenue: 0,
-      totalExpenses: 0,
-      balance: 0,
-      transactionCount: 0,
-    };
-
+  if (!db) return {
+    totalRevenue: 0,
+    totalExpenses: 0,
+    balance: 0,
+    transactionCount: 0,
+  };
+  
   const result = await db
     .select({
       revenue: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'entrada' THEN ${transactions.amount} ELSE 0 END), 0)`,
@@ -1451,13 +1043,14 @@ export async function getFinancialSummary(startDate: string, endDate: string) {
       and(
         gte(transactions.date, toDateStr(startDate)),
         lte(transactions.date, toDateStr(endDate)),
-      ),
+        ...(studioId ? [eq(transactions.studioId, studioId)] : []),
+      )
     );
-
+  
   const data = result[0];
   const totalRevenue = Number(data?.revenue || 0);
   const totalExpenses = Number(data?.expenses || 0);
-
+  
   return {
     totalRevenue,
     totalExpenses,
@@ -1467,24 +1060,23 @@ export async function getFinancialSummary(startDate: string, endDate: string) {
 }
 
 // ============ SEARCH FUNCTIONS ============
-export async function searchAppointments(
-  term: string,
-  startDate?: Date,
-  endDate?: Date,
-) {
+export async function searchAppointments(term: string, startDate?: Date, endDate?: Date, studioId?: number, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
   const searchTerm = `%${term}%`;
-
+  
   const conditions = [
     or(
       like(appointments.service, searchTerm),
       like(appointments.artist, searchTerm),
-      like(clients.name, searchTerm),
-    ),
+      like(clients.name, searchTerm)
+    )
   ];
-
+  
+  if (!studioId) return [];
+  conditions.push(eq(appointments.studioId, studioId));
+  if (artistId != null) conditions.push(eq(appointments.artistId, artistId));
   // Adicionar filtro de período se fornecido
   if (startDate) {
     conditions.push(gte(appointments.date, toDateStr(startDate)));
@@ -1492,7 +1084,7 @@ export async function searchAppointments(
   if (endDate) {
     conditions.push(lte(appointments.date, toDateStr(endDate)));
   }
-
+  
   const result = await db
     .select({
       id: appointments.id,
@@ -1513,24 +1105,23 @@ export async function searchAppointments(
   return result;
 }
 
-export async function searchTransactions(
-  term: string,
-  startDate?: Date,
-  endDate?: Date,
-) {
+export async function searchTransactions(term: string, startDate?: Date, endDate?: Date, studioId?: number, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
   const searchTerm = `%${term}%`;
-
+  
   const conditions = [
     or(
       like(transactions.category, searchTerm),
       like(transactions.description, searchTerm),
-      like(clients.name, searchTerm),
-    ),
+      like(clients.name, searchTerm)
+    )
   ];
-
+  
+  if (!studioId) return [];
+  conditions.push(eq(transactions.studioId, studioId));
+  if (artistId != null) conditions.push(sql`EXISTS (SELECT 1 FROM appointments a WHERE a.id = ${transactions.appointmentId} AND a.studioId = ${studioId} AND a.artistId = ${artistId})`);
   // Adicionar filtro de período se fornecido
   if (startDate) {
     conditions.push(gte(transactions.date, toDateStr(startDate)));
@@ -1538,7 +1129,7 @@ export async function searchTransactions(
   if (endDate) {
     conditions.push(lte(transactions.date, toDateStr(endDate)));
   }
-
+  
   const result = await db
     .select({
       id: transactions.id,
@@ -1560,13 +1151,14 @@ export async function searchTransactions(
   return result;
 }
 
+
 // ============ NOTIFICATIONS FUNCTIONS ============
 /**
  * Retorna agendamentos do DIA SEGUINTE (apenas), usando horário local do servidor.
  * Filtra apenas status 'agendado' ou 'confirmado' e exclui agendamentos
  * que já receberam lembrete com sucesso (via notificationLogs).
  */
-export async function getUpcomingAppointments() {
+export async function getUpcomingAppointments(studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1578,18 +1170,14 @@ export async function getUpcomingAppointments() {
     now.getFullYear(),
     now.getMonth(),
     now.getDate() + 1,
-    0,
-    0,
-    0,
+    0, 0, 0
   );
   // Fim do dia seguinte: 23:59:59
   const tomorrowEnd = new Date(
     now.getFullYear(),
     now.getMonth(),
     now.getDate() + 1,
-    23,
-    59,
-    59,
+    23, 59, 59
   );
 
   // ── Buscar IDs de agendamentos que já receberam lembrete com sucesso ─────
@@ -1599,14 +1187,28 @@ export async function getUpcomingAppointments() {
     .where(
       and(
         eq(notificationLogs.type, "appointment_reminder"),
-        eq(notificationLogs.status, "sent"),
-      ),
+        eq(notificationLogs.status, "sent")
+      )
     );
   const alreadySentIds = new Set(
     alreadySentRows
       .map((r) => r.appointmentId)
-      .filter((id): id is number => id !== null),
+      .filter((id): id is number => id !== null)
   );
+
+  const baseCondition = and(
+    gte(appointments.date, toLocalDateStr(tomorrowStart)),
+    lte(appointments.date, toLocalDateStr(tomorrowEnd)),
+    or(
+      eq(appointments.status, "agendado"),
+      eq(appointments.status, "confirmado")
+    )
+  );
+  const scopedCondition = studioId != null && artistId != null
+    ? and(baseCondition, eq(appointments.studioId, studioId), eq(appointments.artistId, artistId))
+    : studioId != null
+      ? and(baseCondition, eq(appointments.studioId, studioId))
+      : baseCondition;
 
   // ── Buscar agendamentos do dia seguinte ───────────────────────────────────
   const result = await db
@@ -1620,20 +1222,13 @@ export async function getUpcomingAppointments() {
       duration: appointments.duration,
       service: appointments.service,
       artist: appointments.artist,
+      artistId: appointments.artistId,
+      studioId: appointments.studioId,
       status: appointments.status,
     })
     .from(appointments)
     .leftJoin(clients, eq(appointments.clientId, clients.id))
-    .where(
-      and(
-        gte(appointments.date, toLocalDateStr(tomorrowStart)),
-        lte(appointments.date, toLocalDateStr(tomorrowEnd)),
-        or(
-          eq(appointments.status, "agendado"),
-          eq(appointments.status, "confirmado"),
-        ),
-      ),
-    )
+    .where(scopedCondition)
     .orderBy(appointments.date);
 
   // Filtrar os que já foram notificados com sucesso
@@ -1715,16 +1310,15 @@ export async function sendAppointmentReminders() {
           message: `Erro: ${error}`,
           status: "failed",
         });
-      } catch (_) {
-        /* ignora erros de log */
-      }
+      } catch (_) { /* ignora erros de log */ }
     }
   }
 
   return { success: true, sent, failed, total: upcomingAppointments.length };
 }
 
-export async function getNotificationLogs(limit: number = 50) {
+export async function getNotificationLogs(limit: number, studioId: number) {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
 
@@ -1742,88 +1336,18 @@ export async function getNotificationLogs(limit: number = 50) {
     })
     .from(notificationLogs)
     .leftJoin(clients, eq(notificationLogs.clientId, clients.id))
+    .leftJoin(appointments, eq(notificationLogs.appointmentId, appointments.id))
+    .where(and(
+      or(eq(clients.studioId,studioId),eq(appointments.studioId,studioId)),
+      or(sql`${notificationLogs.clientId} IS NULL`,eq(clients.studioId,studioId)),
+      or(sql`${notificationLogs.appointmentId} IS NULL`,eq(appointments.studioId,studioId)),
+    ))
     .orderBy(desc(notificationLogs.sentAt))
     .limit(limit);
 
   return result;
 }
 
-/** Registra a resposta pública do cliente e alimenta a Central de Notificações. */
-export async function logAppointmentResponse({
-  appointmentId,
-  clientId,
-  clientName,
-  artistName,
-  responseLabel,
-}: {
-  appointmentId: number;
-  clientId: number;
-  clientName: string;
-  artistName: string;
-  responseLabel: string;
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("Banco de dados indisponível");
-
-  await db.insert(notificationLogs).values({
-    type: "appointment_response",
-    appointmentId,
-    clientId,
-    title: `Resposta de ${clientName}`,
-    message: `${clientName} respondeu \"${responseLabel}\" ao agendamento com ${artistName}.`,
-    status: "sent",
-  });
-}
-
-/** Registra a decisão do estúdio sobre atraso/reagendamento na ficha do cliente. */
-export async function logAppointmentDecision({
-  appointmentId,
-  clientId,
-  clientName,
-  artistName,
-  decisionLabel,
-}: {
-  appointmentId: number;
-  clientId: number;
-  clientName: string;
-  artistName: string;
-  decisionLabel: string;
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("Banco de dados indisponível");
-
-  await db.insert(notificationLogs).values({
-    type: "appointment_response",
-    appointmentId,
-    clientId,
-    title: `Decisão sobre ${clientName}`,
-    message: `${artistName || "O estúdio"}: ${decisionLabel}`,
-    status: "sent",
-  });
-}
-
-/** Linha do tempo das respostas de confirmação exibida na ficha do cliente. */
-export async function getAppointmentResponseHistory(clientId: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  return await db
-    .select({
-      id: notificationLogs.id,
-      appointmentId: notificationLogs.appointmentId,
-      title: notificationLogs.title,
-      message: notificationLogs.message,
-      sentAt: notificationLogs.sentAt,
-    })
-    .from(notificationLogs)
-    .where(
-      and(
-        eq(notificationLogs.clientId, clientId),
-        eq(notificationLogs.type, "appointment_response"),
-      ),
-    )
-    .orderBy(desc(notificationLogs.sentAt));
-}
 
 /**
  * Busca agendamentos que devem receber lembrete WhatsApp automático.
@@ -1832,31 +1356,14 @@ export async function getAppointmentResponseHistory(clientId: number) {
  */
 type WhatsAppLogType = "whatsapp_primary" | "whatsapp_resend";
 
-export async function getAppointmentsForWhatsAppReminder(
-  daysBefore: number,
-  logType: WhatsAppLogType,
-) {
+export async function getAppointmentsForWhatsAppReminder(daysBefore: number, logType: WhatsAppLogType) {
   const db = await getDb();
   if (!db) return [];
 
   const now = new Date();
   // Calcular o dia alvo (hoje + daysBefore)
-  const targetStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + daysBefore,
-    0,
-    0,
-    0,
-  );
-  const targetEnd = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + daysBefore,
-    23,
-    59,
-    59,
-  );
+  const targetStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysBefore, 0, 0, 0);
+  const targetEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysBefore, 23, 59, 59);
 
   // IDs que já receberam esse tipo de lembrete com sucesso
   const alreadySentRows = await db
@@ -1865,13 +1372,11 @@ export async function getAppointmentsForWhatsAppReminder(
     .where(
       and(
         eq(notificationLogs.type, logType),
-        eq(notificationLogs.status, "sent"),
-      ),
+        eq(notificationLogs.status, "sent")
+      )
     );
   const alreadySentIds = new Set(
-    alreadySentRows
-      .map((r) => r.appointmentId)
-      .filter((id): id is number => id !== null),
+    alreadySentRows.map((r) => r.appointmentId).filter((id): id is number => id !== null)
   );
 
   const result = await db
@@ -1893,9 +1398,9 @@ export async function getAppointmentsForWhatsAppReminder(
         lte(appointments.date, toLocalDateStr(targetEnd)),
         or(
           eq(appointments.status, "agendado"),
-          eq(appointments.status, "confirmado"),
-        ),
-      ),
+          eq(appointments.status, "confirmado")
+        )
+      )
     )
     .orderBy(appointments.date);
 
@@ -1931,417 +1436,62 @@ export async function logWhatsAppReminder({
 }
 
 // ============ STUDIO SETTINGS FUNCTIONS ============
-export async function getStudioSettings() {
-  const db = await getDb();
-  if (!db) return null;
-
-  const result = await db.select().from(studioSettings).limit(1);
-  return result.length > 0 ? result[0] : null;
-}
-
-export async function updateStudioSettings(
-  settings: Partial<InsertStudioSettings>,
-) {
-  const db = await getDb();
-  if (!db) return null;
-
-  const existing = await getStudioSettings();
-
-  if (existing) {
-    await db
-      .update(studioSettings)
-      .set({ ...settings, updatedAt: toDateStr(new Date()) })
-      .where(eq(studioSettings.id, existing.id));
-
-    const updated = await getStudioSettings();
-    return updated;
-  } else {
-    const [inserted] = await db.insert(studioSettings).values(settings);
-    const newSettings = await getStudioSettings();
-    return newSettings;
+export async function getStudioSettings(studioId?: number | null) {
+  const database = await getDb();
+  if (!database) return null;
+  // Legacy scheduled tasks may only use settings when exactly one studio exists.
+  if (!studioId) {
+    const tenants = await database.select({ id: studios.id }).from(studios).limit(2);
+    if (tenants.length !== 1) return null;
+    studioId = tenants[0].id;
   }
+  const rows = await database.select().from(studioSettings).where(eq(studioSettings.studioId, studioId)).limit(1);
+  return rows[0] ?? null;
 }
 
-// ============ OPERAÇÃO COMERCIAL ============
-
-export async function listSalesLeads(studioId: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  return db
-    .select({
-      id: salesLeads.id,
-      studioId: salesLeads.studioId,
-      clientId: salesLeads.clientId,
-      appointmentId: salesLeads.appointmentId,
-      artistId: salesLeads.artistId,
-      name: salesLeads.name,
-      phone: salesLeads.phone,
-      email: salesLeads.email,
-      service: salesLeads.service,
-      description: salesLeads.description,
-      estimatedValue: salesLeads.estimatedValue,
-      stage: salesLeads.stage,
-      nextFollowupAt: salesLeads.nextFollowupAt,
-      lostReason: salesLeads.lostReason,
-      notes: salesLeads.notes,
-      createdAt: salesLeads.createdAt,
-      updatedAt: salesLeads.updatedAt,
-      artistName: artists.name,
-    })
-    .from(salesLeads)
-    .leftJoin(artists, eq(salesLeads.artistId, artists.id))
-    .where(eq(salesLeads.studioId, studioId))
-    .orderBy(desc(salesLeads.updatedAt));
-}
-
-export async function createSalesLead(data: InsertSalesLead) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const [result] = await db.insert(salesLeads).values(data);
-  return { id: result.insertId };
-}
-
-export async function updateSalesLead(
-  id: number,
-  studioId: number,
-  data: Partial<InsertSalesLead>,
-) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db
-    .update(salesLeads)
-    .set({ ...data, updatedAt: toLocalDateStr(new Date()) })
-    .where(and(eq(salesLeads.id, id), eq(salesLeads.studioId, studioId)));
-  return { success: true };
-}
-
-export async function deleteSalesLead(id: number, studioId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db
-    .delete(salesLeads)
-    .where(and(eq(salesLeads.id, id), eq(salesLeads.studioId, studioId)));
-  return { success: true };
-}
-
-export async function listWaitlistEntries(studioId: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  return db
-    .select({
-      id: waitlistEntries.id,
-      studioId: waitlistEntries.studioId,
-      clientId: waitlistEntries.clientId,
-      artistId: waitlistEntries.artistId,
-      service: waitlistEntries.service,
-      preferredDays: waitlistEntries.preferredDays,
-      preferredPeriods: waitlistEntries.preferredPeriods,
-      minDuration: waitlistEntries.minDuration,
-      maxDuration: waitlistEntries.maxDuration,
-      priority: waitlistEntries.priority,
-      status: waitlistEntries.status,
-      notes: waitlistEntries.notes,
-      createdAt: waitlistEntries.createdAt,
-      updatedAt: waitlistEntries.updatedAt,
-      clientName: clients.name,
-      clientPhone: clients.phone,
-      clientEmail: clients.email,
-      artistName: artists.name,
-    })
-    .from(waitlistEntries)
-    .leftJoin(clients, eq(waitlistEntries.clientId, clients.id))
-    .leftJoin(artists, eq(waitlistEntries.artistId, artists.id))
-    .where(eq(waitlistEntries.studioId, studioId))
-    .orderBy(desc(waitlistEntries.priority), desc(waitlistEntries.updatedAt));
-}
-
-export async function createWaitlistEntry(data: InsertWaitlistEntry) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const [result] = await db.insert(waitlistEntries).values(data);
-  return { id: result.insertId };
-}
-
-export async function updateWaitlistEntry(
-  id: number,
-  studioId: number,
-  data: Partial<InsertWaitlistEntry>,
-) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db
-    .update(waitlistEntries)
-    .set({ ...data, updatedAt: toLocalDateStr(new Date()) })
-    .where(
-      and(eq(waitlistEntries.id, id), eq(waitlistEntries.studioId, studioId)),
-    );
-  return { success: true };
-}
-
-export async function deleteWaitlistEntry(id: number, studioId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db
-    .delete(waitlistEntries)
-    .where(
-      and(eq(waitlistEntries.id, id), eq(waitlistEntries.studioId, studioId)),
-    );
-  return { success: true };
-}
-
-export async function getTodayOperations(studioId: number) {
-  const db = await getDb();
-  if (!db)
-    return {
-      appointments: [],
-      followups: [],
-      postSale: [],
-      summary: {
-        appointmentsToday: 0,
-        pendingConfirmation: 0,
-        pendingPayments: 0,
-        delayedAttention: 0,
-        leadsDue: 0,
-        postSaleDue: 0,
-      },
+export async function updateStudioSettings(settings: Partial<InsertStudioSettings>, studioId: number) {
+  const database = await getDb();
+  if (!database) throw new Error("Banco de dados indisponível");
+  const { id: _id, studioId: _studioId, ...values } = settings;
+  await database.transaction(async tx => {
+    const owner = await tx.select({ id: studios.id }).from(studios).where(eq(studios.id, studioId)).for("update");
+    if (!owner.length) throw new Error("Estúdio não encontrado");
+    const existing = await tx.select({ id: studioSettings.id }).from(studioSettings).where(eq(studioSettings.studioId, studioId)).limit(1);
+    if (existing.length) await tx.update(studioSettings).set(values).where(eq(studioSettings.studioId, studioId));
+    else await tx.insert(studioSettings).values({ ...values, studioId });
+    const identity = {
+      name: values.studioName || undefined, phone: values.phone, email: values.email,
+      address: values.address, city: values.city, state: values.state, zipCode: values.zipCode,
     };
-
-  const now = new Date();
-  const start = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    0,
-    0,
-    0,
-  );
-  const end = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    23,
-    59,
-    59,
-  );
-  const startStr = toLocalDateStr(start);
-  const endStr = toLocalDateStr(end);
-
-  const todayAppointments = await db
-    .select({
-      id: appointments.id,
-      clientId: appointments.clientId,
-      clientName: clients.name,
-      clientPhone: clients.phone,
-      date: appointments.date,
-      duration: appointments.duration,
-      service: appointments.service,
-      artist: appointments.artist,
-      artistId: appointments.artistId,
-      status: appointments.status,
-      confirmationStatus: appointments.confirmationStatus,
-      confirmationDelayMinutes: appointments.confirmationDelayMinutes,
-      confirmationAttention: appointments.confirmationAttention,
-      depositPaid: appointments.depositPaid,
-      signalStatus: appointments.signalStatus,
-      paymentStatus: appointments.paymentStatus,
-      totalAmount: appointments.totalAmount,
-    })
-    .from(appointments)
-    .leftJoin(clients, eq(appointments.clientId, clients.id))
-    .where(
-      and(
-        eq(appointments.studioId, studioId),
-        gte(appointments.date, startStr),
-        lte(appointments.date, endStr),
-        ne(appointments.status, "cancelado"),
-      ),
-    )
-    .orderBy(appointments.date);
-
-  const followups = await db
-    .select({
-      id: salesLeads.id,
-      name: salesLeads.name,
-      phone: salesLeads.phone,
-      service: salesLeads.service,
-      stage: salesLeads.stage,
-      nextFollowupAt: salesLeads.nextFollowupAt,
-      estimatedValue: salesLeads.estimatedValue,
-    })
-    .from(salesLeads)
-    .where(
-      and(
-        eq(salesLeads.studioId, studioId),
-        lte(salesLeads.nextFollowupAt, endStr),
-        ne(salesLeads.stage, "scheduled"),
-        ne(salesLeads.stage, "lost"),
-        ne(salesLeads.stage, "archived"),
-      ),
-    )
-    .orderBy(salesLeads.nextFollowupAt);
-
-  const postSale = await db
-    .select({
-      id: postSaleFollowups.id,
-      clientName: clients.name,
-      clientPhone: clients.phone,
-      stage: postSaleFollowups.stage,
-      scheduledAt: postSaleFollowups.scheduledAt,
-      status: postSaleFollowups.status,
-      message: postSaleFollowups.message,
-    })
-    .from(postSaleFollowups)
-    .leftJoin(clients, eq(postSaleFollowups.clientId, clients.id))
-    .where(
-      and(
-        eq(postSaleFollowups.studioId, studioId),
-        lte(postSaleFollowups.scheduledAt, endStr),
-        inArray(postSaleFollowups.status, [
-          "scheduled",
-          "due",
-          "postponed",
-          "failed",
-        ]),
-      ),
-    )
-    .orderBy(postSaleFollowups.scheduledAt);
-
-  return {
-    appointments: todayAppointments,
-    followups,
-    postSale,
-    summary: {
-      appointmentsToday: todayAppointments.length,
-      pendingConfirmation: todayAppointments.filter(
-        (item) => item.confirmationStatus === "pendente",
-      ).length,
-      pendingPayments: todayAppointments.filter(
-        (item) => item.paymentStatus !== "pago",
-      ).length,
-      delayedAttention: todayAppointments.filter(
-        (item) =>
-          item.confirmationStatus === "atraso" ||
-          item.confirmationAttention === "pending",
-      ).length,
-      leadsDue: followups.length,
-      postSaleDue: postSale.length,
-    },
-  };
-}
-
-function parsePreferenceList(value: string | null): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return value
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-}
-
-export async function getWaitlistSuggestions(studioId: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  const now = new Date();
-  const until = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
-  const releasedSlots = await db
-    .select({
-      id: appointments.id,
-      date: appointments.date,
-      duration: appointments.duration,
-      service: appointments.service,
-      artist: appointments.artist,
-      artistId: appointments.artistId,
-    })
-    .from(appointments)
-    .where(
-      and(
-        eq(appointments.studioId, studioId),
-        eq(appointments.status, "cancelado"),
-        gte(appointments.date, toLocalDateStr(now)),
-        lte(appointments.date, toLocalDateStr(until)),
-      ),
-    )
-    .orderBy(appointments.date);
-
-  const entries = await listWaitlistEntries(studioId);
-  const activeEntries = entries.filter(
-    (entry) => entry.status === "active" || entry.status === "contacted",
-  );
-  const dayTokens = [
-    "domingo",
-    "segunda",
-    "terca",
-    "quarta",
-    "quinta",
-    "sexta",
-    "sabado",
-  ];
-
-  return releasedSlots.map((slot) => {
-    const date = new Date(slot.date.replace(" ", "T"));
-    const day = dayTokens[date.getDay()];
-    const hour = date.getHours();
-    const period = hour < 12 ? "manha" : hour < 18 ? "tarde" : "noite";
-
-    const matches = activeEntries
-      .map((entry) => {
-        const preferredDays = parsePreferenceList(entry.preferredDays);
-        const preferredPeriods = parsePreferenceList(entry.preferredPeriods);
-        const artistCompatible =
-          !entry.artistId || entry.artistId === slot.artistId;
-        const durationCompatible =
-          slot.duration >= entry.minDuration &&
-          slot.duration <= entry.maxDuration;
-        const dayCompatible =
-          preferredDays.length === 0 || preferredDays.includes(day);
-        const periodCompatible =
-          preferredPeriods.length === 0 || preferredPeriods.includes(period);
-        const score =
-          (artistCompatible ? 40 : 0) +
-          (durationCompatible ? 30 : 0) +
-          (dayCompatible ? 20 : 0) +
-          (periodCompatible ? 10 : 0) +
-          entry.priority;
-        return {
-          ...entry,
-          score,
-          artistCompatible,
-          durationCompatible,
-          dayCompatible,
-          periodCompatible,
-        };
-      })
-      .filter((match) => match.artistCompatible && match.durationCompatible)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
-
-    return { ...slot, matches };
+    if (Object.values(identity).some(v => v !== undefined)) await tx.update(studios).set(identity).where(eq(studios.id, studioId));
   });
+  return getStudioSettings(studioId);
 }
 
 // ============ ARTISTS FUNCTIONS ============
-export async function listArtists() {
+export async function listArtists(studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
+  if (studioId != null && artistId != null) {
+    return await db.select().from(artists)
+      .where(and(eq(artists.studioId, studioId), eq(artists.id, artistId)))
+      .orderBy(artists.name);
+  }
+  if (studioId != null) {
+    return await db.select().from(artists)
+      .where(eq(artists.studioId, studioId))
+      .orderBy(artists.name);
+  }
   return await db.select().from(artists).orderBy(artists.name);
 }
 
-export async function getArtistById(id: number) {
+export async function getArtistById(id: number, studioId?: number | null) {
   const db = await getDb();
   if (!db) return null;
 
-  const result = await db
-    .select()
-    .from(artists)
-    .where(eq(artists.id, id))
+  const result = await db.select().from(artists)
+    .where(studioId != null ? and(eq(artists.id, id), eq(artists.studioId, studioId)) : eq(artists.id, id))
     .limit(1);
   return result.length > 0 ? result[0] : null;
 }
@@ -2349,17 +1499,17 @@ export async function getArtistById(id: number) {
 export async function createArtist(artist: InsertArtist) {
   const db = await getDb();
   if (!db) {
-    console.error("[createArtist] Database not available");
-    throw new Error("Database not available");
+    console.error('[createArtist] Database not available');
+    throw new Error('Database not available');
   }
 
   try {
-    console.log("[createArtist] Creating artist with data:", artist);
-    const [inserted] = await db.insert(artists).values(artist);
-    console.log("[createArtist] Artist created with ID:", inserted.insertId);
+    const now = toDateStr(new Date());
+    const [inserted] = await db.insert(artists).values({ ...artist, createdAt: now, updatedAt: now });
+    console.log('[createArtist] Artist created with ID:', inserted.insertId);
     return await getArtistById(inserted.insertId);
   } catch (error) {
-    console.error("[createArtist] Error creating artist:", error);
+    console.error('[createArtist] Error creating artist:', error);
     throw error;
   }
 }
@@ -2368,11 +1518,10 @@ export async function updateArtist(id: number, artist: Partial<InsertArtist>) {
   const db = await getDb();
   if (!db) return null;
 
-  await db
-    .update(artists)
+  await db.update(artists)
     .set({ ...artist, updatedAt: toDateStr(new Date()) })
     .where(eq(artists.id, id));
-
+  
   return await getArtistById(id);
 }
 
@@ -2384,13 +1533,13 @@ export async function deleteArtist(id: number) {
   return true;
 }
 
+
 // ============ AUDIT LOG FUNCTIONS ============
 export async function createAuditLog(data: {
   userId: number;
   userName: string;
   action: "create" | "update" | "delete" | "activate" | "deactivate";
-  entity:
-    "user" | "client" | "appointment" | "transaction" | "artist" | "settings";
+  entity: "user" | "client" | "appointment" | "transaction" | "artist" | "settings";
   entityId?: number;
   entityName?: string;
   details?: any;
@@ -2447,11 +1596,11 @@ export async function listAuditLogs(filters?: {
   if (filters?.startDate) {
     // Converter Date para string no formato YYYY-MM-DD HH:mm:ss
     const year = filters.startDate.getFullYear();
-    const month = String(filters.startDate.getMonth() + 1).padStart(2, "0");
-    const day = String(filters.startDate.getDate()).padStart(2, "0");
-    const hours = String(filters.startDate.getHours()).padStart(2, "0");
-    const minutes = String(filters.startDate.getMinutes()).padStart(2, "0");
-    const seconds = String(filters.startDate.getSeconds()).padStart(2, "0");
+    const month = String(filters.startDate.getMonth() + 1).padStart(2, '0');
+    const day = String(filters.startDate.getDate()).padStart(2, '0');
+    const hours = String(filters.startDate.getHours()).padStart(2, '0');
+    const minutes = String(filters.startDate.getMinutes()).padStart(2, '0');
+    const seconds = String(filters.startDate.getSeconds()).padStart(2, '0');
     const startStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
     conditions.push(gte(auditLogs.createdAt, startStr));
   }
@@ -2459,11 +1608,11 @@ export async function listAuditLogs(filters?: {
   if (filters?.endDate) {
     // Converter Date para string no formato YYYY-MM-DD HH:mm:ss
     const year = filters.endDate.getFullYear();
-    const month = String(filters.endDate.getMonth() + 1).padStart(2, "0");
-    const day = String(filters.endDate.getDate()).padStart(2, "0");
-    const hours = String(filters.endDate.getHours()).padStart(2, "0");
-    const minutes = String(filters.endDate.getMinutes()).padStart(2, "0");
-    const seconds = String(filters.endDate.getSeconds()).padStart(2, "0");
+    const month = String(filters.endDate.getMonth() + 1).padStart(2, '0');
+    const day = String(filters.endDate.getDate()).padStart(2, '0');
+    const hours = String(filters.endDate.getHours()).padStart(2, '0');
+    const minutes = String(filters.endDate.getMinutes()).padStart(2, '0');
+    const seconds = String(filters.endDate.getSeconds()).padStart(2, '0');
     const endStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
     conditions.push(lte(auditLogs.createdAt, endStr));
   }
@@ -2500,8 +1649,8 @@ export async function searchAuditLogs(term: string) {
       or(
         like(auditLogs.userName, `%${term}%`),
         like(auditLogs.entityName, `%${term}%`),
-        like(auditLogs.details, `%${term}%`),
-      ),
+        like(auditLogs.details, `%${term}%`)
+      )
     )
     .orderBy(desc(auditLogs.createdAt))
     .limit(100);
@@ -2513,13 +1662,12 @@ export async function searchAuditLogs(term: string) {
 
 export async function getAuditStatistics(startDate?: Date, endDate?: Date) {
   const db = await getDb();
-  if (!db)
-    return {
-      totalActions: 0,
-      actionsLast24h: 0,
-      mostActiveUser: null,
-      mostModifiedEntity: null,
-    };
+  if (!db) return {
+    totalActions: 0,
+    actionsLast24h: 0,
+    mostActiveUser: null,
+    mostModifiedEntity: null,
+  };
 
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -2530,11 +1678,11 @@ export async function getAuditStatistics(startDate?: Date, endDate?: Date) {
     .from(auditLogs)
     .where(
       startDate && endDate
-        ? and(
+         ? and(
             gte(auditLogs.createdAt, toDateStr(startDate)),
-            lte(auditLogs.createdAt, toDateStr(endDate)),
+            lte(auditLogs.createdAt, toDateStr(endDate))
           )
-        : undefined,
+        : undefined
     );
   const totalActions = Number(totalResult[0]?.count || 0);
 
@@ -2555,19 +1703,16 @@ export async function getAuditStatistics(startDate?: Date, endDate?: Date) {
     .from(auditLogs)
     .where(
       startDate && endDate
-        ? and(
+           ? and(
             gte(auditLogs.createdAt, toDateStr(startDate)),
-            lte(auditLogs.createdAt, toDateStr(endDate)),
+            lte(auditLogs.createdAt, toDateStr(endDate))
           )
-        : undefined,
+        : undefined
     )
     .groupBy(auditLogs.userName)
     .orderBy(desc(sql`COUNT(*)`));
   const mostActiveUserstActiveUser = mostActiveUserResult[0]
-    ? {
-        name: mostActiveUserResult[0].userName,
-        count: Number(mostActiveUserResult[0].count),
-      }
+    ? { name: mostActiveUserResult[0].userName, count: Number(mostActiveUserResult[0].count) }
     : null;
 
   // Entidade mais modificada
@@ -2579,25 +1724,19 @@ export async function getAuditStatistics(startDate?: Date, endDate?: Date) {
     .from(auditLogs)
     .where(
       startDate && endDate
-        ? and(
+                ? and(
             gte(auditLogs.createdAt, toDateStr(startDate)),
-            lte(auditLogs.createdAt, toDateStr(endDate)),
+            lte(auditLogs.createdAt, toDateStr(endDate))
           )
-        : undefined,
+        : undefined
     )
     .groupBy(auditLogs.entity)
     .orderBy(desc(sql`COUNT(*)`));
-  const mostActiveUser = mostActiveUserResult[0]
-    ? {
-        name: mostActiveUserResult[0].userName,
-        count: Number(mostActiveUserResult[0].count),
-      }
+   const mostActiveUser = mostActiveUserResult[0]
+    ? { name: mostActiveUserResult[0].userName, count: Number(mostActiveUserResult[0].count) }
     : null;
   const mostModifiedEntity = mostModifiedEntityResult[0]
-    ? {
-        entity: mostModifiedEntityResult[0].entity,
-        count: Number(mostModifiedEntityResult[0].count),
-      }
+    ? { entity: mostModifiedEntityResult[0].entity, count: Number(mostModifiedEntityResult[0].count) }
     : null;
   return {
     totalActions,
@@ -2613,20 +1752,20 @@ export async function getAuditActionsByDay(startDate: Date, endDate: Date) {
 
   const result = await db
     .select({
-      date: sql<string>`DATE(${auditLogs.createdAt})`.as("date"),
-      count: sql<number>`COUNT(*)`.as("count"),
+      date: sql<string>`DATE(${auditLogs.createdAt})`.as('date'),
+      count: sql<number>`COUNT(*)`.as('count'),
     })
     .from(auditLogs)
     .where(
       and(
         gte(auditLogs.createdAt, toDateStr(startDate)),
-        lte(auditLogs.createdAt, toDateStr(endDate)),
-      ),
+        lte(auditLogs.createdAt, toDateStr(endDate))
+      )
     )
     .groupBy(sql`date`)
     .orderBy(sql`date`);
 
-  return result.map((r) => ({
+  return result.map(r => ({
     date: r.date,
     count: Number(r.count),
   }));
@@ -2644,24 +1783,21 @@ export async function getAuditActionsByType(startDate?: Date, endDate?: Date) {
     .from(auditLogs)
     .where(
       startDate && endDate
-        ? and(
+         ? and(
             gte(auditLogs.createdAt, toDateStr(startDate)),
-            lte(auditLogs.createdAt, toDateStr(endDate)),
+            lte(auditLogs.createdAt, toDateStr(endDate))
           )
-        : undefined,
+        : undefined
     )
     .groupBy(auditLogs.action)
     .orderBy(desc(sql`COUNT(*)`));
-  return result.map((r) => ({
+  return result.map(r => ({
     action: r.action,
     count: Number(r.count),
   }));
 }
 
-export async function getAuditActionsByEntity(
-  startDate?: Date,
-  endDate?: Date,
-) {
+export async function getAuditActionsByEntity(startDate?: Date, endDate?: Date) {
   const db = await getDb();
   if (!db) return [];
 
@@ -2675,23 +1811,19 @@ export async function getAuditActionsByEntity(
       startDate && endDate
         ? and(
             gte(auditLogs.createdAt, toDateStr(startDate)),
-            lte(auditLogs.createdAt, toDateStr(endDate)),
+            lte(auditLogs.createdAt, toDateStr(endDate))
           )
-        : undefined,
+        : undefined
     )
     .groupBy(auditLogs.entity)
     .orderBy(desc(sql`COUNT(*)`));
-  return result.map((r) => ({
+  return result.map(r => ({
     entity: r.entity,
     count: Number(r.count),
   }));
 }
 
-export async function getTopActiveUsers(
-  limit: number = 5,
-  startDate?: Date,
-  endDate?: Date,
-) {
+export async function getTopActiveUsers(limit: number = 5, startDate?: Date, endDate?: Date) {
   const db = await getDb();
   if (!db) return [];
 
@@ -2703,15 +1835,15 @@ export async function getTopActiveUsers(
     .from(auditLogs)
     .where(
       startDate && endDate
-        ? and(
+               ? and(
             gte(auditLogs.createdAt, toDateStr(startDate)),
-            lte(auditLogs.createdAt, toDateStr(endDate)),
+            lte(auditLogs.createdAt, toDateStr(endDate))
           )
-        : undefined,
+        : undefined
     )
     .groupBy(auditLogs.userName)
     .orderBy(desc(sql`COUNT(*)`));
-  return result.map((r) => ({
+  return result.map(r => ({
     userName: r.userName,
     count: Number(r.count),
   }));
@@ -2723,28 +1855,29 @@ export async function getAuditHeatmap(startDate?: Date, endDate?: Date) {
 
   const result = await db
     .select({
-      hour: sql<number>`HOUR(${auditLogs.createdAt})`.as("hour"),
-      dayOfWeek: sql<number>`DAYOFWEEK(${auditLogs.createdAt})`.as("dayOfWeek"),
-      count: sql<number>`COUNT(*)`.as("count"),
+      hour: sql<number>`HOUR(${auditLogs.createdAt})`.as('hour'),
+      dayOfWeek: sql<number>`DAYOFWEEK(${auditLogs.createdAt})`.as('dayOfWeek'),
+      count: sql<number>`COUNT(*)`.as('count'),
     })
     .from(auditLogs)
     .where(
       startDate && endDate
         ? and(
             gte(auditLogs.createdAt, toDateStr(startDate)),
-            lte(auditLogs.createdAt, toDateStr(endDate)),
+            lte(auditLogs.createdAt, toDateStr(endDate))
           )
-        : undefined,
+        : undefined
     )
     .groupBy(sql`hour`, sql`dayOfWeek`)
     .orderBy(sql`dayOfWeek`, sql`hour`);
 
-  return result.map((r) => ({
+  return result.map(r => ({
     hour: Number(r.hour),
     dayOfWeek: Number(r.dayOfWeek),
     count: Number(r.count),
   }));
 }
+
 
 // ============ REPORT TEMPLATES HELPERS ============
 
@@ -2797,7 +1930,7 @@ export async function listReportTemplates(userId: number) {
     .where(eq(reportTemplates.userId, userId))
     .orderBy(desc(reportTemplates.createdAt));
 
-  return templates.map((t) => ({
+  return templates.map(t => ({
     ...t,
     includeSections: JSON.parse(t.includeSections),
     sectionOrder: JSON.parse(t.sectionOrder),
@@ -2839,7 +1972,7 @@ export async function updateReportTemplate(
     logoUrl?: string;
     logoKey?: string;
     footerText?: string;
-  },
+  }
 ) {
   const db = await getDb();
   if (!db) {
@@ -2849,17 +1982,13 @@ export async function updateReportTemplate(
   const updateData: any = {};
   if (data.name !== undefined) updateData.name = data.name;
   if (data.description !== undefined) updateData.description = data.description;
-  if (data.includeSections !== undefined)
-    updateData.includeSections = JSON.stringify(data.includeSections);
-  if (data.sectionOrder !== undefined)
-    updateData.sectionOrder = JSON.stringify(data.sectionOrder);
+  if (data.includeSections !== undefined) updateData.includeSections = JSON.stringify(data.includeSections);
+  if (data.sectionOrder !== undefined) updateData.sectionOrder = JSON.stringify(data.sectionOrder);
   if (data.logsLimit !== undefined) updateData.logsLimit = data.logsLimit;
   if (data.usersLimit !== undefined) updateData.usersLimit = data.usersLimit;
   if (data.reportTitle !== undefined) updateData.reportTitle = data.reportTitle;
-  if (data.reportSubtitle !== undefined)
-    updateData.reportSubtitle = data.reportSubtitle;
-  if (data.primaryColor !== undefined)
-    updateData.primaryColor = data.primaryColor;
+  if (data.reportSubtitle !== undefined) updateData.reportSubtitle = data.reportSubtitle;
+  if (data.primaryColor !== undefined) updateData.primaryColor = data.primaryColor;
   if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
   if (data.logoKey !== undefined) updateData.logoKey = data.logoKey;
   if (data.footerText !== undefined) updateData.footerText = data.footerText;
@@ -2885,6 +2014,7 @@ export async function deleteReportTemplate(id: number, userId: number) {
   return true;
 }
 
+
 // ========================================
 // Calendar helpers
 // ========================================
@@ -2903,11 +2033,7 @@ export async function listCalendars(userId: number) {
   if (!db) {
     throw new Error("Database not available");
   }
-  return await db
-    .select()
-    .from(calendars)
-    .where(eq(calendars.userId, userId))
-    .orderBy(calendars.name);
+  return await db.select().from(calendars).where(eq(calendars.userId, userId)).orderBy(calendars.name);
 }
 
 export async function getCalendarById(id: number, userId: number) {
@@ -2915,26 +2041,20 @@ export async function getCalendarById(id: number, userId: number) {
   if (!db) {
     throw new Error("Database not available");
   }
-  const results = await db
-    .select()
-    .from(calendars)
-    .where(and(eq(calendars.id, id), eq(calendars.userId, userId)));
+  const results = await db.select().from(calendars).where(
+    and(eq(calendars.id, id), eq(calendars.userId, userId))
+  );
   return results[0];
 }
 
-export async function updateCalendar(
-  id: number,
-  userId: number,
-  updateData: Partial<InsertCalendar>,
-) {
+export async function updateCalendar(id: number, userId: number, updateData: Partial<InsertCalendar>) {
   const db = await getDb();
   if (!db) {
     throw new Error("Database not available");
   }
-  await db
-    .update(calendars)
-    .set(updateData)
-    .where(and(eq(calendars.id, id), eq(calendars.userId, userId)));
+  await db.update(calendars).set(updateData).where(
+    and(eq(calendars.id, id), eq(calendars.userId, userId))
+  );
   return true;
 }
 
@@ -2943,25 +2063,20 @@ export async function deleteCalendar(id: number, userId: number) {
   if (!db) {
     throw new Error("Database not available");
   }
-  await db
-    .delete(calendars)
-    .where(and(eq(calendars.id, id), eq(calendars.userId, userId)));
+  await db.delete(calendars).where(
+    and(eq(calendars.id, id), eq(calendars.userId, userId))
+  );
   return true;
 }
 
-export async function toggleCalendarVisibility(
-  id: number,
-  userId: number,
-  isVisible: number,
-) {
+export async function toggleCalendarVisibility(id: number, userId: number, isVisible: number) {
   const db = await getDb();
   if (!db) {
     throw new Error("Database not available");
   }
-  await db
-    .update(calendars)
-    .set({ isVisible })
-    .where(and(eq(calendars.id, id), eq(calendars.userId, userId)));
+  await db.update(calendars).set({ isVisible }).where(
+    and(eq(calendars.id, id), eq(calendars.userId, userId))
+  );
   return true;
 }
 
@@ -2972,7 +2087,10 @@ export async function createAnamneseRequest(data: InsertAnamneseRequest) {
   if (!db) {
     throw new Error("Database not available");
   }
-  const result = await db.insert(anamneseRequests).values(data);
+  const result = await db.insert(anamneseRequests).values({
+    ...data,
+    expiresAt: anamneseExpiryForDatabase(data.expiresAt),
+  });
   return result[0].insertId;
 }
 
@@ -2981,10 +2099,7 @@ export async function getAnamneseRequestByToken(token: string) {
   if (!db) {
     throw new Error("Database not available");
   }
-  const result = await db
-    .select()
-    .from(anamneseRequests)
-    .where(eq(anamneseRequests.token, token));
+  const result = await db.select().from(anamneseRequests).where(eq(anamneseRequests.token, token));
   return result[0] || null;
 }
 
@@ -2993,10 +2108,7 @@ export async function markAnamneseRequestCompleted(requestId: number) {
   if (!db) {
     throw new Error("Database not available");
   }
-  await db
-    .update(anamneseRequests)
-    .set({ completedAt: toDateStr(new Date()) })
-    .where(eq(anamneseRequests.id, requestId));
+  await db.update(anamneseRequests).set({ completedAt: toDateStr(new Date()) }).where(eq(anamneseRequests.id, requestId));
 }
 
 export async function createAnamneseSubmission(data: InsertAnamneseSubmission) {
@@ -3013,23 +2125,10 @@ export async function getAnamneseSubmissionsByClientId(clientId: number) {
   if (!db) {
     throw new Error("Database not available");
   }
-  const result = await db
-    .select()
-    .from(anamneseSubmissions)
+  const result = await db.select().from(anamneseSubmissions)
     .where(eq(anamneseSubmissions.clientId, clientId))
     .orderBy(desc(anamneseSubmissions.createdAt));
   return result;
-}
-
-export async function getAnamneseSubmissionById(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const [result] = await db
-    .select()
-    .from(anamneseSubmissions)
-    .where(eq(anamneseSubmissions.id, id))
-    .limit(1);
-  return result ?? null;
 }
 
 export async function getAnamneseRequestsByClientId(clientId: number) {
@@ -3049,21 +2148,11 @@ export async function getAnamneseRequestsByClientId(clientId: number) {
       expiresAt: anamneseRequests.expiresAt,
       completedAt: anamneseRequests.completedAt,
       createdAt: anamneseRequests.createdAt,
-      source: anamneseRequests.source,
-      originalArtistName: anamneseRequests.originalArtistName,
-      procedureDate: anamneseRequests.procedureDate,
-      procedureDateStatus: anamneseRequests.procedureDateStatus,
       payloadJson: anamneseSubmissions.payloadJson,
       submissionId: anamneseSubmissions.id,
-      riskLevel: anamneseSubmissions.riskLevel,
-      riskFactors: anamneseSubmissions.riskFactors,
-      riskVersion: anamneseSubmissions.riskVersion,
     })
     .from(anamneseRequests)
-    .leftJoin(
-      anamneseSubmissions,
-      eq(anamneseSubmissions.requestId, anamneseRequests.id),
-    )
+    .leftJoin(anamneseSubmissions, eq(anamneseSubmissions.requestId, anamneseRequests.id))
     .where(eq(anamneseRequests.clientId, clientId))
     .orderBy(desc(anamneseRequests.createdAt));
   return result;
@@ -3088,40 +2177,16 @@ export async function getStudioById(id: number) {
 export async function getFirstStudio() {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db
-    .select()
-    .from(studios)
-    .where(eq(studios.isActive, 1))
-    .limit(1);
+  const result = await db.select().from(studios).where(eq(studios.isActive, 1)).limit(1);
   return result.length > 0 ? result[0] : undefined;
-}
-
-export async function createStudio(data: {
-  name: string;
-  email?: string | null;
-  masterKey: string;
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  const result = await db.insert(studios).values({
-    name: data.name,
-    email: data.email ?? null,
-    masterKey: data.masterKey,
-    isActive: 1,
-  });
-  const studioId = Number(result[0].insertId);
-  const studio = await getStudioById(studioId);
-  if (!studio) throw new Error("Failed to retrieve created studio");
-  return studio;
 }
 
 // ============ ARTIST REVENUE HELPERS ============
 export async function getArtistRevenue(
   startDate: string,
   endDate: string,
-  groupBy: "week" | "month" | "bimonth" | "year" = "month",
-  studioId: number | null = null,
+  groupBy: 'week' | 'month' | 'bimonth' | 'year' = 'month',
+  studioId: number | null = null
 ) {
   const db = await getDb();
   if (!db) return [];
@@ -3129,19 +2194,19 @@ export async function getArtistRevenue(
   // Determinar o formato de agrupamento
   let dateFormat: string;
   switch (groupBy) {
-    case "week":
-      dateFormat = "%Y-%u"; // Ano-Semana
+    case 'week':
+      dateFormat = '%Y-%u'; // Ano-Semana
       break;
-    case "bimonth":
+    case 'bimonth':
       // Bimestral: agrupar por bimestre (1-2, 3-4, 5-6, etc.)
-      dateFormat = "%Y-%m";
+      dateFormat = '%Y-%m';
       break;
-    case "year":
-      dateFormat = "%Y";
+    case 'year':
+      dateFormat = '%Y';
       break;
-    case "month":
+    case 'month':
     default:
-      dateFormat = "%Y-%m";
+      dateFormat = '%Y-%m';
   }
 
   // Query principal: receita por artista por período
@@ -3194,7 +2259,7 @@ export async function getArtistRevenue(
     ORDER BY period ASC, revenue DESC
   `);
 
-  const rows = result[0] as unknown as Array<{
+  const rows = (result[0] as unknown) as Array<{
     artist_name: string;
     period: string;
     appointment_count: number;
@@ -3204,38 +2269,22 @@ export async function getArtistRevenue(
   }>;
 
   // Para bimestral, reagrupar os meses em bimestres
-  if (groupBy === "bimonth") {
-    const bimonthMap = new Map<
-      string,
-      Map<
-        string,
-        {
-          revenue: number;
-          appointments: number;
-          completed: number;
-          avgTicket: number;
-        }
-      >
-    >();
-
+  if (groupBy === 'bimonth') {
+    const bimonthMap = new Map<string, Map<string, { revenue: number; appointments: number; completed: number; avgTicket: number }>>();
+    
     for (const row of rows) {
-      const [year, month] = row.period.split("-");
+      const [year, month] = row.period.split('-');
       const monthNum = parseInt(month);
       const bimonth = Math.ceil(monthNum / 2);
       const bimonthKey = `${year}-B${bimonth}`;
-
+      
       if (!bimonthMap.has(row.artist_name)) {
         bimonthMap.set(row.artist_name, new Map());
       }
       const artistMap = bimonthMap.get(row.artist_name)!;
-
+      
       if (!artistMap.has(bimonthKey)) {
-        artistMap.set(bimonthKey, {
-          revenue: 0,
-          appointments: 0,
-          completed: 0,
-          avgTicket: 0,
-        });
+        artistMap.set(bimonthKey, { revenue: 0, appointments: 0, completed: 0, avgTicket: 0 });
       }
       const entry = artistMap.get(bimonthKey)!;
       entry.revenue += Number(row.revenue);
@@ -3253,14 +2302,11 @@ export async function getArtistRevenue(
           appointment_count: data.appointments,
           completed_count: data.completed,
           revenue: data.revenue,
-          avg_ticket:
-            data.appointments > 0 ? data.revenue / data.appointments : 0,
+          avg_ticket: data.appointments > 0 ? data.revenue / data.appointments : 0,
         });
       }
     }
-    bimonthRows.sort(
-      (a, b) => a.period.localeCompare(b.period) || b.revenue - a.revenue,
-    );
+    bimonthRows.sort((a, b) => a.period.localeCompare(b.period) || b.revenue - a.revenue);
     return formatArtistRevenueResult(bimonthRows, groupBy);
   }
 
@@ -3268,29 +2314,15 @@ export async function getArtistRevenue(
 }
 
 function formatArtistRevenueResult(
-  rows: Array<{
-    artist_name: string;
-    period: string;
-    appointment_count: number;
-    completed_count: number;
-    revenue: number;
-    avg_ticket: number;
-  }>,
-  groupBy: string,
+  rows: Array<{ artist_name: string; period: string; appointment_count: number; completed_count: number; revenue: number; avg_ticket: number }>,
+  groupBy: string
 ) {
   // Agrupar por artista para totais
-  const artistTotals = new Map<
-    string,
-    { totalRevenue: number; totalAppointments: number; periods: typeof rows }
-  >();
-
+  const artistTotals = new Map<string, { totalRevenue: number; totalAppointments: number; periods: typeof rows }>();
+  
   for (const row of rows) {
     if (!artistTotals.has(row.artist_name)) {
-      artistTotals.set(row.artist_name, {
-        totalRevenue: 0,
-        totalAppointments: 0,
-        periods: [],
-      });
+      artistTotals.set(row.artist_name, { totalRevenue: 0, totalAppointments: 0, periods: [] });
     }
     const artist = artistTotals.get(row.artist_name)!;
     artist.totalRevenue += Number(row.revenue);
@@ -3310,15 +2342,11 @@ function formatArtistRevenueResult(
       name,
       totalRevenue: Math.round(data.totalRevenue * 100) / 100,
       totalAppointments: data.totalAppointments,
-      percentage:
-        grandTotal > 0
-          ? Math.round((data.totalRevenue / grandTotal) * 10000) / 100
-          : 0,
-      avgTicket:
-        data.totalAppointments > 0
-          ? Math.round((data.totalRevenue / data.totalAppointments) * 100) / 100
-          : 0,
-      periods: data.periods.map((p) => ({
+      percentage: grandTotal > 0 ? Math.round((data.totalRevenue / grandTotal) * 10000) / 100 : 0,
+      avgTicket: data.totalAppointments > 0
+        ? Math.round((data.totalRevenue / data.totalAppointments) * 100) / 100
+        : 0,
+      periods: data.periods.map(p => ({
         period: p.period,
         revenue: Math.round(Number(p.revenue) * 100) / 100,
         appointments: Number(p.appointment_count),
@@ -3329,7 +2357,7 @@ function formatArtistRevenueResult(
     .sort((a, b) => b.totalRevenue - a.totalRevenue);
 
   // Coletar todos os períodos únicos
-  const allPeriods = Array.from(new Set(rows.map((r) => r.period))).sort();
+  const allPeriods = Array.from(new Set(rows.map(r => r.period))).sort();
 
   return {
     artists: artistsList,
@@ -3339,508 +2367,147 @@ function formatArtistRevenueResult(
   };
 }
 
+function requireStockStudio(studioId: number): number {
+  if (!Number.isSafeInteger(studioId) || studioId <= 0) throw new TRPCError({ code: "FORBIDDEN", message: "Estúdio obrigatório." });
+  return studioId;
+}
+
+async function assertStockSupplier(id: number, studioId: number) {
+  if (!(await getSupplierById(id, studioId))) throw new TRPCError({ code: "NOT_FOUND", message: "Fornecedor não encontrado neste estúdio." });
+}
+
 // ============ FORNECEDORES ============
 
-export async function listSuppliers(activeOnly = true) {
+export async function listSuppliers(studioId: number, activeOnly = true) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = activeOnly ? [eq(suppliers.isActive, 1)] : [];
-  return db
-    .select()
-    .from(suppliers)
+  const conditions = [eq(suppliers.studioId, requireStockStudio(studioId)), ...(activeOnly ? [eq(suppliers.isActive, 1)] : [])];
+  return db.select().from(suppliers)
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(suppliers.name);
 }
 
-export async function getSupplierById(id: number) {
+export async function getSupplierById(id: number, studioId: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const rows = await db.select().from(suppliers).where(eq(suppliers.id, id));
+  const rows = await db.select().from(suppliers).where(and(eq(suppliers.id, id), eq(suppliers.studioId, requireStockStudio(studioId))));
   return rows[0];
 }
 
-export async function createSupplier(
-  data: Omit<InsertSupplier, "id" | "createdAt" | "updatedAt">,
-) {
+export async function createSupplier(data: Omit<InsertSupplier, 'id' | 'createdAt' | 'updatedAt' | 'studioId'> & { studioId: number }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = Date.now();
-  const result = await db
-    .insert(suppliers)
-    .values({ ...data, createdAt: now, updatedAt: now });
+  const result = await db.insert(suppliers).values({ ...data, studioId: requireStockStudio(data.studioId), createdAt: now, updatedAt: now });
   return result[0].insertId;
 }
 
-export async function updateSupplier(
-  id: number,
-  data: Partial<Omit<InsertSupplier, "id" | "createdAt">>,
-) {
+export async function updateSupplier(id: number, data: Partial<Omit<InsertSupplier, 'id' | 'createdAt' | 'studioId'>>, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db
-    .update(suppliers)
-    .set({ ...data, updatedAt: Date.now() })
-    .where(eq(suppliers.id, id));
+  const result = await db.update(suppliers).set({ ...data, studioId: requireStockStudio(studioId), updatedAt: Date.now() }).where(and(eq(suppliers.id, id), eq(suppliers.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Registro não encontrado neste estúdio." });
 }
 
-export async function deleteSupplier(id: number) {
+export async function deleteSupplier(id: number, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(suppliers).set({ isActive: 0 }).where(eq(suppliers.id, id));
-}
-
-// ============ CATÁLOGO TÉCNICO E PORTFÓLIO DE FORNECEDORES ============
-
-export type CatalogSearchInput = {
-  query?: string;
-  category?: string;
-  brandId?: number;
-  lineId?: number;
-  formats?: string[];
-  needleCount?: number;
-  needleDiameter?: number;
-  taper?: string;
-  supplierId?: number;
-  limit?: number;
-};
-
-export async function listCatalogBrands() {
-  const db = await getDb();
-  if (!db) return [];
-  return db
-    .select()
-    .from(catalogBrands)
-    .where(eq(catalogBrands.isActive, 1))
-    .orderBy(catalogBrands.name);
-}
-
-export async function listCatalogProductLines(
-  brandId?: number,
-  category?: string,
-) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [eq(catalogProductLines.isActive, 1)];
-  if (brandId) conditions.push(eq(catalogProductLines.brandId, brandId));
-  if (category) conditions.push(eq(catalogProductLines.category, category));
-  return db
-    .select({
-      id: catalogProductLines.id,
-      brandId: catalogProductLines.brandId,
-      name: catalogProductLines.name,
-      category: catalogProductLines.category,
-      description: catalogProductLines.description,
-      brandName: catalogBrands.name,
-    })
-    .from(catalogProductLines)
-    .innerJoin(catalogBrands, eq(catalogBrands.id, catalogProductLines.brandId))
-    .where(and(...conditions))
-    .orderBy(catalogBrands.name, catalogProductLines.name);
-}
-
-export async function searchCatalogVariants(input: CatalogSearchInput = {}) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [
-    eq(catalogVariants.isActive, 1),
-    eq(catalogProductLines.isActive, 1),
-    eq(catalogBrands.isActive, 1),
-  ];
-
-  if (input.category)
-    conditions.push(eq(catalogVariants.category, input.category));
-  if (input.brandId) conditions.push(eq(catalogBrands.id, input.brandId));
-  if (input.lineId) conditions.push(eq(catalogProductLines.id, input.lineId));
-  if (input.formats?.length)
-    conditions.push(inArray(catalogVariants.format, input.formats));
-  if (input.needleCount !== undefined)
-    conditions.push(eq(catalogVariants.needleCount, input.needleCount));
-  if (input.needleDiameter !== undefined)
-    conditions.push(
-      eq(catalogVariants.needleDiameter, String(input.needleDiameter)),
-    );
-  if (input.taper) conditions.push(eq(catalogVariants.taper, input.taper));
-
-  const tokens = (input.query ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("pt-BR")
-    .replace(/[,]/g, ".")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 8);
-
-  for (const token of tokens) {
-    conditions.push(sql`LOWER(CONCAT_WS(' ',
-      ${catalogBrands.name}, ${catalogProductLines.name}, ${catalogVariants.name},
-      ${catalogVariants.sku}, ${catalogVariants.format}, ${catalogVariants.needleCount},
-      ${catalogVariants.needleDiameter}, ${catalogVariants.taper}, ${catalogVariants.packageQuantity},
-      ${catalogVariants.packageUnit}, ${catalogVariants.application}, ${catalogVariants.colorName},
-      ${catalogVariants.volumeMl}, ${catalogVariants.anvisaRegistration}
-    )) LIKE ${`%${token}%`}`);
-  }
-
-  const variants = await db
-    .select({
-      id: catalogVariants.id,
-      lineId: catalogVariants.lineId,
-      name: catalogVariants.name,
-      sku: catalogVariants.sku,
-      category: catalogVariants.category,
-      format: catalogVariants.format,
-      needleCount: catalogVariants.needleCount,
-      needleDiameter: catalogVariants.needleDiameter,
-      taper: catalogVariants.taper,
-      packageQuantity: catalogVariants.packageQuantity,
-      packageUnit: catalogVariants.packageUnit,
-      baseUnit: catalogVariants.baseUnit,
-      purchaseUnit: catalogVariants.purchaseUnit,
-      unitsPerPackage: catalogVariants.unitsPerPackage,
-      volumeMl: catalogVariants.volumeMl,
-      colorName: catalogVariants.colorName,
-      anvisaRegistration: catalogVariants.anvisaRegistration,
-      anvisaStatus: catalogVariants.anvisaStatus,
-      requiresLotControl: catalogVariants.requiresLotControl,
-      application: catalogVariants.application,
-      evidenceStatus: catalogVariants.evidenceStatus,
-      sourceUrl: catalogVariants.sourceUrl,
-      notes: catalogVariants.notes,
-      sortOrder: catalogVariants.sortOrder,
-      lineName: catalogProductLines.name,
-      brandId: catalogBrands.id,
-      brandName: catalogBrands.name,
-    })
-    .from(catalogVariants)
-    .innerJoin(
-      catalogProductLines,
-      eq(catalogProductLines.id, catalogVariants.lineId),
-    )
-    .innerJoin(catalogBrands, eq(catalogBrands.id, catalogProductLines.brandId))
-    .where(and(...conditions))
-    .orderBy(
-      catalogBrands.name,
-      catalogProductLines.name,
-      catalogVariants.format,
-      catalogVariants.needleCount,
-      catalogVariants.needleDiameter,
-      catalogVariants.sortOrder,
-    )
-    .limit(Math.min(input.limit ?? 100, 200));
-
-  const offeringRows = await db
-    .select({
-      id: supplierCatalogOfferings.id,
-      supplierId: supplierCatalogOfferings.supplierId,
-      supplierName: suppliers.name,
-      supplierPhone: suppliers.phone,
-      supplierWhatsapp: suppliers.whatsapp,
-      brandId: supplierCatalogOfferings.brandId,
-      lineId: supplierCatalogOfferings.lineId,
-      variantId: supplierCatalogOfferings.variantId,
-      sourceUrl: supplierCatalogOfferings.sourceUrl,
-      evidenceStatus: supplierCatalogOfferings.evidenceStatus,
-      lastVerifiedAt: supplierCatalogOfferings.lastVerifiedAt,
-      notes: supplierCatalogOfferings.notes,
-    })
-    .from(supplierCatalogOfferings)
-    .innerJoin(suppliers, eq(suppliers.id, supplierCatalogOfferings.supplierId))
-    .where(
-      and(eq(supplierCatalogOfferings.isActive, 1), eq(suppliers.isActive, 1)),
-    );
-
-  const supplierFilteredVariants = input.supplierId
-    ? variants.filter((variant) =>
-        offeringRows.some(
-          (offering) =>
-            offering.supplierId === input.supplierId &&
-            (offering.variantId === variant.id ||
-              (!offering.variantId && offering.lineId === variant.lineId) ||
-              (!offering.variantId &&
-                !offering.lineId &&
-                offering.brandId === variant.brandId)),
-        ),
-      )
-    : variants;
-
-  return supplierFilteredVariants.map((variant) => {
-    const offers = offeringRows
-      .filter(
-        (offering) =>
-          offering.variantId === variant.id ||
-          (!offering.variantId && offering.lineId === variant.lineId) ||
-          (!offering.variantId &&
-            !offering.lineId &&
-            offering.brandId === variant.brandId),
-      )
-      .map((offering) => ({
-        ...offering,
-        matchLevel:
-          offering.variantId === variant.id
-            ? "item"
-            : offering.lineId === variant.lineId
-              ? "linha"
-              : "marca",
-      }));
-    return { ...variant, suppliers: offers };
-  });
-}
-
-export async function getCatalogVariantById(id: number) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const rows = await db
-    .select({
-      id: catalogVariants.id,
-      lineId: catalogVariants.lineId,
-      name: catalogVariants.name,
-      sku: catalogVariants.sku,
-      category: catalogVariants.category,
-      format: catalogVariants.format,
-      needleCount: catalogVariants.needleCount,
-      needleDiameter: catalogVariants.needleDiameter,
-      taper: catalogVariants.taper,
-      packageQuantity: catalogVariants.packageQuantity,
-      packageUnit: catalogVariants.packageUnit,
-      baseUnit: catalogVariants.baseUnit,
-      purchaseUnit: catalogVariants.purchaseUnit,
-      unitsPerPackage: catalogVariants.unitsPerPackage,
-      volumeMl: catalogVariants.volumeMl,
-      colorName: catalogVariants.colorName,
-      anvisaRegistration: catalogVariants.anvisaRegistration,
-      anvisaStatus: catalogVariants.anvisaStatus,
-      requiresLotControl: catalogVariants.requiresLotControl,
-      application: catalogVariants.application,
-      evidenceStatus: catalogVariants.evidenceStatus,
-      sourceUrl: catalogVariants.sourceUrl,
-      notes: catalogVariants.notes,
-      lineName: catalogProductLines.name,
-      brandId: catalogBrands.id,
-      brandName: catalogBrands.name,
-    })
-    .from(catalogVariants)
-    .innerJoin(
-      catalogProductLines,
-      eq(catalogProductLines.id, catalogVariants.lineId),
-    )
-    .innerJoin(catalogBrands, eq(catalogBrands.id, catalogProductLines.brandId))
-    .where(and(eq(catalogVariants.id, id), eq(catalogVariants.isActive, 1)))
-    .limit(1);
-  return rows[0];
-}
-
-export async function listSupplierCatalogOfferings(supplierId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db
-    .select({
-      id: supplierCatalogOfferings.id,
-      supplierId: supplierCatalogOfferings.supplierId,
-      brandId: supplierCatalogOfferings.brandId,
-      brandName: catalogBrands.name,
-      lineId: supplierCatalogOfferings.lineId,
-      lineName: catalogProductLines.name,
-      variantId: supplierCatalogOfferings.variantId,
-      variantName: catalogVariants.name,
-      variantSku: catalogVariants.sku,
-      sourceUrl: supplierCatalogOfferings.sourceUrl,
-      evidenceStatus: supplierCatalogOfferings.evidenceStatus,
-      lastVerifiedAt: supplierCatalogOfferings.lastVerifiedAt,
-      notes: supplierCatalogOfferings.notes,
-    })
-    .from(supplierCatalogOfferings)
-    .innerJoin(
-      catalogBrands,
-      eq(catalogBrands.id, supplierCatalogOfferings.brandId),
-    )
-    .leftJoin(
-      catalogProductLines,
-      eq(catalogProductLines.id, supplierCatalogOfferings.lineId),
-    )
-    .leftJoin(
-      catalogVariants,
-      eq(catalogVariants.id, supplierCatalogOfferings.variantId),
-    )
-    .where(
-      and(
-        eq(supplierCatalogOfferings.supplierId, supplierId),
-        eq(supplierCatalogOfferings.isActive, 1),
-      ),
-    )
-    .orderBy(
-      catalogBrands.name,
-      catalogProductLines.name,
-      catalogVariants.name,
-    );
-}
-
-export async function createSupplierCatalogOffering(data: {
-  supplierId: number;
-  brandId: number;
-  lineId?: number;
-  variantId?: number;
-  sourceUrl?: string;
-  evidenceStatus: "item" | "marca" | "pendente";
-  lastVerifiedAt?: number;
-  notes?: string;
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const now = Date.now();
-  const result = await db.insert(supplierCatalogOfferings).values({
-    ...data,
-    createdAt: now,
-    updatedAt: now,
-  });
-  return result[0].insertId;
-}
-
-export async function deactivateSupplierCatalogOffering(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db
-    .update(supplierCatalogOfferings)
-    .set({ isActive: 0, updatedAt: Date.now() })
-    .where(eq(supplierCatalogOfferings.id, id));
+  const result = await db.update(suppliers).set({ isActive: 0 }).where(and(eq(suppliers.id, id), eq(suppliers.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Registro não encontrado neste estúdio." });
 }
 
 // ============ MATERIAIS / ESTOQUE ============
 
-export async function listMaterials(activeOnly = true) {
+export async function listMaterials(studioId: number, activeOnly = true) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = activeOnly ? [eq(materials.isActive, 1)] : [];
-  const rows = await db
-    .select({
-      id: materials.id,
-      name: materials.name,
-      category: materials.category,
-      unit: materials.unit,
-      baseUnit: materials.baseUnit,
-      purchaseUnit: materials.purchaseUnit,
-      unitsPerPackage: materials.unitsPerPackage,
-      currentStock: materials.currentStock,
-      minStock: materials.minStock,
-      targetStock: materials.targetStock,
-      avgPrice: materials.avgPrice,
-      supplierId: materials.supplierId,
-      catalogVariantId: materials.catalogVariantId,
-      requiresLotControl: materials.requiresLotControl,
-      anvisaStatus: materials.anvisaStatus,
-      supplierName: suppliers.name,
-      notes: materials.notes,
-      isActive: materials.isActive,
-      createdAt: materials.createdAt,
-      updatedAt: materials.updatedAt,
-    })
+  const conditions = [eq(materials.studioId, requireStockStudio(studioId)), ...(activeOnly ? [eq(materials.isActive, 1)] : [])];
+  const rows = await db.select({
+    id: materials.id,
+    name: materials.name,
+    category: materials.category,
+    unit: materials.unit,
+    currentStock: materials.currentStock,
+    minStock: materials.minStock,
+    avgPrice: materials.avgPrice,
+    supplierId: materials.supplierId,
+    supplierName: suppliers.name,
+    notes: materials.notes,
+    isActive: materials.isActive,
+    createdAt: materials.createdAt,
+    updatedAt: materials.updatedAt,
+  })
     .from(materials)
-    .leftJoin(suppliers, eq(suppliers.id, materials.supplierId))
+    .leftJoin(suppliers, and(eq(suppliers.id, materials.supplierId), eq(suppliers.studioId, requireStockStudio(studioId))))
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(materials.category, materials.name);
   return rows;
 }
 
-export async function getMaterialById(id: number) {
+export async function getMaterialById(id: number, studioId: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const rows = await db.select().from(materials).where(eq(materials.id, id));
+  const rows = await db.select().from(materials).where(and(eq(materials.id, id), eq(materials.studioId, requireStockStudio(studioId))));
   return rows[0];
 }
 
-export async function createMaterial(
-  data: Omit<InsertMaterial, "id" | "createdAt" | "updatedAt">,
-) {
+export async function createMaterial(data: Omit<InsertMaterial, 'id' | 'createdAt' | 'updatedAt' | 'studioId'> & { studioId: number }) {
+  if (data.supplierId != null) await assertStockSupplier(data.supplierId, data.studioId);
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = Date.now();
-  const result = await db
-    .insert(materials)
-    .values({ ...data, createdAt: now, updatedAt: now });
+  const result = await db.insert(materials).values({ ...data, studioId: requireStockStudio(data.studioId), createdAt: now, updatedAt: now });
   return result[0].insertId;
 }
 
-export async function updateMaterial(
-  id: number,
-  data: Partial<Omit<InsertMaterial, "id" | "createdAt">>,
-) {
+export async function updateMaterial(id: number, data: Partial<Omit<InsertMaterial, 'id' | 'createdAt' | 'studioId'>>, studioId: number) {
+  if (data.supplierId != null) await assertStockSupplier(data.supplierId, studioId);
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db
-    .update(materials)
-    .set({ ...data, updatedAt: Date.now() })
-    .where(eq(materials.id, id));
+  const result = await db.update(materials).set({ ...data, studioId: requireStockStudio(studioId), updatedAt: Date.now() }).where(and(eq(materials.id, id), eq(materials.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Registro não encontrado neste estúdio." });
 }
 
-export async function deleteMaterial(id: number) {
+export async function deleteMaterial(id: number, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(materials).set({ isActive: 0 }).where(eq(materials.id, id));
+  const result = await db.update(materials).set({ isActive: 0 }).where(and(eq(materials.id, id), eq(materials.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Registro não encontrado neste estúdio." });
 }
 
-export async function getLowStockMaterials() {
+export async function getLowStockMaterials(studioId: number) {
   const db = await getDb();
   if (!db) return [];
   // Busca materiais onde currentStock <= minStock e minStock > 0
-  const rows = await db
-    .select({
-      id: materials.id,
-      name: materials.name,
-      category: materials.category,
-      unit: materials.unit,
-      baseUnit: materials.baseUnit,
-      purchaseUnit: materials.purchaseUnit,
-      unitsPerPackage: materials.unitsPerPackage,
-      currentStock: materials.currentStock,
-      minStock: materials.minStock,
-      targetStock: materials.targetStock,
-      supplierName: suppliers.name,
-      supplierWhatsapp: suppliers.whatsapp,
-    })
+  const rows = await db.select({
+    id: materials.id,
+    name: materials.name,
+    category: materials.category,
+    unit: materials.unit,
+    currentStock: materials.currentStock,
+    minStock: materials.minStock,
+    supplierName: suppliers.name,
+    supplierWhatsapp: suppliers.whatsapp,
+  })
     .from(materials)
-    .leftJoin(suppliers, eq(suppliers.id, materials.supplierId))
-    .where(
-      and(
-        eq(materials.isActive, 1),
-        sql`CAST(${materials.currentStock} AS DECIMAL(10,2)) <= CAST(${materials.minStock} AS DECIMAL(10,2))`,
-        sql`CAST(${materials.minStock} AS DECIMAL(10,2)) > 0`,
-      ),
-    )
+    .leftJoin(suppliers, and(eq(suppliers.id, materials.supplierId), eq(suppliers.studioId, requireStockStudio(studioId))))
+    .where(and(
+      eq(materials.studioId, requireStockStudio(studioId)),
+      eq(materials.isActive, 1),
+      sql`CAST(${materials.currentStock} AS DECIMAL(10,2)) <= CAST(${materials.minStock} AS DECIMAL(10,2))`,
+      sql`CAST(${materials.minStock} AS DECIMAL(10,2)) > 0`
+    ))
     .orderBy(materials.category, materials.name);
   return rows;
 }
 
-export async function getReorderSuggestions() {
-  const rows = await getLowStockMaterials();
-  return rows.map((material) => {
-    const currentStock = Number(material.currentStock) || 0;
-    const minStock = Number(material.minStock) || 0;
-    const targetStock = Math.max(Number(material.targetStock) || 0, minStock);
-    const unitsPerPackage = Math.max(
-      Number(material.unitsPerPackage) || 1,
-      0.001,
-    );
-    const missingBaseUnits = Math.max(targetStock - currentStock, 0);
-    const suggestedPackages = Math.ceil(missingBaseUnits / unitsPerPackage);
-    return {
-      ...material,
-      targetStock,
-      missingBaseUnits,
-      suggestedPackages,
-      suggestedBaseUnits: suggestedPackages * unitsPerPackage,
-    };
-  });
-}
-
 // ============ MOVIMENTAÇÕES DE ESTOQUE ============
 
-export async function listStockMovements(materialId?: number, limit = 50) {
+export async function listStockMovements(studioId: number, materialId?: number, limit = 50) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = materialId
-    ? [eq(stockMovements.materialId, materialId)]
-    : [];
-  return db
-    .select()
-    .from(stockMovements)
+  const conditions = [sql`EXISTS (SELECT 1 FROM ${materials} WHERE ${materials.id} = ${stockMovements.materialId} AND ${materials.studioId} = ${requireStockStudio(studioId)})`, ...(materialId ? [eq(stockMovements.materialId, materialId)] : [])];
+  return db.select().from(stockMovements)
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(desc(stockMovements.createdAt))
     .limit(limit);
@@ -3848,609 +2515,105 @@ export async function listStockMovements(materialId?: number, limit = 50) {
 
 export async function addStockMovement(data: {
   materialId: number;
-  type: "entrada" | "saida" | "ajuste";
+  type: 'entrada' | 'saida' | 'ajuste';
   quantity: number;
-  inputQuantity?: number;
-  inputUnit?: string;
-  conversionFactor?: number;
   reason?: string;
   notes?: string;
-  lotNumber?: string;
-  expiresAt?: string;
-  alertAt?: string;
-  source?: "manual" | "procedimento" | "compra" | "ajuste";
   createdBy?: number;
-}) {
+}, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   // Buscar estoque atual
-  const mat = await getMaterialById(data.materialId);
-  if (!mat) throw new Error("Material não encontrado");
+  const mat = await getMaterialById(data.materialId, studioId);
+  if (!mat) throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado neste estúdio." });
 
   const previousStock = parseFloat(String(mat.currentStock)) || 0;
-  const inputQuantity = data.inputQuantity ?? data.quantity;
-  const conversionFactor =
-    data.type === "ajuste" ? 1 : (data.conversionFactor ?? 1);
-  const normalizedQuantity =
-    data.type === "ajuste" ? data.quantity : inputQuantity * conversionFactor;
-  if (!Number.isFinite(normalizedQuantity) || normalizedQuantity < 0) {
-    throw new Error("Quantidade ou fator de conversão inválido");
-  }
   let newStock: number;
 
-  if (data.type === "entrada") {
-    newStock = previousStock + normalizedQuantity;
-  } else if (data.type === "saida") {
-    if (normalizedQuantity > previousStock)
-      throw new Error("Saída maior que o estoque disponível");
-    newStock = previousStock - normalizedQuantity;
+  if (data.type === 'entrada') {
+    newStock = previousStock + data.quantity;
+  } else if (data.type === 'saida') {
+    newStock = Math.max(0, previousStock - data.quantity);
   } else {
     // ajuste: quantity é o novo valor absoluto
-    newStock = normalizedQuantity;
+    newStock = data.quantity;
   }
 
   // Inserir movimentação
   await db.insert(stockMovements).values({
     materialId: data.materialId,
     type: data.type,
-    quantity: String(normalizedQuantity),
-    inputQuantity: String(inputQuantity),
-    inputUnit: data.inputUnit || mat.baseUnit || mat.unit || "un",
-    conversionFactor: String(conversionFactor),
+    quantity: String(data.quantity),
     previousStock: String(previousStock),
     newStock: String(newStock),
     reason: data.reason,
     notes: data.notes,
-    lotNumber: data.lotNumber,
-    expiresAt: data.expiresAt,
-    alertAt: data.alertAt,
-    source: data.source || (data.type === "ajuste" ? "ajuste" : "manual"),
     createdBy: data.createdBy,
     createdAt: Date.now(),
   });
 
   // Atualizar estoque atual do material
-  await db
-    .update(materials)
-    .set({ currentStock: String(newStock), updatedAt: Date.now() })
-    .where(eq(materials.id, data.materialId));
+  await db.update(materials)
+    .set({ currentStock: String(newStock) })
+    .where(and(eq(materials.id, data.materialId), eq(materials.studioId, requireStockStudio(studioId))));
 
-  if (data.type === "entrada" && data.lotNumber) {
-    const now = Date.now();
-    await db
-      .insert(materialLots)
-      .values({
-        materialId: data.materialId,
-        lotNumber: data.lotNumber,
-        expiresAt: data.expiresAt,
-        alertAt: data.alertAt,
-        currentQuantity: String(normalizedQuantity),
-        supplierId: mat.supplierId,
-        receivedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onDuplicateKeyUpdate({
-        set: {
-          currentQuantity: sql`${materialLots.currentQuantity} + ${normalizedQuantity}`,
-          expiresAt: data.expiresAt,
-          alertAt: data.alertAt,
-          updatedAt: now,
-        },
-      });
-  }
-
-  return {
-    previousStock,
-    newStock,
-    normalizedQuantity,
-    baseUnit: mat.baseUnit || mat.unit || "un",
-  };
-}
-
-export async function listMaterialLots(materialId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db
-    .select()
-    .from(materialLots)
-    .where(
-      materialId
-        ? and(
-            eq(materialLots.materialId, materialId),
-            eq(materialLots.isActive, 1),
-          )
-        : eq(materialLots.isActive, 1),
-    )
-    .orderBy(materialLots.expiresAt, materialLots.lotNumber);
-}
-
-export async function deactivateMaterialLot(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  const rows = await db
-    .select()
-    .from(materialLots)
-    .where(and(eq(materialLots.id, id), eq(materialLots.isActive, 1)));
-  const lot = rows[0];
-  if (!lot) return undefined;
-
-  await db
-    .update(materialLots)
-    .set({ isActive: 0, updatedAt: Date.now() })
-    .where(eq(materialLots.id, id));
-  return lot;
-}
-
-export async function getExpiryAlerts(days = 90) {
-  const db = await getDb();
-  if (!db) return [];
-  const rows = await db
-    .select({
-      id: materialLots.id,
-      materialId: materialLots.materialId,
-      materialName: materials.name,
-      baseUnit: materials.baseUnit,
-      lotNumber: materialLots.lotNumber,
-      expiresAt: materialLots.expiresAt,
-      alertAt: materialLots.alertAt,
-      currentQuantity: materialLots.currentQuantity,
-    })
-    .from(materialLots)
-    .innerJoin(materials, eq(materials.id, materialLots.materialId))
-    .where(
-      and(
-        eq(materialLots.isActive, 1),
-        eq(materials.isActive, 1),
-        sql`CAST(${materialLots.currentQuantity} AS DECIMAL(12,3)) > 0`,
-        sql`${materialLots.expiresAt} IS NOT NULL`,
-        sql`(
-        (${materialLots.alertAt} IS NOT NULL AND ${materialLots.alertAt} <= NOW())
-        OR
-        (${materialLots.alertAt} IS NULL AND ${materialLots.expiresAt} <= DATE_ADD(NOW(), INTERVAL ${days} DAY))
-      )`,
-      ),
-    )
-    .orderBy(materialLots.expiresAt, materials.name);
-  const now = Date.now();
-  return rows.map((row) => ({
-    ...row,
-    daysRemaining: row.expiresAt
-      ? Math.ceil((new Date(row.expiresAt).getTime() - now) / 86_400_000)
-      : null,
-    alertIsCustom: Boolean(row.alertAt),
-  }));
-}
-
-// ============ KITS DE PROCEDIMENTO ============
-
-type ProcedureKitItemInput = {
-  materialId: number;
-  quantity: string;
-  unit: string;
-};
-
-type ProcedureKitInput = {
-  studioId: number;
-  name: string;
-  description?: string;
-  category: string;
-  items: ProcedureKitItemInput[];
-};
-
-export async function listProcedureKits(studioId = 1) {
-  const db = await getDb();
-  if (!db) return [];
-  return db
-    .select()
-    .from(procedureKits)
-    .where(
-      and(eq(procedureKits.studioId, studioId), eq(procedureKits.isActive, 1)),
-    )
-    .orderBy(procedureKits.category, procedureKits.name);
-}
-
-export async function getProcedureKitById(id: number, studioId = 1) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const [kit] = await db
-    .select()
-    .from(procedureKits)
-    .where(
-      and(
-        eq(procedureKits.id, id),
-        eq(procedureKits.studioId, studioId),
-        eq(procedureKits.isActive, 1),
-      ),
-    )
-    .limit(1);
-  if (!kit) return undefined;
-  const items = await db
-    .select({
-      id: procedureKitItems.id,
-      materialId: procedureKitItems.materialId,
-      materialName: materials.name,
-      materialCategory: materials.category,
-      materialUnit: materials.unit,
-      currentStock: materials.currentStock,
-      avgPrice: materials.avgPrice,
-      quantity: procedureKitItems.quantity,
-      unit: procedureKitItems.unit,
-    })
-    .from(procedureKitItems)
-    .innerJoin(materials, eq(materials.id, procedureKitItems.materialId))
-    .where(eq(procedureKitItems.kitId, id))
-    .orderBy(materials.name);
-  return { ...kit, items };
-}
-
-export async function createProcedureKit(data: ProcedureKitInput) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const now = Date.now();
-  return db.transaction(async (tx) => {
-    const [result] = await tx.insert(procedureKits).values({
-      studioId: data.studioId,
-      name: data.name,
-      description: data.description,
-      category: data.category,
-      isActive: 1,
-      createdAt: now,
-      updatedAt: now,
-    });
-    const kitId = Number(result.insertId);
-    await tx.insert(procedureKitItems).values(
-      data.items.map((item) => ({
-        kitId,
-        materialId: item.materialId,
-        quantity: item.quantity,
-        unit: item.unit,
-      })),
-    );
-    return kitId;
-  });
-}
-
-export async function updateProcedureKit(
-  id: number,
-  studioId: number,
-  data: Omit<ProcedureKitInput, "studioId">,
-) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  return db.transaction(async (tx) => {
-    const [kit] = await tx
-      .select()
-      .from(procedureKits)
-      .where(
-        and(
-          eq(procedureKits.id, id),
-          eq(procedureKits.studioId, studioId),
-          eq(procedureKits.isActive, 1),
-        ),
-      )
-      .limit(1);
-    if (!kit) throw new Error("Kit não encontrado");
-    await tx
-      .update(procedureKits)
-      .set({
-        name: data.name,
-        description: data.description,
-        category: data.category,
-        updatedAt: Date.now(),
-      })
-      .where(eq(procedureKits.id, id));
-    await tx.delete(procedureKitItems).where(eq(procedureKitItems.kitId, id));
-    await tx.insert(procedureKitItems).values(
-      data.items.map((item) => ({
-        kitId: id,
-        materialId: item.materialId,
-        quantity: item.quantity,
-        unit: item.unit,
-      })),
-    );
-    return { success: true };
-  });
-}
-
-export async function deleteProcedureKit(id: number, studioId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db
-    .update(procedureKits)
-    .set({ isActive: 0, updatedAt: Date.now() })
-    .where(and(eq(procedureKits.id, id), eq(procedureKits.studioId, studioId)));
-  return { success: true };
-}
-
-function kitConsumableCategory(
-  category: string | null,
-):
-  | "ink"
-  | "cartridge"
-  | "disposable"
-  | "liquid"
-  | "protection"
-  | "stencil"
-  | "aftercare"
-  | "other" {
-  const normalized = (category || "").toLowerCase();
-  if (normalized.includes("tinta")) return "ink";
-  if (normalized.includes("agulha") || normalized.includes("cartucho"))
-    return "cartridge";
-  if (normalized.includes("higiene") || normalized.includes("descart"))
-    return "disposable";
-  if (normalized.includes("proteção") || normalized.includes("protecao"))
-    return "protection";
-  if (normalized.includes("líquido") || normalized.includes("liquido"))
-    return "liquid";
-  if (normalized.includes("cuidado") || normalized.includes("after"))
-    return "aftercare";
-  if (normalized.includes("papel") || normalized.includes("stencil"))
-    return "stencil";
-  return "other";
-}
-
-function kitConsumableUnit(
-  unit: string | null,
-): "drop" | "ml" | "unit" | "pair" | "gram" | "portion" | "roll_fraction" {
-  const normalized = (unit || "").toLowerCase();
-  if (normalized === "ml" || normalized === "l") return "ml";
-  if (normalized === "g" || normalized === "kg") return "gram";
-  if (normalized === "par") return "pair";
-  if (normalized === "rolo" || normalized === "m") return "roll_fraction";
-  return "unit";
-}
-
-export async function applyProcedureKitToProcedure(data: {
-  kitId: number;
-  procedureId: number;
-  studioId: number;
-  createdBy?: number;
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  return db.transaction(async (tx) => {
-    const [kit] = await tx
-      .select()
-      .from(procedureKits)
-      .where(
-        and(
-          eq(procedureKits.id, data.kitId),
-          eq(procedureKits.studioId, data.studioId),
-          eq(procedureKits.isActive, 1),
-        ),
-      )
-      .limit(1);
-    if (!kit) throw new Error("Kit não encontrado");
-    const [procedure] = await tx
-      .select()
-      .from(technicalProcedures)
-      .where(
-        and(
-          eq(technicalProcedures.id, data.procedureId),
-          eq(technicalProcedures.studioId, data.studioId),
-        ),
-      )
-      .limit(1);
-    if (!procedure) throw new Error("Procedimento não encontrado");
-    const items = await tx
-      .select({
-        materialId: procedureKitItems.materialId,
-        quantity: procedureKitItems.quantity,
-        kitUnit: procedureKitItems.unit,
-        materialName: materials.name,
-        materialCategory: materials.category,
-        materialUnit: materials.unit,
-        currentStock: materials.currentStock,
-        avgPrice: materials.avgPrice,
-      })
-      .from(procedureKitItems)
-      .innerJoin(materials, eq(materials.id, procedureKitItems.materialId))
-      .where(eq(procedureKitItems.kitId, data.kitId));
-    if (!items.length) throw new Error("O kit não possui insumos");
-
-    const parsedItems = items.map((item) => {
-      const quantity = Number(item.quantity);
-      const currentStock = Number(item.currentStock || 0);
-      if (!Number.isFinite(quantity) || quantity <= 0)
-        throw new Error(`Quantidade inválida para ${item.materialName}`);
-      if (currentStock < quantity)
-        throw new Error(`Estoque insuficiente para ${item.materialName}`);
-      return {
-        ...item,
-        quantity,
-        currentStock,
-        avgPrice: Number(item.avgPrice || 0),
-      };
-    });
-
-    for (const item of parsedItems) {
-      const newStock = item.currentStock - item.quantity;
-      const availableLots = await tx
-        .select()
-        .from(materialLots)
-        .where(
-          and(
-            eq(materialLots.materialId, item.materialId),
-            eq(materialLots.isActive, 1),
-            sql`CAST(${materialLots.currentQuantity} AS DECIMAL(12,3)) > 0`,
-          ),
-        )
-        .orderBy(
-          sql`${materialLots.expiresAt} IS NULL`,
-          materialLots.expiresAt,
-          materialLots.receivedAt,
-        );
-      let remaining = item.quantity;
-      const allocations: Array<{
-        quantity: number;
-        lot: (typeof availableLots)[number] | null;
-      }> = [];
-      for (const lot of availableLots) {
-        if (remaining <= 0) break;
-        if (lot.expiresAt && new Date(lot.expiresAt).getTime() < Date.now())
-          continue;
-        const allocated = Math.min(remaining, Number(lot.currentQuantity || 0));
-        if (allocated <= 0) continue;
-        allocations.push({ quantity: allocated, lot });
-        remaining -= allocated;
-      }
-      if (remaining > 0) allocations.push({ quantity: remaining, lot: null });
-
-      await tx.insert(stockMovements).values({
-        materialId: item.materialId,
-        type: "saida",
-        quantity: String(item.quantity),
-        inputQuantity: String(item.quantity),
-        inputUnit: item.materialUnit || item.kitUnit || "un",
-        conversionFactor: "1",
-        previousStock: String(item.currentStock),
-        newStock: String(newStock),
-        reason: `Kit de procedimento: ${kit.name}`,
-        lotNumber:
-          allocations
-            .map((allocation) => allocation.lot?.lotNumber)
-            .filter(Boolean)
-            .join(", ") || null,
-        source: "procedimento",
-        createdBy: data.createdBy,
-        createdAt: Date.now(),
-      });
-      await tx
-        .update(materials)
-        .set({ currentStock: String(newStock), updatedAt: Date.now() })
-        .where(eq(materials.id, item.materialId));
-      const unit = kitConsumableUnit(item.materialUnit || item.kitUnit);
-      for (const allocation of allocations) {
-        if (allocation.lot) {
-          await tx
-            .update(materialLots)
-            .set({
-              currentQuantity: String(
-                Number(allocation.lot.currentQuantity) - allocation.quantity,
-              ),
-              updatedAt: Date.now(),
-            })
-            .where(eq(materialLots.id, allocation.lot.id));
-        }
-        await tx.insert(procedureConsumables).values({
-          procedureId: data.procedureId,
-          inventoryItemId: item.materialId,
-          materialLotId: allocation.lot?.id ?? null,
-          lotNumber: allocation.lot?.lotNumber ?? null,
-          expiresAt: allocation.lot?.expiresAt ?? null,
-          category: kitConsumableCategory(item.materialCategory),
-          name: item.materialName,
-          unit,
-          quantity: String(allocation.quantity),
-          estimatedUnitCost: String(item.avgPrice),
-          estimatedTotalCost: String(item.avgPrice * allocation.quantity),
-          notes: `Aplicado pelo kit ${kit.name}`,
-        });
-      }
-    }
-
-    await tx.insert(procedureEvents).values({
-      procedureId: data.procedureId,
-      eventType: "consumable_added",
-      payload: JSON.stringify({
-        kitId: kit.id,
-        kitName: kit.name,
-        itemCount: parsedItems.length,
-      }),
-      createdAt: new Date().toISOString().slice(0, 19).replace("T", " "),
-    });
-    return {
-      success: true,
-      kitId: kit.id,
-      kitName: kit.name,
-      itemCount: parsedItems.length,
-    };
-  });
+  return { previousStock, newStock };
 }
 
 // ============ PEDIDOS DE ORÇAMENTO ============
 
-export async function listPurchaseOrders() {
+export async function listPurchaseOrders(studioId: number) {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db
-    .select({
-      id: purchaseOrders.id,
-      supplierId: purchaseOrders.supplierId,
-      supplierName: suppliers.name,
-      supplierWhatsapp: suppliers.whatsapp,
-      status: purchaseOrders.status,
-      notes: purchaseOrders.notes,
-      sentAt: purchaseOrders.sentAt,
-      receivedAt: purchaseOrders.receivedAt,
-      receivedBy: purchaseOrders.receivedBy,
-      createdAt: purchaseOrders.createdAt,
-    })
+  const rows = await db.select({
+    id: purchaseOrders.id,
+    supplierId: purchaseOrders.supplierId,
+    supplierName: suppliers.name,
+    supplierWhatsapp: suppliers.whatsapp,
+    status: purchaseOrders.status,
+    notes: purchaseOrders.notes,
+    sentAt: purchaseOrders.sentAt,
+    createdAt: purchaseOrders.createdAt,
+  })
     .from(purchaseOrders)
-    .leftJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
+    .leftJoin(suppliers, and(eq(suppliers.id, purchaseOrders.supplierId), eq(suppliers.studioId, requireStockStudio(studioId))))
+    .where(eq(purchaseOrders.studioId, requireStockStudio(studioId)))
     .orderBy(desc(purchaseOrders.createdAt));
   return rows;
 }
 
-export async function getPurchaseOrderById(id: number) {
+export async function getPurchaseOrderById(id: number, studioId: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const order = await db
-    .select({
-      id: purchaseOrders.id,
-      supplierId: purchaseOrders.supplierId,
-      supplierName: suppliers.name,
-      supplierWhatsapp: suppliers.whatsapp,
-      supplierPhone: suppliers.phone,
-      status: purchaseOrders.status,
-      notes: purchaseOrders.notes,
-      sentAt: purchaseOrders.sentAt,
-      receivedAt: purchaseOrders.receivedAt,
-      receivedBy: purchaseOrders.receivedBy,
-      createdAt: purchaseOrders.createdAt,
-    })
+  const order = await db.select({
+    id: purchaseOrders.id,
+    supplierId: purchaseOrders.supplierId,
+    supplierName: suppliers.name,
+    supplierWhatsapp: suppliers.whatsapp,
+    supplierPhone: suppliers.phone,
+    status: purchaseOrders.status,
+    notes: purchaseOrders.notes,
+    sentAt: purchaseOrders.sentAt,
+    createdAt: purchaseOrders.createdAt,
+  })
     .from(purchaseOrders)
-    .leftJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
-    .where(eq(purchaseOrders.id, id));
+    .leftJoin(suppliers, and(eq(suppliers.id, purchaseOrders.supplierId), eq(suppliers.studioId, requireStockStudio(studioId))))
+    .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.studioId, requireStockStudio(studioId))));
 
   if (!order[0]) return undefined;
 
-  const items = await db
-    .select({
-      id: purchaseOrderItems.id,
-      materialId: purchaseOrderItems.materialId,
-      catalogVariantId: sql<
-        number | null
-      >`COALESCE(${purchaseOrderItems.catalogVariantId}, ${materials.catalogVariantId})`,
-      materialName: sql<string>`COALESCE(${purchaseOrderItems.materialName}, ${materials.name})`,
-      materialUnit: sql<string>`COALESCE(${purchaseOrderItems.materialUnit}, ${materials.purchaseUnit}, ${materials.unit})`,
-      materialCategory: sql<string>`COALESCE(${materials.category}, ${catalogVariants.category}, 'Outros')`,
-      baseUnit: sql<string>`COALESCE(${materials.baseUnit}, ${catalogVariants.baseUnit}, ${purchaseOrderItems.materialUnit}, 'un')`,
-      purchaseUnit: sql<string>`COALESCE(${materials.purchaseUnit}, ${catalogVariants.purchaseUnit}, ${purchaseOrderItems.materialUnit}, 'un')`,
-      unitsPerPackage: sql<string>`COALESCE(${materials.unitsPerPackage}, ${catalogVariants.unitsPerPackage}, 1)`,
-      requiresLotControl: sql<number>`COALESCE(${materials.requiresLotControl}, ${catalogVariants.requiresLotControl}, 0)`,
-      quantity: purchaseOrderItems.quantity,
-      unitPrice: purchaseOrderItems.unitPrice,
-      notes: purchaseOrderItems.notes,
-      receivedQuantity: purchaseOrderItems.receivedQuantity,
-      receivedBaseQuantity: purchaseOrderItems.receivedBaseQuantity,
-      receivedLotNumber: purchaseOrderItems.receivedLotNumber,
-      receivedExpiresAt: purchaseOrderItems.receivedExpiresAt,
-      receivedAlertAt: purchaseOrderItems.receivedAlertAt,
-      qualityStatus: purchaseOrderItems.qualityStatus,
-      qualityNotes: purchaseOrderItems.qualityNotes,
-      receivedAt: purchaseOrderItems.receivedAt,
-    })
+  const items = await db.select({
+    id: purchaseOrderItems.id,
+    materialId: purchaseOrderItems.materialId,
+    materialName: materials.name,
+    materialUnit: materials.unit,
+    quantity: purchaseOrderItems.quantity,
+    unitPrice: purchaseOrderItems.unitPrice,
+    notes: purchaseOrderItems.notes,
+  })
     .from(purchaseOrderItems)
-    .leftJoin(materials, eq(materials.id, purchaseOrderItems.materialId))
-    .leftJoin(
-      catalogVariants,
-      sql`${catalogVariants.id} = COALESCE(${purchaseOrderItems.catalogVariantId}, ${materials.catalogVariantId})`,
-    )
+    .leftJoin(materials, and(eq(materials.id, purchaseOrderItems.materialId), eq(materials.studioId, requireStockStudio(studioId))))
     .where(eq(purchaseOrderItems.orderId, id));
 
   return { ...order[0], items };
@@ -4460,316 +2623,98 @@ export async function createPurchaseOrder(data: {
   supplierId: number;
   notes?: string;
   createdBy?: number;
-  items: {
-    materialId?: number;
-    catalogVariantId?: number;
-    materialName: string;
-    materialUnit: string;
-    quantity: number;
-    unitPrice?: number;
-    notes?: string;
-  }[];
-}) {
+  items: { materialId: number; quantity: number; unitPrice?: number; notes?: string }[];
+}, studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  await assertStockSupplier(data.supplierId, studioId);
+  for (const item of data.items) {
+    if (!(await getMaterialById(item.materialId, studioId))) throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado neste estúdio." });
+  }
   const result = await db.insert(purchaseOrders).values({
+    studioId: requireStockStudio(studioId),
     supplierId: data.supplierId,
     notes: data.notes,
     createdBy: data.createdBy,
-    status: "rascunho",
+    status: 'rascunho',
   });
   const orderId = result[0].insertId;
 
   if (data.items.length > 0) {
     await db.insert(purchaseOrderItems).values(
-      data.items.map((item) => ({
+      data.items.map(item => ({
         orderId,
         materialId: item.materialId,
-        catalogVariantId: item.catalogVariantId,
-        materialName: item.materialName,
-        materialUnit: item.materialUnit,
         quantity: String(item.quantity),
         unitPrice: String(item.unitPrice ?? 0),
         notes: item.notes,
-      })),
+      }))
     );
   }
 
   return orderId;
 }
 
-export type ReceivePurchaseOrderItem = {
-  orderItemId: number;
-  materialId?: number;
-  receivedQuantity: number;
-  baseUnit: string;
-  purchaseUnit: string;
-  unitsPerPackage: number;
-  unitPrice?: number;
-  lotNumber?: string;
-  expiresAt?: string;
-  alertAt?: string;
-  qualityStatus: "nao_verificada" | "aprovado" | "ressalva" | "recusado";
-  qualityNotes?: string;
-};
-
-export async function receivePurchaseOrder(data: {
-  orderId: number;
-  receivedBy: number;
-  items: ReceivePurchaseOrderItem[];
-}) {
+export async function updatePurchaseOrderStatus(id: number, status: 'rascunho' | 'enviado' | 'confirmado' | 'recebido' | 'cancelado', studioId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const sentAt = status === 'enviado' ? Date.now() : undefined;
+  const result = await db.update(purchaseOrders).set({
+    status,
+    updatedAt: Date.now(),
+    ...(sentAt ? { sentAt } : {}),
+  }).where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.studioId, requireStockStudio(studioId))));
+  if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "Pedido não encontrado neste estúdio." });
+}
 
-  return db.transaction(async (tx) => {
-    const [order] = await tx
-      .select()
-      .from(purchaseOrders)
-      .where(eq(purchaseOrders.id, data.orderId))
-      .limit(1);
-    if (!order) throw new Error("Pedido não encontrado");
-    if (order.status === "recebido")
-      throw new Error("Este pedido já foi recebido e lançado no estoque");
-    if (order.status === "cancelado")
-      throw new Error("Um pedido cancelado não pode ser recebido");
-
-    const orderItems = await tx
-      .select()
-      .from(purchaseOrderItems)
-      .where(eq(purchaseOrderItems.orderId, data.orderId));
-    const receivedByItemId = new Map(
-      data.items.map((item) => [item.orderItemId, item]),
-    );
-    if (
-      orderItems.length === 0 ||
-      orderItems.length !== receivedByItemId.size ||
-      orderItems.some((item) => !receivedByItemId.has(item.id))
-    ) {
-      throw new Error("Confira o recebimento de todos os itens do pedido");
-    }
-
-    const now = Date.now();
-    const movements: Array<{
-      id: number;
-      materialId: number;
-      quantity: number;
-      previousStock: number;
-      newStock: number;
-    }> = [];
-
-    for (const orderItem of orderItems) {
-      const input = receivedByItemId.get(orderItem.id)!;
-      if (input.qualityStatus !== "recusado" && input.receivedQuantity <= 0)
-        throw new Error(
-          `Informe a quantidade recebida de ${orderItem.materialName || "um item"}`,
-        );
-      if ((input.expiresAt || input.alertAt) && !input.lotNumber)
-        throw new Error(
-          `Informe o lote de ${orderItem.materialName || "um item"}`,
-        );
-      if (input.alertAt && !input.expiresAt)
-        throw new Error(
-          `Informe a validade antes da data de aviso de ${orderItem.materialName || "um item"}`,
-        );
-      if (
-        input.alertAt &&
-        input.expiresAt &&
-        new Date(input.alertAt) > new Date(input.expiresAt)
-      )
-        throw new Error(
-          `A data de aviso deve ser anterior ou igual à validade de ${orderItem.materialName || "um item"}`,
-        );
-
-      let materialId = input.materialId || orderItem.materialId || undefined;
-      let catalogVariant: typeof catalogVariants.$inferSelect | undefined;
-      if (!materialId && orderItem.catalogVariantId) {
-        [catalogVariant] = await tx
-          .select()
-          .from(catalogVariants)
-          .where(eq(catalogVariants.id, orderItem.catalogVariantId))
-          .limit(1);
-      }
-
-      if (!materialId) {
-        const [created] = await tx.insert(materials).values({
-          name: orderItem.materialName || "Material recebido",
-          category: catalogVariant?.category || "Outros",
-          unit: input.baseUnit,
-          baseUnit: input.baseUnit,
-          purchaseUnit: input.purchaseUnit,
-          unitsPerPackage: String(input.unitsPerPackage),
-          currentStock: "0",
-          minStock: "0",
-          targetStock: "0",
-          avgPrice: String(input.unitPrice || orderItem.unitPrice || 0),
-          supplierId: order.supplierId,
-          catalogVariantId: orderItem.catalogVariantId,
-          requiresLotControl: catalogVariant?.requiresLotControl || 0,
-          anvisaStatus: catalogVariant?.anvisaStatus || "nao_aplicavel",
-          notes: `Cadastro criado no recebimento do pedido #${data.orderId}`,
-          createdAt: now,
-          updatedAt: now,
-        });
-        materialId = Number(created.insertId);
-      }
-
-      const [material] = await tx
-        .select()
-        .from(materials)
-        .where(eq(materials.id, materialId))
-        .limit(1);
-      if (!material) throw new Error("Material de destino não encontrado");
-
-      const receivedQuantity =
-        input.qualityStatus === "recusado" ? 0 : input.receivedQuantity;
-      const normalizedQuantity = receivedQuantity * input.unitsPerPackage;
-      const previousStock = Number(material.currentStock) || 0;
-      const newStock = previousStock + normalizedQuantity;
-
-      if (normalizedQuantity > 0) {
-        const [movement] = await tx.insert(stockMovements).values({
-          materialId,
-          type: "entrada",
-          quantity: String(normalizedQuantity),
-          inputQuantity: String(receivedQuantity),
-          inputUnit: input.purchaseUnit,
-          conversionFactor: String(input.unitsPerPackage),
-          previousStock: String(previousStock),
-          newStock: String(newStock),
-          reason: `Recebimento do pedido #${data.orderId}`,
-          notes: input.qualityNotes,
-          lotNumber: input.lotNumber,
-          expiresAt: input.expiresAt,
-          alertAt: input.alertAt,
-          source: "compra",
-          createdBy: data.receivedBy,
-          createdAt: now,
-        });
-        await tx
-          .update(materials)
-          .set({
-            currentStock: String(newStock),
-            supplierId: material.supplierId || order.supplierId,
-            avgPrice:
-              input.unitPrice && input.unitPrice > 0
-                ? String(input.unitPrice)
-                : material.avgPrice,
-            updatedAt: now,
-          })
-          .where(eq(materials.id, materialId));
-
-        if (input.lotNumber) {
-          await tx
-            .insert(materialLots)
-            .values({
-              materialId,
-              lotNumber: input.lotNumber,
-              expiresAt: input.expiresAt,
-              alertAt: input.alertAt,
-              currentQuantity: String(normalizedQuantity),
-              supplierId: order.supplierId,
-              purchasePrice: input.unitPrice
-                ? String(input.unitPrice)
-                : undefined,
-              receivedAt: now,
-              createdAt: now,
-              updatedAt: now,
-            })
-            .onDuplicateKeyUpdate({
-              set: {
-                currentQuantity: sql`${materialLots.currentQuantity} + ${normalizedQuantity}`,
-                expiresAt: input.expiresAt,
-                alertAt: input.alertAt,
-                purchasePrice: input.unitPrice
-                  ? String(input.unitPrice)
-                  : undefined,
-                updatedAt: now,
-              },
-            });
-        }
-        movements.push({
-          id: Number(movement.insertId),
-          materialId,
-          quantity: normalizedQuantity,
-          previousStock,
-          newStock,
-        });
-      }
-
-      await tx
-        .update(purchaseOrderItems)
-        .set({
-          materialId,
-          receivedQuantity: String(receivedQuantity),
-          receivedBaseQuantity: String(normalizedQuantity),
-          receivedLotNumber: input.lotNumber,
-          receivedExpiresAt: input.expiresAt,
-          receivedAlertAt: input.alertAt,
-          qualityStatus: input.qualityStatus,
-          qualityNotes: input.qualityNotes,
-          receivedAt: now,
-        })
-        .where(eq(purchaseOrderItems.id, orderItem.id));
-    }
-
-    await tx
-      .update(purchaseOrders)
-      .set({
-        status: "recebido",
-        receivedAt: now,
-        receivedBy: data.receivedBy,
-        updatedAt: now,
-      })
-      .where(eq(purchaseOrders.id, data.orderId));
-
-    return { success: true as const, movements };
+export async function deletePurchaseOrder(id: number, studioId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async tx => {
+    const [order] = await tx.select({ id: purchaseOrders.id }).from(purchaseOrders)
+      .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.studioId, requireStockStudio(studioId)))).for("update");
+    if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Pedido não encontrado neste estúdio." });
+    await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.orderId, id));
+    await tx.delete(purchaseOrders).where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.studioId, studioId)));
   });
 }
 
-export async function updatePurchaseOrderStatus(
-  id: number,
-  status: "rascunho" | "enviado" | "confirmado" | "recebido" | "cancelado",
-) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const sentAt = status === "enviado" ? Date.now() : undefined;
-  await db
-    .update(purchaseOrders)
-    .set({
-      status,
-      updatedAt: Date.now(),
-      ...(sentAt ? { sentAt } : {}),
-    })
-    .where(eq(purchaseOrders.id, id));
+/** Gera a mensagem formatada para WhatsApp de um pedido de orçamento */
+export function buildWhatsAppOrderMessage(order: {
+  supplierName: string | null;
+  notes?: string | null;
+  items: { materialName: string | null; quantity: string; materialUnit: string | null; unitPrice: string; notes?: string | null }[];
+}): string {
+  const lines: string[] = [];
+  lines.push('🛒 *PEDIDO DE ORÇAMENTO*');
+  lines.push(`📋 Fornecedor: ${order.supplierName ?? 'N/A'}`);
+  lines.push('');
+  lines.push('*Itens solicitados:*');
+  order.items.forEach((item, i) => {
+    const qty = parseFloat(item.quantity);
+    const price = parseFloat(item.unitPrice);
+    const line = `${i + 1}. ${item.materialName ?? 'Item'} — ${qty} ${item.materialUnit ?? 'un'}`;
+    lines.push(line + (price > 0 ? ` (R$ ${price.toFixed(2)}/un)` : ''));
+    if (item.notes) lines.push(`   _${item.notes}_`);
+  });
+  if (order.notes) {
+    lines.push('');
+    lines.push(`📝 Observações: ${order.notes}`);
+  }
+  lines.push('');
+  lines.push('Por favor, envie o orçamento com prazo de entrega. Obrigado! 🙏');
+  return lines.join('\n');
 }
-
-export async function deletePurchaseOrder(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(purchaseOrderItems).where(eq(purchaseOrderItems.orderId, id));
-  await db.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
-}
-
-export { buildWhatsAppOrderMessage } from "./purchaseOrderMessage";
 
 // ============ ANAMNESE - EDIÇÃO E EXCLUSÃO ============
 
 /** Atualiza o payloadJson de uma submissão de anamnese (via link público) */
-export async function updateAnamneseSubmission(
-  id: number,
-  payloadJson: string,
-  risk?: {
-    riskLevel: "low" | "medium" | "high" | "critical";
-    riskFactors: string;
-    riskVersion: string;
-  },
-) {
+export async function updateAnamneseSubmission(id: number, payloadJson: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db
-    .update(anamneseSubmissions)
-    .set({ payloadJson, ...(risk || {}) })
+  await db.update(anamneseSubmissions)
+    .set({ payloadJson })
     .where(eq(anamneseSubmissions.id, id));
 }
 
@@ -4778,45 +2723,35 @@ export async function deleteAnamneseSubmission(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   // Buscar o requestId antes de excluir
-  const [submission] = await db
-    .select({ requestId: anamneseSubmissions.requestId })
+  const [submission] = await db.select({ requestId: anamneseSubmissions.requestId })
     .from(anamneseSubmissions)
     .where(eq(anamneseSubmissions.id, id))
     .limit(1);
   await db.delete(anamneseSubmissions).where(eq(anamneseSubmissions.id, id));
   // Reabre o request (remove completedAt) para permitir novo preenchimento
   if (submission?.requestId) {
-    await db
-      .update(anamneseRequests)
+    await db.update(anamneseRequests)
       .set({ completedAt: null })
       .where(eq(anamneseRequests.id, submission.requestId));
   }
 }
 
 /** Atualiza uma ficha de anamnese manual (painel interno) */
-export async function updateAnamnesisRecord(
-  id: number,
-  data: Partial<{
-    hasAllergies: number;
-    allergiesDetails: string;
-    hasDiseases: number;
-    diseasesDetails: string;
-    usesMedication: number;
-    medicationDetails: string;
-    isPregnant: number;
-    hasKeloid: number;
-    acceptedTerms: number;
-    notes: string;
-    riskLevel: "low" | "medium" | "high" | "critical";
-    riskFactors: string;
-  }>,
-) {
+export async function updateAnamnesisRecord(id: number, data: Partial<{
+  hasAllergies: number;
+  allergiesDetails: string;
+  hasDiseases: number;
+  diseasesDetails: string;
+  usesMedication: number;
+  medicationDetails: string;
+  isPregnant: number;
+  hasKeloid: number;
+  acceptedTerms: number;
+  notes: string;
+}>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db
-    .update(anamnesisRecords)
-    .set(data)
-    .where(eq(anamnesisRecords.id, id));
+  await db.update(anamnesisRecords).set(data).where(eq(anamnesisRecords.id, id));
 }
 
 /** Exclui uma ficha de anamnese manual (painel interno) */
@@ -4830,8 +2765,7 @@ export async function deleteAnamnesisRecord(id: number) {
 export async function getAnamneseSubmissionByRequestId(requestId: number) {
   const db = await getDb();
   if (!db) return null;
-  const [result] = await db
-    .select()
+  const [result] = await db.select()
     .from(anamneseSubmissions)
     .where(eq(anamneseSubmissions.requestId, requestId))
     .orderBy(desc(anamneseSubmissions.createdAt))
@@ -4839,12 +2773,11 @@ export async function getAnamneseSubmissionByRequestId(requestId: number) {
   return result ?? null;
 }
 
+
 // ============ APPOINTMENT REMINDERS (Lembretes Individuais) ============
 
 /** Lista todos os lembretes de um agendamento específico */
-export async function listRemindersByAppointment(
-  appointmentId: number,
-): Promise<AppointmentReminder[]> {
+export async function listRemindersByAppointment(appointmentId: number): Promise<AppointmentReminder[]> {
   const db = await getDb();
   if (!db) return [];
   return await db
@@ -4855,17 +2788,12 @@ export async function listRemindersByAppointment(
 }
 
 /** Cria um novo lembrete para um agendamento */
-export async function createAppointmentReminder(
-  data: InsertAppointmentReminder,
-): Promise<AppointmentReminder | null> {
+export async function createAppointmentReminder(data: InsertAppointmentReminder): Promise<AppointmentReminder | null> {
   const db = await getDb();
   if (!db) return null;
   const [result] = await db.insert(appointmentReminders).values(data);
   const id = (result as any).insertId as number;
-  const [created] = await db
-    .select()
-    .from(appointmentReminders)
-    .where(eq(appointmentReminders.id, id));
+  const [created] = await db.select().from(appointmentReminders).where(eq(appointmentReminders.id, id));
   return created ?? null;
 }
 
@@ -4873,42 +2801,42 @@ export async function createAppointmentReminder(
 export async function updateAppointmentReminder(
   id: number,
   data: Partial<InsertAppointmentReminder>,
+  studioId: number
 ): Promise<AppointmentReminder | null> {
   const db = await getDb();
   if (!db) return null;
-  await db
-    .update(appointmentReminders)
-    .set(data)
-    .where(eq(appointmentReminders.id, id));
-  const [updated] = await db
-    .select()
-    .from(appointmentReminders)
-    .where(eq(appointmentReminders.id, id));
+  const condition = reminderStudioCondition(id,studioId);
+  const {scheduledAt,message,status} = data;
+  const result = await db.update(appointmentReminders).set({scheduledAt,message,status}).where(condition);
+  if (!result[0].affectedRows) throw new TRPCError({code:'NOT_FOUND',message:'Lembrete não encontrado neste estúdio.'});
+  const [updated] = await db.select().from(appointmentReminders).where(condition);
   return updated ?? null;
 }
 
 /** Remove um lembrete */
-export async function deleteAppointmentReminder(id: number): Promise<void> {
+export async function deleteAppointmentReminder(id: number, studioId: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.delete(appointmentReminders).where(eq(appointmentReminders.id, id));
+  const result = await db.delete(appointmentReminders).where(reminderStudioCondition(id,studioId));
+  if (!result[0].affectedRows) throw new TRPCError({code:'NOT_FOUND',message:'Lembrete não encontrado neste estúdio.'});
+}
+
+function reminderStudioCondition(id:number,studioId:number) {
+  requireDashboardStudio(studioId);
+  return and(eq(appointmentReminders.id,id),sql`EXISTS (SELECT 1 FROM ${appointments} WHERE ${appointments.id} = ${appointmentReminders.appointmentId} AND ${appointments.studioId} = ${studioId})`);
 }
 
 /**
  * Busca todos os lembretes pendentes cuja scheduledAt <= agora.
  * Usado pelo scheduler para disparar os lembretes no momento certo.
  */
-export async function getPendingRemindersToSend(): Promise<
-  Array<
-    AppointmentReminder & {
-      clientName: string | null;
-      clientPhone: string | null;
-      appointmentDate: string;
-      service: string;
-      artist: string;
-    }
-  >
-> {
+export async function getPendingRemindersToSend(): Promise<Array<AppointmentReminder & {
+  clientName: string | null;
+  clientPhone: string | null;
+  appointmentDate: string;
+  service: string;
+  artist: string;
+}>> {
   const db = await getDb();
   if (!db) return [];
 
@@ -4931,16 +2859,13 @@ export async function getPendingRemindersToSend(): Promise<
       artist: appointments.artist,
     })
     .from(appointmentReminders)
-    .leftJoin(
-      appointments,
-      eq(appointments.id, appointmentReminders.appointmentId),
-    )
+    .leftJoin(appointments, eq(appointments.id, appointmentReminders.appointmentId))
     .leftJoin(clients, eq(clients.id, appointments.clientId))
     .where(
       and(
         eq(appointmentReminders.status, "pending"),
-        lte(appointmentReminders.scheduledAt, now),
-      ),
+        lte(appointmentReminders.scheduledAt, now)
+      )
     )
     .orderBy(appointmentReminders.scheduledAt);
 
@@ -4951,29 +2876,24 @@ export async function getPendingRemindersToSend(): Promise<
 export async function markReminderSent(id: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db
-    .update(appointmentReminders)
-    .set({
-      status: "sent",
-      sentAt: toDateStr(new Date()),
-    })
-    .where(eq(appointmentReminders.id, id));
+  await db.update(appointmentReminders).set({
+    status: "sent",
+    sentAt: toDateStr(new Date()),
+  }).where(eq(appointmentReminders.id, id));
 }
 
 /** Marca um lembrete como falhou */
 export async function markReminderFailed(id: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db
-    .update(appointmentReminders)
-    .set({
-      status: "failed",
-    })
-    .where(eq(appointmentReminders.id, id));
+  await db.update(appointmentReminders).set({
+    status: "failed",
+  }).where(eq(appointmentReminders.id, id));
 }
 
 /** Lista todos os lembretes individuais pendentes (para exibir na tela de Notificações) */
-export async function getAllPendingReminders(): Promise<any[]> {
+export async function getAllPendingReminders(studioId: number): Promise<any[]> {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
 
@@ -4993,26 +2913,49 @@ export async function getAllPendingReminders(): Promise<any[]> {
       artist: appointments.artist,
     })
     .from(appointmentReminders)
-    .leftJoin(
-      appointments,
-      eq(appointments.id, appointmentReminders.appointmentId),
-    )
+    .leftJoin(appointments, eq(appointments.id, appointmentReminders.appointmentId))
     .leftJoin(clients, eq(clients.id, appointments.clientId))
-    .where(eq(appointmentReminders.status, "pending"))
+    .where(and(
+      eq(appointmentReminders.status, "pending"),
+      eq(appointments.studioId, studioId),
+      eq(clients.studioId, studioId),
+    ))
     .orderBy(appointmentReminders.scheduledAt);
 
   return rows as any[];
 }
 
+/** Reagenda para o instante local o lembrete pendente do estúdio para que a fila o entregue. */
+export async function releasePendingReminderNow(id: number, studioId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const reminder = (await db.select({ id: appointmentReminders.id })
+    .from(appointmentReminders)
+    .innerJoin(appointments, eq(appointments.id, appointmentReminders.appointmentId))
+    .where(and(
+      eq(appointmentReminders.id, id),
+      eq(appointmentReminders.status, "pending"),
+      eq(appointments.studioId, studioId),
+    ))
+    .limit(1))[0];
+  if (!reminder) return false;
+  const now = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).format(new Date()).replace(",", "");
+  await db.update(appointmentReminders).set({ scheduledAt: now, status: "pending" })
+    .where(and(reminderStudioCondition(id,studioId),eq(appointmentReminders.status,'pending')));
+  return true;
+}
+
 /** Retorna agendamentos da semana atual (segunda-feira a domingo) no fuso America/Sao_Paulo */
-export async function getWeeklyAppointments() {
+export async function getWeeklyAppointments(studioId: number) {
+  requireDashboardStudio(studioId);
   const db = await getDb();
   if (!db) return [];
 
   // Calcular início (segunda) e fim (domingo) da semana atual em SP
-  const now = new Date(
-    new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }),
-  );
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
   const dayOfWeek = now.getDay(); // 0=dom, 1=seg, ..., 6=sab
   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
 
@@ -5044,12 +2987,13 @@ export async function getWeeklyAppointments() {
       totalAmount: appointments.totalAmount,
     })
     .from(appointments)
-    .leftJoin(clients, eq(clients.id, appointments.clientId))
+    .leftJoin(clients, and(eq(clients.id, appointments.clientId),eq(clients.studioId,studioId)))
     .where(
       and(
         gte(appointments.date, fmt(monday)),
-        lte(appointments.date, fmtEnd(sunday)),
-      ),
+        eq(appointments.studioId, studioId),
+        lte(appointments.date, fmtEnd(sunday))
+      )
     )
     .orderBy(appointments.date);
 
@@ -5072,8 +3016,8 @@ export async function listCollaboratorRates(studioId: number) {
     .from(collaboratorRates)
     .where(eq(collaboratorRates.studioId, studioId));
 
-  return artistsList.map((artist) => {
-    const rate = rates.find((r) => r.artistId === artist.id);
+  return artistsList.map(artist => {
+    const rate = rates.find(r => r.artistId === artist.id);
     return {
       artistId: artist.id,
       artistName: artist.name,
@@ -5100,8 +3044,8 @@ export async function upsertCollaboratorRate(data: {
     .where(
       and(
         eq(collaboratorRates.studioId, data.studioId),
-        eq(collaboratorRates.artistId, data.artistId),
-      ),
+        eq(collaboratorRates.artistId, data.artistId)
+      )
     )
     .limit(1);
 
@@ -5124,22 +3068,16 @@ export async function upsertCollaboratorRate(data: {
 
 // ===== RELATÓRIOS FINANCEIROS POR COLABORADOR =====
 
-function getPeriodRange(
-  period: string,
-  referenceDate?: string,
-): { start: string; end: string } {
-  const ref = referenceDate
-    ? new Date(referenceDate + "T12:00:00")
-    : new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const fmt = (d: Date) =>
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function getPeriodRange(period: string, referenceDate?: string): { start: string; end: string } {
+  const ref = referenceDate ? new Date(referenceDate + 'T12:00:00') : new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-  if (period === "daily") {
+  if (period === 'daily') {
     const day = fmt(ref);
     return { start: `${day} 00:00:00`, end: `${day} 23:59:59` };
   }
-  if (period === "weekly") {
+  if (period === 'weekly') {
     const day = ref.getDay(); // 0=dom, 1=seg...
     const diff = day === 0 ? -6 : 1 - day;
     const monday = new Date(ref);
@@ -5148,13 +3086,9 @@ function getPeriodRange(
     sunday.setDate(monday.getDate() + 6);
     return { start: `${fmt(monday)} 00:00:00`, end: `${fmt(sunday)} 23:59:59` };
   }
-  if (period === "monthly") {
+  if (period === 'monthly') {
     const start = `${ref.getFullYear()}-${pad(ref.getMonth() + 1)}-01`;
-    const lastDay = new Date(
-      ref.getFullYear(),
-      ref.getMonth() + 1,
-      0,
-    ).getDate();
+    const lastDay = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
     const end = `${ref.getFullYear()}-${pad(ref.getMonth() + 1)}-${pad(lastDay)}`;
     return { start: `${start} 00:00:00`, end: `${end} 23:59:59` };
   }
@@ -5169,7 +3103,7 @@ export async function getCollaboratorReport(
   studioId: number,
   artistName: string,
   period: string,
-  referenceDate?: string,
+  referenceDate?: string
 ) {
   const db = await getDb();
   if (!db) return null;
@@ -5199,8 +3133,8 @@ export async function getCollaboratorReport(
         eq(appointments.studioId, studioId),
         eq(appointments.artist, artistName),
         gte(appointments.date, start),
-        lte(appointments.date, end),
-      ),
+        lte(appointments.date, end)
+      )
     )
     .orderBy(appointments.date);
 
@@ -5219,8 +3153,8 @@ export async function getCollaboratorReport(
       .where(
         and(
           eq(collaboratorRates.studioId, studioId),
-          eq(collaboratorRates.artistId, artistRecord[0].id),
-        ),
+          eq(collaboratorRates.artistId, artistRecord[0].id)
+        )
       )
       .limit(1);
     if (rate.length > 0) percentage = rate[0].percentage;
@@ -5228,9 +3162,9 @@ export async function getCollaboratorReport(
 
   const totalRevenue = apts.reduce((sum, a) => sum + (a.totalAmount ?? 0), 0);
   const paidRevenue = apts
-    .filter((a) => a.paymentStatus === "pago")
+    .filter(a => a.paymentStatus === 'pago')
     .reduce((sum, a) => sum + (a.totalAmount ?? 0), 0);
-  const collaboratorEarnings = Math.round((totalRevenue * percentage) / 100);
+  const collaboratorEarnings = Math.round(totalRevenue * percentage / 100);
   const studioEarnings = totalRevenue - collaboratorEarnings;
 
   return {
@@ -5240,16 +3174,16 @@ export async function getCollaboratorReport(
     start: start.slice(0, 10),
     end: end.slice(0, 10),
     totalAppointments: apts.length,
-    totalRevenue, // em centavos
-    paidRevenue, // em centavos
+    totalRevenue,       // em centavos
+    paidRevenue,        // em centavos
     collaboratorEarnings, // em centavos
-    studioEarnings, // em centavos
-    appointments: apts.map((a) => ({
+    studioEarnings,       // em centavos
+    appointments: apts.map(a => ({
       ...a,
-      totalAmountBRL: a.totalAmount ? (a.totalAmount / 100).toFixed(2) : "0.00",
+      totalAmountBRL: a.totalAmount ? (a.totalAmount / 100).toFixed(2) : '0.00',
       collaboratorAmountBRL: a.totalAmount
-        ? ((a.totalAmount * percentage) / 100 / 100).toFixed(2)
-        : "0.00",
+        ? ((a.totalAmount * percentage / 100) / 100).toFixed(2)
+        : '0.00',
     })),
   };
 }
@@ -5258,6 +3192,7 @@ export async function getCollaboratorsSummary(
   studioId: number,
   period: string,
   referenceDate?: string,
+  artistId?: number | null,
 ) {
   const db = await getDb();
   if (!db) return [];
@@ -5288,22 +3223,23 @@ export async function getCollaboratorsSummary(
       and(
         eq(appointments.studioId, studioId),
         gte(appointments.date, start),
-        lte(appointments.date, end),
-      ),
+        lte(appointments.date, end)
+      )
     );
 
-  return artistsList.map((artist) => {
-    const rate = rates.find((r) => r.artistId === artist.id);
+  const visibleArtists = artistId != null
+    ? artistsList.filter((artist) => artist.id === artistId)
+    : artistsList;
+
+  return visibleArtists.map(artist => {
+    const rate = rates.find(r => r.artistId === artist.id);
     const percentage = rate?.percentage ?? 50;
-    const artistApts = apts.filter((a) => a.artist === artist.name);
-    const totalRevenue = artistApts.reduce(
-      (sum, a) => sum + (a.totalAmount ?? 0),
-      0,
-    );
+    const artistApts = apts.filter(a => a.artist === artist.name);
+    const totalRevenue = artistApts.reduce((sum, a) => sum + (a.totalAmount ?? 0), 0);
     const paidRevenue = artistApts
-      .filter((a) => a.paymentStatus === "pago")
+      .filter(a => a.paymentStatus === 'pago')
       .reduce((sum, a) => sum + (a.totalAmount ?? 0), 0);
-    const collaboratorEarnings = Math.round((totalRevenue * percentage) / 100);
+    const collaboratorEarnings = Math.round(totalRevenue * percentage / 100);
     const studioEarnings = totalRevenue - collaboratorEarnings;
 
     return {
@@ -5321,5 +3257,47 @@ export async function getCollaboratorsSummary(
       collaboratorEarningsBRL: (collaboratorEarnings / 100).toFixed(2),
       studioEarningsBRL: (studioEarnings / 100).toFixed(2),
     };
+  });
+}
+
+/** Save the answer and its linked client's personal data atomically. */
+export async function savePublicAnamnese(token: string, payload: Record<string, unknown>, expectedSubmissionId?: number) {
+  const database = await getDb();
+  if (!database) throw new Error("Database not available");
+  let patch: ReturnType<typeof clientPatchFromAnamnese>;
+  try { patch = clientPatchFromAnamnese(payload); }
+  catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Dados pessoais inválidos" }); }
+  return database.transaction(async (tx) => {
+    const [request] = await tx.select().from(anamneseRequests)
+      .where(eq(anamneseRequests.token, token)).limit(1).for("update");
+    if (!request) throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido" });
+    if (request.statusRequest === "cancelada" || request.statusRequest === "expirada" ||
+        parseAnamneseExpiry(request.expiresAt).getTime() < Date.now()) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado ou cancelado. Solicite um novo link ao estúdio." });
+    }
+    const [client] = await tx.select().from(clients).where(eq(clients.id, request.clientId)).limit(1).for("update");
+    if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+    const [existing] = await tx.select().from(anamneseSubmissions)
+      .where(eq(anamneseSubmissions.requestId, request.id)).limit(1);
+    if (expectedSubmissionId !== undefined && existing?.id !== expectedSubmissionId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Ficha não pertence a este link" });
+    }
+    const payloadJson = JSON.stringify(payload);
+    let submissionId: number;
+    if (existing) {
+      if (existing.clientId !== request.clientId) throw new TRPCError({ code: "BAD_REQUEST", message: "Vínculo da ficha inválido" });
+      await tx.update(anamneseSubmissions).set({ payloadJson }).where(eq(anamneseSubmissions.id, existing.id));
+      submissionId = existing.id;
+    } else {
+      const result = await tx.insert(anamneseSubmissions).values({
+        requestId: request.id, clientId: request.clientId, appointmentId: request.appointmentId, payloadJson,
+      });
+      submissionId = result[0].insertId;
+    }
+    if (Object.keys(patch).length) await tx.update(clients).set(patch).where(eq(clients.id, request.clientId));
+    await tx.update(anamneseRequests).set({
+      completedAt: request.completedAt || toDateStr(new Date()), statusRequest: "preenchida",
+    }).where(eq(anamneseRequests.id, request.id));
+    return { submissionId, clientId: request.clientId, appointmentId: request.appointmentId };
   });
 }

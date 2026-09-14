@@ -13,11 +13,10 @@ import { SkeletonTable } from "@/components/SkeletonTable";
 import {
   ChevronLeft, ChevronRight, Clock, User, FileText,
   Pencil, AlertCircle, Plus, Stethoscope, SlidersHorizontal,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, BellRing,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
-import { PostSaleFollowupsBar } from "@/components/PostSaleFollowupsBar";
 
 type AppointmentStatus = "agendado" | "confirmado" | "concluido" | "cancelado" | "reagendado";
 type ViewMode = "day" | "week" | "month" | "year";
@@ -29,7 +28,7 @@ const COLOR_PALETTE = [
   "#FF2D55", "#A2845E", "#8E8E93", "#636366", "#1C1C1E",
 ];
 
-const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00 → 22:00
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour); // 00:00 → 23:00
 const SLOT_HEIGHT = 60; // px por hora
 const MINUTES_PER_SLOT = 60;
 
@@ -175,7 +174,9 @@ export default function Schedule() {
   const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth >= 1024
+  );
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [hiddenArtists, setHiddenArtists] = useState<Set<string>>(new Set());
 
@@ -194,6 +195,7 @@ export default function Schedule() {
   const [draggedAppointment, setDraggedAppointment] = useState<any>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ date: Date; hour: number; minute: number } | null>(null);
   const dragOffsetMinutes = useRef<number>(0);
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
   // Form state para edição
   const [editForm, setEditForm] = useState({ date: "", time: "", duration: "", service: "", artist: "", notes: "" });
@@ -203,8 +205,15 @@ export default function Schedule() {
   const { data: appointments = [], isLoading } = trpc.appointments.list.useQuery();
   const { data: clients = [] } = trpc.clients.list.useQuery();
   const { data: artistsList = [] } = trpc.artists.list.useQuery();
+  const { data: calendars = [] } = trpc.calendars.list.useQuery();
   const { data: podLinkedMap } = trpc.procedures.listLinkedAppointmentIds.useQuery(undefined, { staleTime: 60_000 });
   const utils = trpc.useUtils();
+  const appointmentIds = useMemo(() => (appointments as any[]).map((appointment) => appointment.id).filter(Number.isInteger), [appointments]);
+  const reminderIndicatorInput = useMemo(() => ({ appointmentIds }), [appointmentIds]);
+  const { data: reminderIndicators = {} } = trpc.messaging.getReminderIndicators.useQuery(
+    reminderIndicatorInput,
+    { enabled: appointmentIds.length > 0, staleTime: 30_000 },
+  );
 
   const invalidateAll = useCallback(() => {
     utils.appointments.list.invalidate();
@@ -267,6 +276,67 @@ export default function Schedule() {
     return COLOR_PALETTE[Math.max(0, idx)];
   }, [artistColorMap, allArtistNames]);
 
+  const artistByName = useMemo(() => {
+    const map: Record<string, any> = {};
+    for (const artist of artistsList as any[]) {
+      if (artist.name) map[artist.name] = artist;
+    }
+    return map;
+  }, [artistsList]);
+
+  const getAppointmentColor = useCallback((apt: any) => {
+    const statusColors: Record<string, string> = {
+      confirmado: "#22C55E",
+      pendente: "#F59E0B",
+      agendado: "#F59E0B",
+      concluido: "#8E8E93",
+      cancelado: "#EF4444",
+      reagendado: "#F97316",
+      reagendar: "#F97316",
+      atraso: "#EAB308",
+      nao_confirmado: "#EF4444",
+    };
+    const statusKey = apt.status === "cancelado"
+      ? "cancelado"
+      : apt.confirmationStatus === "reagendar"
+        ? "reagendar"
+        : apt.confirmationStatus === "atraso"
+          ? "atraso"
+          : apt.confirmationStatus === "nao_confirmado"
+            ? "nao_confirmado"
+            : apt.confirmationStatus === "confirmado" || apt.status === "confirmado"
+              ? "confirmado"
+              : apt.status || "pendente";
+    const calendar = apt.calendarId
+      ? (calendars as any[]).find((item) => item.id === apt.calendarId)
+      : null;
+    if (calendar?.color) return calendar.color;
+    if (statusColors[statusKey]) return statusColors[statusKey];
+    if (apt.artist) return getArtistColor(apt.artist);
+    return "#5856D6";
+  }, [calendars, getArtistColor]);
+
+  const requiresAttention = useCallback((apt: any) => (
+    apt.status === "reagendado"
+    || apt.status === "cancelado"
+    || apt.confirmationStatus === "reagendar"
+    || apt.confirmationStatus === "chegada_antecipada"
+    || apt.confirmationStatus === "nao_confirmado"
+    || apt.confirmationStatus === "atraso"
+  ), []);
+
+  const getStatusIndicator = useCallback((apt: any) => {
+    if (apt.status === "cancelado") return { label: "Cancelado", color: "#EF4444" };
+    if (apt.confirmationStatus === "reagendar") return { label: "Cliente solicitou reagendamento", color: "#F97316" };
+    if (apt.confirmationStatus === "chegada_antecipada") return { label: "Cliente informou adiantamento", color: "#3B82F6" };
+    if (apt.confirmationStatus === "atraso") return { label: "Cliente informou atraso", color: "#EAB308" };
+    if (apt.confirmationStatus === "nao_confirmado") return { label: "Não confirmado", color: "#EF4444" };
+    if (apt.confirmationStatus === "confirmado" || apt.status === "confirmado") return { label: "Confirmado", color: "#22C55E" };
+    if (apt.status === "reagendado") return { label: "Reagendado", color: "#F97316" };
+    if (apt.status === "concluido") return { label: "Concluído", color: "#8E8E93" };
+    return { label: "Agendado", color: "#F59E0B" };
+  }, []);
+
   // ── Filtros ───────────────────────────────────────────────────────────────
   const filteredAppointments = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -274,12 +344,9 @@ export default function Schedule() {
       if (hiddenArtists.has(apt.artist)) return false;
       const statusMatch = selectedStatus === "all" || apt.status === selectedStatus;
       const artistMatch = selectedArtist === "all" || apt.artist === selectedArtist;
-      const client = (clients as any[]).find((c) => c.id === apt.clientId);
-      const clientName = client?.name || "";
-      const clientPhone = client?.phone || "";
+      const clientName = (clients as any[]).find((c) => c.id === apt.clientId)?.name || "";
       const searchMatch = !q ||
         clientName.toLowerCase().includes(q) ||
-        clientPhone.toLowerCase().includes(q) ||
         (apt.service || "").toLowerCase().includes(q) ||
         (apt.artist || "").toLowerCase().includes(q) ||
         (apt.notes || "").toLowerCase().includes(q) ||
@@ -296,6 +363,22 @@ export default function Schedule() {
     else if (viewMode === "month") d.setMonth(d.getMonth() + dir);
     else if (viewMode === "year") d.setFullYear(d.getFullYear() + dir);
     setCurrentDate(d);
+  };
+
+  const handleSwipeStart = (event: React.TouchEvent) => {
+    if (viewMode !== "week") return;
+    const touch = event.touches[0];
+    swipeStart.current = { x: touch.clientX, y: touch.clientY };
+  };
+
+  const handleSwipeEnd = (event: React.TouchEvent) => {
+    if (viewMode !== "week" || !swipeStart.current) return;
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - swipeStart.current.x;
+    const deltaY = touch.clientY - swipeStart.current.y;
+    swipeStart.current = null;
+    if (Math.abs(deltaX) < 40 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.15) return;
+    navigate_period(deltaX < 0 ? 1 : -1);
   };
 
   const scrollToNow = useCallback(() => {
@@ -356,7 +439,7 @@ export default function Schedule() {
   // ── Grade semanal ─────────────────────────────────────────────────────────
   const weekDays = useMemo(() => {
     const d = new Date(currentDate);
-    d.setDate(d.getDate() - d.getDay());
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     d.setHours(0, 0, 0, 0);
     return Array.from({ length: 7 }, (_, i) => {
       const day = new Date(d);
@@ -415,11 +498,6 @@ export default function Schedule() {
     return client?.name || "Cliente";
   };
 
-  const getClientPhone = (clientId: number) => {
-    const client = (clients as any[]).find((c) => c.id === clientId);
-    return client?.phone || "Sem telefone";
-  };
-
   // ── Título dinâmico do período ────────────────────────────────────────────
   const periodLabel = useMemo(() => {
     if (viewMode === "day") {
@@ -434,19 +512,15 @@ export default function Schedule() {
     return String(currentDate.getFullYear());
   }, [viewMode, currentDate, weekDays]);
 
-  const postSalePeriod = useMemo(() => {
-    if (viewMode === "day") return { start: currentDate, end: currentDate };
-    if (viewMode === "week") return { start: weekDays[0], end: weekDays[6] };
-    if (viewMode === "month") {
-      return {
-        start: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
-        end: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0),
-      };
+  const compactPeriodLabel = useMemo(() => {
+    if (viewMode === "day") return currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+    if (viewMode === "week") {
+      const start = weekDays[0].toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+      const end = weekDays[6].toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+      return `${start}–${end}`;
     }
-    return {
-      start: new Date(currentDate.getFullYear(), 0, 1),
-      end: new Date(currentDate.getFullYear(), 11, 31),
-    };
+    if (viewMode === "month") return currentDate.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
+    return String(currentDate.getFullYear());
   }, [viewMode, currentDate, weekDays]);
 
   // ── Drag & Drop — Mensal ──────────────────────────────────────────────────
@@ -563,7 +637,7 @@ export default function Schedule() {
     const [hours, minutes] = editForm.time.split(":").map(Number);
     const newDate = new Date(year, month - 1, day, hours, minutes);
     utils.appointments.checkConflicts
-      .fetch({ artist: editForm.artist, date: newDate.toISOString(), duration: Number(editForm.duration), excludeId: selectedAppointment.id })
+      .fetch({ artist: editForm.artist, date: toLocalDateString(newDate), duration: Number(editForm.duration), excludeId: selectedAppointment.id })
       .then((conflictResult) => {
         if (conflictResult.hasConflict) {
           setEditConflictCheck(conflictResult);
@@ -609,25 +683,27 @@ export default function Schedule() {
   const renderTimeGrid = (days: Date[], aptsByDay: (date: Date) => any[]) => (
     <div
       ref={gridScrollRef}
-      className="overflow-y-auto"
+      className="overflow-y-auto overflow-x-hidden"
       style={{ maxHeight: "calc(100vh - 220px)", minHeight: "400px" }}
     >
       {/* Cabeçalho dos dias */}
       <div
         className="grid border-b border-border sticky top-0 z-10 bg-background"
-        style={{ gridTemplateColumns: `56px repeat(${days.length}, 1fr)` }}
+        style={{
+          gridTemplateColumns: `38px repeat(${days.length}, minmax(0, 1fr))`,
+        }}
       >
         <div className="text-xs text-muted-foreground p-2" />
         {days.map((day, i) => (
           <div
             key={i}
-            className={`text-center p-2 border-l border-border ${isToday(day) ? "bg-primary/10" : ""}`}
+            className={`min-w-0 text-center p-1 sm:p-2 border-l border-border ${isToday(day) ? "bg-primary/10" : ""}`}
           >
-            <div className="text-xs text-muted-foreground">
+            <div className="truncate text-[9px] sm:text-xs text-muted-foreground">
               {day.toLocaleDateString("pt-BR", { weekday: "short" })}
             </div>
             <div
-              className={`text-sm font-bold mx-auto w-7 h-7 flex items-center justify-center rounded-full
+              className={`text-xs sm:text-sm font-bold mx-auto w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-full
                 ${isToday(day) ? "bg-primary text-primary-foreground" : ""}`}
             >
               {day.getDate()}
@@ -639,14 +715,17 @@ export default function Schedule() {
       {/* Grade de horários */}
       <div
         className="relative grid"
-        style={{ gridTemplateColumns: `56px repeat(${days.length}, 1fr)`, height: `${HOURS.length * SLOT_HEIGHT}px` }}
+        style={{
+          gridTemplateColumns: `38px repeat(${days.length}, minmax(0, 1fr))`,
+          height: `${HOURS.length * SLOT_HEIGHT}px`,
+        }}
       >
         {/* Coluna de horas */}
         <div className="relative">
           {HOURS.map((hour) => (
             <div
               key={hour}
-              className="absolute w-full border-t border-border/50 text-xs text-muted-foreground pr-2 text-right"
+              className="absolute w-full border-t border-border/50 text-[10px] sm:text-xs text-muted-foreground pr-1 sm:pr-2 text-right"
               style={{ top: `${(hour - HOURS[0]) * SLOT_HEIGHT}px`, height: `${SLOT_HEIGHT}px` }}
             >
               {String(hour).padStart(2, "0")}:00
@@ -706,7 +785,10 @@ export default function Schedule() {
               {/* Eventos */}
               {dayApts.map((apt) => {
                 const style = getEventStyle(apt);
-                const color = getArtistColor(apt.artist);
+                const color = getAppointmentColor(apt);
+                const attention = requiresAttention(apt);
+                const reminder = (reminderIndicators as Record<number, { sentAt: string | null; types: string[] }>)[apt.id];
+                const statusIndicator = getStatusIndicator(apt);
                 return (
                   <div
                     key={apt.id}
@@ -715,21 +797,23 @@ export default function Schedule() {
                     onDragEnd={handleMonthDragEnd}
                     onClick={(e) => handleAppointmentClick(apt, e)}
                     className={`
-                      absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-xs text-white
+                      absolute left-0.5 right-0.5 rounded px-0.5 sm:px-1 py-0.5 text-[10px] sm:text-xs text-white
                       cursor-grab active:cursor-grabbing overflow-hidden z-20
                       hover:opacity-90 transition-opacity
                       ${draggedAppointment?.id === apt.id ? "opacity-40" : ""}
                     `}
                     style={{ ...style, backgroundColor: color, borderLeft: `3px solid ${color}` }}
-                    title={`${getClientName(apt.clientId)} — ${getClientPhone(apt.clientId)} — ${apt.service} (${apt.duration}min)`}
-                  >
-                    <div className="font-semibold truncate flex items-center gap-1">
-                      {apt.confirmationAttention === 'pending' && <AlertCircle className="w-3.5 h-3.5 shrink-0 text-yellow-200 fill-amber-500/40" />}
-                      {podLinkedMap?.[apt.id] && <Stethoscope className="w-3 h-3 shrink-0 opacity-90" />}
-                      {getClientName(apt.clientId)}
+                    title={`${formatTime(apt.date)} — ${getClientName(apt.clientId)} — ${apt.service} (${apt.duration}min)`}
+                    >
+                      <div className="font-semibold truncate flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full shrink-0 border border-white/80" style={{ backgroundColor: statusIndicator.color }} title={statusIndicator.label} aria-label={statusIndicator.label} />
+                        {podLinkedMap?.[apt.id] && <Stethoscope className="w-3 h-3 shrink-0 opacity-90" />}
+                        {reminder && <BellRing className="w-3 h-3 shrink-0 opacity-90" aria-label="Lembrete enviado" />}
+                        {attention && <AlertCircle className="w-3 h-3 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
+                        {formatTime(apt.date)}
                     </div>
-                    <div className="truncate opacity-90">{getClientPhone(apt.clientId)}</div>
-                    <div className="truncate opacity-75 text-[10px]">{formatTime(apt.date)} · {apt.service}</div>
+                    <div className="truncate opacity-90">{getClientName(apt.clientId)}</div>
+                    <div className="truncate opacity-75 text-[10px]">{apt.service}</div>
                   </div>
                 );
               })}
@@ -770,7 +854,10 @@ export default function Schedule() {
                 </div>
                 <div className="space-y-0.5">
                   {day.appointments.slice(0, 3).map((apt) => {
-                    const color = getArtistColor(apt.artist);
+                    const color = getAppointmentColor(apt);
+                    const attention = requiresAttention(apt);
+                    const reminder = (reminderIndicators as Record<number, { sentAt: string | null; types: string[] }>)[apt.id];
+                    const statusIndicator = getStatusIndicator(apt);
                     return (
                       <div
                         key={apt.id}
@@ -780,12 +867,14 @@ export default function Schedule() {
                         onClick={(e) => handleAppointmentClick(apt, e)}
                         className={`text-xs px-1 py-0.5 rounded truncate cursor-grab active:cursor-grabbing text-white hover:opacity-80 transition-opacity ${draggedAppointment?.id === apt.id ? "opacity-40 scale-95" : ""}`}
                         style={{ backgroundColor: color }}
-                        title={`${getClientName(apt.clientId)} — ${getClientPhone(apt.clientId)} — ${apt.service}`}
+                        title={`${formatTime(apt.date)} — ${getClientName(apt.clientId)} — ${apt.service}`}
                       >
-                        <span className="flex items-center gap-1">
-                          {apt.confirmationAttention === 'pending' && <AlertCircle className="w-3 h-3 shrink-0 text-yellow-200 fill-amber-500/40" />}
-                          {podLinkedMap?.[apt.id] && <Stethoscope className="w-2.5 h-2.5 shrink-0 opacity-90" />}
-                          {getClientName(apt.clientId)} · {getClientPhone(apt.clientId)}
+                          <span className="flex items-center gap-1">
+                            <span className="h-1.5 w-1.5 rounded-full shrink-0 border border-white/80" style={{ backgroundColor: statusIndicator.color }} title={statusIndicator.label} aria-label={statusIndicator.label} />
+                            {podLinkedMap?.[apt.id] && <Stethoscope className="w-2.5 h-2.5 shrink-0 opacity-90" />}
+                            {reminder && <BellRing className="w-2.5 h-2.5 shrink-0 opacity-90" aria-label="Lembrete enviado" />}
+                            {attention && <AlertCircle className="w-2.5 h-2.5 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
+                            {formatTime(apt.date)} {getClientName(apt.clientId)}
                         </span>
                       </div>
                     );
@@ -876,7 +965,7 @@ export default function Schedule() {
       {/* ── SIDEBAR MOBILE OVERLAY ──────────────────────────────────────── */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+          className="fixed inset-0 z-30 bg-black/60 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -884,10 +973,10 @@ export default function Schedule() {
       <aside
         className={`
           flex-shrink-0 bg-zinc-900/80 border-r border-border transition-all duration-300 overflow-hidden
-          md:relative md:block
+          lg:relative lg:block
           ${sidebarOpen
-            ? "fixed left-0 top-0 h-full w-56 z-40 md:static md:z-auto md:w-56"
-            : "fixed left-0 top-0 h-full w-0 z-40 md:static md:z-auto md:w-0"}
+            ? "fixed left-0 top-0 h-full w-56 z-40 lg:static lg:z-auto lg:w-56"
+            : "fixed left-0 top-0 h-full w-0 z-40 lg:static lg:z-auto lg:w-0"}
         `}
       >
         <div className="p-3 flex flex-col gap-4 w-56 h-full overflow-y-auto">
@@ -919,6 +1008,7 @@ export default function Schedule() {
               <div className="space-y-1 overflow-y-auto max-h-64 pr-1">
                 {allArtistNames.map((name) => {
                   const color = getArtistColor(name);
+                  const artist = artistByName[name];
                   const hidden = hiddenArtists.has(name);
                   return (
                     <button
@@ -926,10 +1016,21 @@ export default function Schedule() {
                       onClick={() => toggleArtist(name)}
                       className="flex items-center gap-2 w-full px-1 py-0.5 rounded hover:bg-white/5 transition-colors"
                     >
-                      <span
-                        className={`w-3 h-3 rounded-sm flex-shrink-0 transition-opacity ${hidden ? "opacity-30" : ""}`}
-                        style={{ backgroundColor: color }}
-                      />
+                      {artist?.photoUrl ? (
+                        <img
+                          src={artist.photoUrl}
+                          alt={`Avatar de ${name}`}
+                          className={`h-5 w-5 rounded-full object-cover ring-1 ring-white/15 transition-opacity ${hidden ? "opacity-30" : ""}`}
+                        />
+                      ) : (
+                        <span
+                          className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white transition-opacity ${hidden ? "opacity-30" : ""}`}
+                          style={{ backgroundColor: color }}
+                          aria-label={`Artista ${name}`}
+                        >
+                          {name.charAt(0).toUpperCase()}
+                        </span>
+                      )}
                       <span className={`text-xs truncate ${hidden ? "text-zinc-600 line-through" : "text-zinc-300"}`}>
                         {name}
                       </span>
@@ -975,7 +1076,8 @@ export default function Schedule() {
           </Button>
 
           {/* Título dinâmico */}
-          <h2 className="text-sm font-semibold capitalize flex-1 truncate">{periodLabel}</h2>
+          <h2 className="hidden sm:block text-sm font-semibold capitalize flex-1 min-w-0">{periodLabel}</h2>
+          <h2 className="sm:hidden text-xs font-semibold whitespace-nowrap" aria-label={periodLabel}>{compactPeriodLabel}</h2>
 
           {/* Filtros toggle */}
           <button
@@ -1065,10 +1167,13 @@ export default function Schedule() {
           </div>
         )}
 
-        <PostSaleFollowupsBar visibleStart={postSalePeriod.start} visibleEnd={postSalePeriod.end} />
-
         {/* Área do calendário */}
-        <div className="flex-1 overflow-auto px-4 py-3">
+        <div
+          className="flex-1 overflow-auto px-4 py-3"
+          style={viewMode === "week" ? { touchAction: "pan-y" } : undefined}
+          onTouchStartCapture={handleSwipeStart}
+          onTouchEndCapture={handleSwipeEnd}
+        >
           {viewMode === "day" && renderTimeGrid([currentDate], (day) => appointmentsForDay.filter((apt) => isSameDay(new Date(apt.date), day)))}
           {viewMode === "week" && renderTimeGrid(weekDays, (day) => appointmentsForWeek.filter((apt) => isSameDay(new Date(apt.date), day)))}
           {viewMode === "month" && renderMonthView()}
