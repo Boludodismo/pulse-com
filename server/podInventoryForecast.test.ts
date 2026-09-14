@@ -9,7 +9,7 @@ describe("previsão de estoque por agendamentos", () => {
         ["2.000", "3.500"],
         "5.000"
       )
-    ).toEqual({
+    ).toMatchObject({
       plannedDemand: 5.5,
       projectedQuantity: 14.5,
       critical: false,
@@ -26,10 +26,10 @@ describe("previsão de estoque por agendamentos", () => {
     ).toBe(true);
   });
 
-  it("não trata estoque mínimo zero como alerta configurado", () => {
+  it("identifica falta mesmo sem estoque mínimo configurado", () => {
     expect(
       podSaasInternals.calculateProjectedStock("1.000", ["2.000"], "0.000")
         .critical
-    ).toBe(false);
+    ).toBe(true);
   });
 });

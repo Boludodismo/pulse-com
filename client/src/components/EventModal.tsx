@@ -1,3 +1,4 @@
+import { MaterialForecast, PlannedQuantityEditor } from "./MaterialForecast";
 import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -167,13 +168,16 @@ export function EventModal({
     { appointmentId: eventId! },
     { enabled: !!eventId && isOpen }
   );
-  const { data: tenantMaterials = [] } = trpc.pod.inventory.list.useQuery(undefined, { enabled: isOpen && canAccess("stock") });
+  const { data: tenantMaterials = [] } = trpc.pod.inventory.list.useQuery({ artistId: Number(artistId) }, { enabled: isOpen && canAccess("stock") && Boolean(artistId) });
   const { data: existingPlannedMaterials = [], refetch: refetchPlannedMaterials } = trpc.pod.planning.listByAppointment.useQuery(
     { appointmentId: eventId ?? 0 },
     { enabled: Boolean(eventId) && isOpen },
   );
   const { data: inventoryKits = [], refetch: refetchInventoryKits } = trpc.pod.planning.kits.list.useQuery(undefined, { enabled: isOpen && canAccess("stock") });
   const { data: inventoryForecast = [], refetch: refetchInventoryForecast } = trpc.pod.planning.forecast.useQuery({ appointmentId: eventId ?? 0 }, { enabled: Boolean(eventId) && isOpen && activeTab === "pod" });
+
+  const planningArtistChanged = Boolean(eventId && Number(artistId) !== existingEvent?.artistId);
+  const previewForecast = trpc.pod.planning.preview.useQuery({ artistId: Number(artistId), date: `${date} ${startTime}:00`, items: pendingPlannedMaterials.map(m => ({ tenantMaterialId: m.tenantMaterialId, quantity: m.quantity })) }, { enabled: isOpen && !eventId && activeTab === "pod" && Boolean(artistId && date && startTime && pendingPlannedMaterials.length) });
 
   // Mutations de lembretes
   const createReminderMutation = trpc.appointments.reminders.create.useMutation({
@@ -210,7 +214,7 @@ export function EventModal({
       setPlannedQuantity("1");
       void refetchPlannedMaterials();
       void refetchInventoryForecast();
-      if (result.forecast?.critical) toast.warning(`${result.forecast.materialName}: saldo projetado crítico (${result.forecast.projectedQuantity.toFixed(3)} ${result.forecast.unit}). Estúdio e artista foram avisados.`, { duration: 10000 });
+      if (result.forecast?.critical) toast.warning(`${result.forecast.materialName}: saldo projetado crítico (${result.forecast.projectedQuantity.toFixed(3)} ${result.forecast.unit}). O aviso fica registrado no sistema; o envio usa a integração de mensagens.`, { duration: 10000 });
       else toast.success("Material previsto salvo. Nenhum saldo foi baixado.");
     },
     onError: (error) => toast.error(`Não foi possível salvar o material previsto: ${error.message}`),
@@ -219,6 +223,7 @@ export function EventModal({
   const createInventoryKitMutation = trpc.pod.planning.kits.create.useMutation({ onSuccess: () => { setNewInventoryKitName(""); void refetchInventoryKits(); toast.success("Kit salvo para os próximos agendamentos."); }, onError: error => toast.error(`Não foi possível salvar o kit: ${error.message}`) });
   const applyInventoryKit = async () => {
     const kit = inventoryKits.find(item => item.id === Number(selectedInventoryKitId)); if (!kit) return;
+    if (kit.items.some(item => !tenantMaterials.some(m => m.id === item.tenantMaterialId))) { toast.error("Este kit contém materiais não disponibilizados para o artista selecionado. Escolha os materiais deste artista."); return; }
     if (eventId) { const results = await Promise.allSettled(kit.items.map(item => addPlannedMaterialMutation.mutateAsync({ appointmentId: eventId, tenantMaterialId: item.tenantMaterialId, quantityPlanned: item.quantity }))); const failures = results.filter(result => result.status === "rejected").length; if (failures) toast.warning(`${failures} item(ns) do kit não puderam ser adicionados.`); }
     else { setPendingPlannedMaterials(current => { const next = current.map(item => ({ ...item })); for (const item of kit.items) { const existing = next.find(entry => entry.tenantMaterialId === item.tenantMaterialId); if (existing) existing.quantity = String(Number(existing.quantity) + Number(item.quantity)); else next.push({ tenantMaterialId: item.tenantMaterialId, name: item.materialName, unit: item.unit, quantity: item.quantity }); } return next; }); toast.success(`Kit “${kit.name}” adicionado à preparação.`); }
     setSelectedInventoryKitId(undefined);
@@ -609,6 +614,10 @@ export function EventModal({
       return;
     }
 
+    if (!eventId && pendingPlannedMaterials.some(m => !tenantMaterials.some(t => t.id === m.tenantMaterialId))) {
+      toast.error("Revise os materiais: um item não está disponível para o artista selecionado.");
+      setActiveTab("pod"); return;
+    }
     const duration = sessionDuration;
 
     // Formatar como string local YYYY-MM-DD HH:mm:ss (sem conversão UTC)
@@ -744,7 +753,7 @@ export function EventModal({
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "info" | "pod" | "reminders" | "export")} className="flex-1 flex flex-col min-h-0">
           <TabsList className="grid w-full grid-cols-4 gap-0">
             <TabsTrigger value="info" className="text-xs sm:text-sm">Informações</TabsTrigger>
-            <TabsTrigger value="pod" className="text-xs sm:text-sm">POD</TabsTrigger>
+            <TabsTrigger value="pod" className="text-xs sm:text-sm">Materiais / POD</TabsTrigger>
             <TabsTrigger value="reminders" className="text-xs sm:text-sm flex items-center justify-center gap-1">
               <Bell className="h-3 w-3 flex-shrink-0" />
               <span className="hidden sm:inline">Lembretes</span>
@@ -1075,6 +1084,8 @@ export function EventModal({
                 <Select value={artistId} onValueChange={(value) => {
                   const selected = artists.find((item) => String(item.id) === value);
                   setArtistId(value);
+                  setPlannedTenantMaterialId(undefined);
+                  if (!eventId && pendingPlannedMaterials.length) { setPendingPlannedMaterials([]); toast.info("Artista alterado. Selecione os materiais do estoque correspondente."); }
                   setArtist(selected?.name ?? "");
                   setIncludeArtistCard(false);
                 }}>
@@ -1471,6 +1482,8 @@ export function EventModal({
                 <p className="mt-1 text-xs text-muted-foreground">Planeje os materiais desta agenda. A seleção não reduz saldo; a baixa só acontece quando o consumo for confirmado na sessão POD.</p>
               </div>
 
+              {planningArtistChanged && <p className="rounded-lg border border-amber-500/40 p-3 text-sm">Salve a alteração do artista na aba Informações para atualizar o planejamento de materiais. <Button type="button" variant="link" onClick={() => setActiveTab("info")}>Ir para Informações</Button></p>}
+              <fieldset disabled={planningArtistChanged} className="space-y-4 disabled:opacity-60">
               <div className="space-y-2 rounded-lg border p-3">
                 <Label className="flex items-center gap-2 text-sm"><Boxes className="h-4 w-4 text-primary" />Kit de materiais (opcional)</Label>
                 {inventoryKits.length > 0 ? <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2"><Select value={selectedInventoryKitId} onValueChange={setSelectedInventoryKitId}><SelectTrigger><SelectValue placeholder="Escolher kit salvo" /></SelectTrigger><SelectContent>{inventoryKits.map(kit => <SelectItem key={kit.id} value={String(kit.id)}>{kit.name} · {kit.items.length} item(ns)</SelectItem>)}</SelectContent></Select><Button type="button" variant="outline" disabled={!selectedInventoryKitId} onClick={() => void applyInventoryKit()}>Adicionar</Button></div> : <p className="text-xs text-muted-foreground">Você ainda não possui kits salvos.</p>}
@@ -1480,15 +1493,12 @@ export function EventModal({
                 </div>
               </div>
 
-              {eventId && inventoryForecast.length > 0 && <div className="space-y-1.5 rounded-lg border p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Previsão até a data deste agendamento</p>
-                {inventoryForecast.map((forecast: any) => <div key={forecast.material.id} className={`flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-xs ${forecast.critical ? "bg-destructive/10 text-destructive" : "bg-muted/30"}`}><span className="truncate">{forecast.material.name}</span><span className="shrink-0 font-medium">{forecast.projectedQuantity.toFixed(3)} {forecast.material.unit}{forecast.critical ? " · crítico" : ""}</span></div>)}
-                <p className="text-[11px] text-muted-foreground">A previsão considera os materiais planejados nos demais agendamentos. Ela não baixa nem reserva o saldo.</p>
-              </div>}
+              <MaterialForecast rows={eventId ? inventoryForecast : (previewForecast.data ?? [])} />
+              {previewForecast.error && <p role="alert" className="text-sm text-destructive">{previewForecast.error.message}</p>}
 
               {tenantMaterials.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                  Ainda não há materiais cadastrados no estoque isolado desta empresa. Os materiais legados não são associados automaticamente.
+                  Selecione um artista na aba Informações. Aqui aparecem os materiais próprios dele, os recebidos por empréstimo e os insumos que o estúdio disponibilizou para esse artista.
                 </div>
               ) : (
                 <div className="space-y-2 rounded-lg border p-3">
@@ -1498,7 +1508,7 @@ export function EventModal({
                       <SelectTrigger className="min-w-0"><SelectValue placeholder="Selecionar material" /></SelectTrigger>
                       <SelectContent>
                         {tenantMaterials.map((material) => (
-                          <SelectItem key={material.id} value={String(material.id)}>{material.name} · saldo {material.currentQuantity} {material.unit}</SelectItem>
+                          <SelectItem key={material.id} value={String(material.id)}>{material.name} · {material.loan ? `Empréstimo #${material.loan.id}` : material.ownerArtistId == null ? "Estúdio" : "Artista"} · saldo {material.currentQuantity} {material.unit}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -1508,14 +1518,14 @@ export function EventModal({
                     type="button"
                     size="sm"
                     className="w-full"
-                    disabled={!plannedTenantMaterialId || addPlannedMaterialMutation.isPending}
+                    disabled={!plannedTenantMaterialId || addPlannedMaterialMutation.isPending || !/^\d{1,9}(?:\.\d{1,3})?$/.test(plannedQuantity) || Number(plannedQuantity) <= 0}
                     onClick={() => {
                       const material = tenantMaterials.find((item) => item.id === Number(plannedTenantMaterialId));
                       if (!material) return;
                       if (eventId) {
                         addPlannedMaterialMutation.mutate({ appointmentId: eventId, tenantMaterialId: material.id, quantityPlanned: plannedQuantity });
                       } else {
-                        setPendingPlannedMaterials((current) => [...current, { tenantMaterialId: material.id, name: material.name, unit: material.unit, quantity: plannedQuantity }]);
+                        setPendingPlannedMaterials(current => { const found = current.find(m => m.tenantMaterialId === material.id); return found ? current.map(m => m === found ? { ...m, quantity: String((Math.round(Number(m.quantity) * 1000) + Math.round(Number(plannedQuantity) * 1000)) / 1000) } : m) : [...current, { tenantMaterialId: material.id, name: material.name, unit: material.unit, quantity: plannedQuantity }]; });
                         setPlannedTenantMaterialId(undefined);
                         setPlannedQuantity("1");
                       }
@@ -1530,8 +1540,9 @@ export function EventModal({
                 <div className="space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Materiais planejados</p>
                   {existingPlannedMaterials.map((material) => (
-                    <div key={material.id} className="flex items-center gap-2 rounded-lg border bg-muted/20 p-2.5 text-sm">
+                    <div key={material.id} className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-2.5 text-sm">
                       <div className="min-w-0 flex-1"><p className="truncate font-medium">{material.nameSnapshot}</p><p className="text-xs text-muted-foreground">{material.quantityPlanned} {material.unitSnapshot} · {material.status}</p></div>
+                      {material.status === "planejado" && <PlannedQuantityEditor id={material.id} value={material.quantityPlanned} unit={material.unitSnapshot} onSaved={() => { void refetchPlannedMaterials(); void refetchInventoryForecast(); }} />}
                       {material.status === "planejado" && (
                         <Button type="button" size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground" disabled={markPlannedMaterialUnusedMutation.isPending} onClick={() => markPlannedMaterialUnusedMutation.mutate({ plannedMaterialId: material.id })}>Não usar</Button>
                       )}
@@ -1551,6 +1562,8 @@ export function EventModal({
                   ))}
                 </div>
               )}
+              </fieldset>
+              {!eventId && <Button type="button" className="w-full" onClick={() => setActiveTab("info")}>Voltar para concluir o agendamento</Button>}
             </div>
           </TabsContent>
 

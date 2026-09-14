@@ -1,3 +1,4 @@
+import {upgradeInventoryWorkflow} from "../server/_core/inventoryWorkflowSchema";
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import mysql from 'mysql2/promise';
@@ -6,7 +7,7 @@ import {podSaasRouter} from '../server/routers/podSaas';
 import {materialDescription} from '../shared/materialDescription';
 async function main(){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(process.env.CI,'true');assert.ok(['127.0.0.1','localhost'].includes(url.hostname));assert.equal(url.pathname,'/supplier_test');
- const c=await mysql.createConnection({uri:url.toString(),dateStrings:true});await upgradeInventoryTrace(c);await upgradeInventoryTrace(c);
+ const c=await mysql.createConnection({uri:url.toString(),dateStrings:true});await upgradeInventoryTrace(c);await upgradeInventoryTrace(c);await upgradeInventoryWorkflow(c);
  await c.query("INSERT INTO artists(id,studioId,name,active) VALUES(2101,101,'Artista A',1),(2202,202,'Artista B',1)");
  await c.query("INSERT INTO clients(id,studioId,name) VALUES(2101,101,'Cliente A'),(2202,202,'Cliente B')");
  await c.query("INSERT INTO technical_procedures(id,studioId,clientId,artistId,title,status) VALUES(2101,101,2101,2101,'Sessão A','em_andamento'),(2202,202,2202,2202,'Sessão B','em_andamento')");

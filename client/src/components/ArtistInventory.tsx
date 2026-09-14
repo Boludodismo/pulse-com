@@ -1,3 +1,5 @@
+import InventoryLoans from "./InventoryLoans";
+import InventoryNotices from "./InventoryNotices";
 import MaterialSpecificationFields,{emptySpecification,specificationFromMaterial,type SpecificationForm} from "./MaterialSpecificationFields";
 import ReceiveMaterial from "./ReceiveMaterial";
 import {materialDescription} from "@shared/materialDescription";
@@ -190,7 +192,9 @@ export default function ArtistInventory() {
           <Plus className="mr-2 h-4 w-4" /> Novo material
         </Button>
       </div>
-      <div className="flex gap-2"><Button variant={view === "stock" ? "default" : "outline"} onClick={() => setView("stock")}>Estoque operacional</Button><Button variant={view === "catalog" ? "default" : "outline"} onClick={() => setView("catalog")}>Catálogo técnico</Button></div>
+      <div className="flex flex-wrap gap-2"><Button variant={view === "stock" ? "default" : "outline"} onClick={() => setView("stock")}>Estoque operacional</Button><Button variant={view === "catalog" ? "default" : "outline"} onClick={() => setView("catalog")}>Catálogo técnico</Button><Button variant={view === "loans" ? "default" : "outline"} onClick={() => setView("loans")}>Empréstimos de materiais</Button><Button variant={view === "notices" ? "default" : "outline"} onClick={() => setView("notices")}>Avisos e antecedência</Button></div>
+      {view === "loans" && <InventoryLoans />}
+      {view === "notices" && <InventoryNotices />}
       {view === "catalog" && <TechnicalCatalog onSelect={index => {
         const item = TECHNICAL_CATALOG_2026[index];
         setEditingId(null);
@@ -245,9 +249,9 @@ export default function ArtistInventory() {
       <div className="grid gap-4 xl:grid-cols-2">
         {filtered.map(material => {
           const editable =
-            manager ||
+            !material.loan && (manager ||
             (user?.artistId != null &&
-              material.ownerArtistId === user.artistId);
+              material.ownerArtistId === user.artistId));
           const artist = artists.find(a => a.id === material.ownerArtistId);
           return (
             <Card key={material.id}>
@@ -297,6 +301,7 @@ export default function ArtistInventory() {
                   </div>
                 )}
                 <p className="text-sm text-muted-foreground break-words">{materialDescription(material)}</p>
+                {material.loan && <div className="rounded-md bg-blue-500/10 p-3 text-sm"><p>Empréstimo #{material.loan.id} · recebido de {ownerName(material.loan.lenderArtistId)}</p><Button size="sm" variant="link" onClick={() => setView("loans")}>Ver empréstimos e reposições</Button></div>}
                 <p className="text-sm text-muted-foreground">
                   Custo por {material.unit}:{" "}
                   {Number(material.unitCost).toLocaleString("pt-BR", {

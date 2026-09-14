@@ -357,7 +357,7 @@ export async function runLegacyNotificationCycle() {
   // posteriormente pela integração ativa do respectivo estúdio.
   await runCustomerCareCycle();
   await runProcurementCycle();
-  await runCriticalInventoryForecastCycle();
+  try { await runCriticalInventoryForecastCycle(); } catch (error) { console.error("[Inventory] Falha no ciclo de avisos", error instanceof Error ? error.name : "erro"); }
   const automatic = await runAutomaticMessageCycle();
   const individual = await enqueueDueIndividualReminders();
   console.log("[Scheduler] Ciclo automático BotConversa", { ...automatic, individualQueued: individual.queued, individualSkipped: individual.skipped });

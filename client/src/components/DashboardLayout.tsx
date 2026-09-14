@@ -1,3 +1,4 @@
+import { InventoryNoticeIndicator } from "./InventoryNotices";
 import {trpc} from '@/lib/trpc';
 import {isInvitedArtist,artistRouteModule} from '@shared/artistInvitations';
 import InvitedArtistHome from './InvitedArtistHome';
@@ -383,6 +384,7 @@ function DashboardLayoutContent({
             </div>
           </div>
 
+          {user?.studioId && (["admin", "superadmin"].includes(user.role) || (invited && canVisit("/stock"))) && <InventoryNoticeIndicator />}
           {/* Botão de busca */}
           <Button
             variant="outline"
