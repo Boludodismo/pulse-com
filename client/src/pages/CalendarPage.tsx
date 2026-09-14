@@ -14,6 +14,7 @@ import {
   Calendar as CalendarIcon, Check, Clock, User, FileText, Pencil, ExternalLink, Stethoscope, Users, AlertCircle, BellRing,
 } from "lucide-react";
 import { EventModal } from "@/components/EventModal";
+import { RecentClientActions } from "@/components/RecentClientActions";
 
 // Paleta de cores estilo Apple Calendar
 const COLOR_PALETTE = [
@@ -62,12 +63,6 @@ const STATUS_COLORS: Record<string, string> = {
   concluido: "bg-gray-500/20 text-gray-300 border-gray-500/30",
   cancelado: "bg-red-500/20 text-red-300 border-red-500/30",
   reagendado: "bg-orange-500/20 text-orange-300 border-orange-500/30",
-};
-const ACTION_ALERT_LABELS: Record<string, string> = {
-  confirmed: "Cliente confirmou presença",
-  early: "Cliente informou adiantamento",
-  late: "Cliente avisou atraso",
-  reschedule_requested: "Cliente solicitou remarcação",
 };
 
 export default function CalendarPage() {
@@ -1133,30 +1128,16 @@ export default function CalendarPage() {
           </Button>
         </div>
 
-        {actionAlerts.length > 0 && (
-          <div className="border-b border-amber-400/20 bg-amber-400/10 px-3 py-2 sm:px-5">
-            <div className="mx-auto flex max-w-6xl flex-col gap-1.5">
-              <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-200"><AlertCircle className="h-3.5 w-3.5" /> Ações recentes de clientes</span>
-              <div className="flex gap-2 overflow-x-auto pb-0.5">
-                {actionAlerts.map((alert: any) => (
-                  <button
-                    key={alert.id}
-                    type="button"
-                    onClick={() => {
-                      markActionAlertViewed.mutate({ alertId: alert.id });
-                      const appointment = (appointments as any[]).find((item) => item.id === alert.appointmentId);
-                      if (appointment) { setSelectedApt(appointment); setDetailsOpen(true); }
-                    }}
-                    className="shrink-0 rounded-md border border-amber-300/30 bg-black/20 px-2.5 py-1.5 text-left text-xs text-amber-100 transition-colors hover:bg-black/35"
-                    title="Abrir agendamento e marcar alerta como visualizado"
-                  >
-                    {ACTION_ALERT_LABELS[alert.action] ?? "Nova ação do cliente"}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+        <RecentClientActions
+          alerts={actionAlerts}
+          appointments={appointments}
+          onSelect={(alertId, appointmentId) => {
+            markActionAlertViewed.mutate({ alertId });
+            const appointment = appointments.find((item) => item.id === appointmentId);
+            if (appointment) { setSelectedApt(appointment); setDetailsOpen(true); }
+            else toast.info("O agendamento deste aviso não está disponível na sua agenda.");
+          }}
+        />
 
         {/* Conteúdo */}
         <div className="flex-1 overflow-hidden flex flex-col">
