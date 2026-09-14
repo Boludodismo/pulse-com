@@ -358,7 +358,7 @@ async function main() {
   const future = studioNow(new Date(Date.now() + 5 * 86400000));
   const later = studioNow(new Date(Date.now() + 6 * 86400000));
   await c.query(
-    "INSERT INTO appointments(id,studioId,clientId,artistId,artist,service,date,status) VALUES(3101,101,3101,3102,'Recebedor','Sessão',?,'agendado'),(3102,101,3101,3103,'Terceiro artista','Sessão',?,'confirmado')",
+    "INSERT INTO appointments(id,studioId,clientId,artistId,artist,service,duration,date,status) VALUES(3101,101,3101,3102,'Recebedor','Sessão',60,?,'agendado'),(3102,101,3101,3103,'Terceiro artista','Sessão',60,?,'confirmado')",
     [future, later]
   );
   await assert.rejects(
