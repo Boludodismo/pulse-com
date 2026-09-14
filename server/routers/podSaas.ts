@@ -1,3 +1,5 @@
+import { appointmentKitsRouter } from "./appointmentKits";
+import { syncMaterialRegistrationNotices } from "../materialRegistrationNotices";
 import { inventoryLoans } from "../../drizzle/inventoryWorkflowSchema";
 import { inventoryLoansRouter } from "./inventoryLoans";
 import { inventoryNoticesRouter } from "../inventoryNotices";
@@ -478,6 +480,7 @@ export const podSaasRouter = router({
   }),
 
   planning: router({
+    clientKit: appointmentKitsRouter,
     preview: tenantProcedure.input(z.object({ artistId: z.number().int().positive(), date: z.string().refine(isStudioDate, "Informe uma data válida para a sessão."), items: z.array(z.object({ tenantMaterialId: z.number().int().positive(), quantity: quantitySchema.refine(v => Number(v) > 0) })).max(100) })).query(async ({ ctx, input }) => {
       await requireModule(ctx, "appointments"); const database = await requireDatabase(); assertOwnArtist(ctx, input.artistId);
       const grouped = new Map<number, string[]>();
@@ -502,6 +505,7 @@ export const podSaasRouter = router({
         await tx.update(appointmentPlannedMaterials).set({ quantityPlanned: workflowQuantity(units(input.quantity)) }).where(eq(appointmentPlannedMaterials.id, row.planned.id));
         return row.planned;
       });
+      await syncMaterialRegistrationNotices(database, ctx.studioId, planned.appointmentId);
       if (planned.tenantMaterialId) await queueCriticalForecastAlerts(database, ctx.studioId, planned.appointmentId, planned.tenantMaterialId);
       return { id: planned.id };
     }),
@@ -588,7 +592,7 @@ export const podSaasRouter = router({
     markUnused: tenantProcedure.input(z.object({ plannedMaterialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "appointments", true);
       const database = await requireDatabase();
-      const [planned] = await database.select({ artistId: appointments.artistId }).from(appointmentPlannedMaterials).innerJoin(appointments, and(eq(appointments.id, appointmentPlannedMaterials.appointmentId), eq(appointments.studioId, ctx.studioId))).where(and(eq(appointmentPlannedMaterials.id, input.plannedMaterialId), eq(appointmentPlannedMaterials.studioId, ctx.studioId))).limit(1);
+      const [planned] = await database.select({ artistId: appointments.artistId, appointmentId: appointments.id }).from(appointmentPlannedMaterials).innerJoin(appointments, and(eq(appointments.id, appointmentPlannedMaterials.appointmentId), eq(appointments.studioId, ctx.studioId))).where(and(eq(appointmentPlannedMaterials.id, input.plannedMaterialId), eq(appointmentPlannedMaterials.studioId, ctx.studioId))).limit(1);
       if (!planned) throw new TRPCError({ code: "NOT_FOUND", message: "Material previsto não encontrado." });
       assertOwnArtist(ctx, planned.artistId);
       const result = await database.update(appointmentPlannedMaterials).set({ status: "nao_utilizado" }).where(and(
@@ -597,6 +601,7 @@ export const podSaasRouter = router({
         eq(appointmentPlannedMaterials.status, "planejado"),
       ));
       if (!isAffected(result)) throw new TRPCError({ code: "NOT_FOUND", message: "Material previsto não encontrado ou já tratado." });
+      await syncMaterialRegistrationNotices(database, ctx.studioId, planned.appointmentId);
       return { id: input.plannedMaterialId, status: "nao_utilizado" as const };
     }),
   }),
@@ -749,6 +754,7 @@ export const podSaasRouter = router({
             eq(appointmentPlannedMaterials.status, "planejado"),
           )).limit(1))[0];
           if (!plannedMaterial || !procedure.appointmentId || plannedMaterial.appointmentId !== procedure.appointmentId) throw new TRPCError({ code: "BAD_REQUEST", message: "O material previsto não pertence ao agendamento desta sessão." });
+          if (!plannedMaterial.tenantMaterialId) throw new TRPCError({ code: "BAD_REQUEST", message: "Vincule o material pendente ao estoque na aba Materiais / POD antes de registrar o consumo deste item." });
           if (plannedMaterial.tenantMaterialId && plannedMaterial.tenantMaterialId !== material.id) throw new TRPCError({ code: "BAD_REQUEST", message: "O material consumido não corresponde ao material previsto." });
         }
 

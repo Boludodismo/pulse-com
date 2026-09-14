@@ -1,3 +1,4 @@
+import { syncMaterialRegistrationNotices } from "./materialRegistrationNotices";
 import { and, asc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import {
   appointmentPlannedMaterials,
@@ -283,6 +284,7 @@ export async function runCriticalInventoryForecastCycle() {
       row.appointmentId!,
       row.materialId!
     );
+  await syncMaterialRegistrationNotices(db);
   await createLoanDeadlineNotices(db);
   await deliverInventoryNotices(db);
   return { checked: unique.size };

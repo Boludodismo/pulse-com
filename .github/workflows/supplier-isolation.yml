@@ -28,6 +28,14 @@ on:
       - 'client/src/components/Inventory*.tsx'
       - 'client/src/components/MaterialForecast.tsx'
       - 'scripts/anamnese-dom-regression/inventory.mjs'
+      - 'drizzle/appointmentKitSchema.ts'
+      - 'server/_core/appointmentKitSchema.ts'
+      - 'server/routers/appointmentKits.ts'
+      - 'server/materialRegistrationNotices.ts'
+      - 'shared/appointmentKit.ts'
+      - 'client/src/components/AppointmentMaterials.tsx'
+      - 'client/src/components/EventModal.tsx'
+      - 'scripts/test-appointment-kits.ts'
 permissions:
   contents: read
 jobs:
@@ -62,5 +70,6 @@ jobs:
       - run: pnpm tsx scripts/test-inventory-trace.ts
       - run: pnpm exec vitest run server/podInventoryForecast.test.ts server/inventoryWorkflowRules.test.ts server/inventoryAccess.test.ts
       - run: pnpm tsx scripts/test-inventory-loans.ts
+      - run: pnpm tsx scripts/test-appointment-kits.ts
       - run: npm ci --prefix scripts/anamnese-dom-regression
       - run: node scripts/anamnese-dom-regression/inventory.mjs
