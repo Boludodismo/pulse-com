@@ -1,4 +1,6 @@
 import { appointmentKitsRouter } from "./appointmentKits";
+import { createHash } from "node:crypto";
+import { inventoryMaterialRegistrations } from "../../drizzle/appointmentKitSchema";
 import { syncMaterialRegistrationNotices } from "../materialRegistrationNotices";
 import { inventoryLoans } from "../../drizzle/inventoryWorkflowSchema";
 import { inventoryLoansRouter } from "./inventoryLoans";
@@ -258,6 +260,8 @@ export const podSaasRouter = router({
     }),
 
     create: tenantProcedure.input(z.object({
+      registrationKey: z.string().uuid().optional(),
+      suppliedArtistId: z.number().int().positive().optional(),
       ownerArtistId: z.number().int().positive().nullable().default(null),
       technicalCatalogIndex: z.number().int().min(0).max(TECHNICAL_CATALOG_2026.length - 1).optional(),
       catalogItemId: z.number().int().positive().optional(),
@@ -291,7 +295,22 @@ export const podSaasRouter = router({
       const database = await requireDatabase();
       assertOwnArtist(ctx, input.ownerArtistId);
       if (input.ownerArtistId) await requireInventoryArtist(database, ctx.studioId, input.ownerArtistId);
+      if (input.suppliedArtistId) {
+        if (!isInventoryManager(ctx) || input.ownerArtistId != null) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode disponibilizar materiais do estúdio para o artista." });
+        await requireInventoryArtist(database, ctx.studioId, input.suppliedArtistId);
+      }
       return database.transaction(async (tx) => {
+      const payloadHash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+      if (input.registrationKey) {
+        // Serialize only keyed registrations within this studio, including retries.
+        await tx.select({id:studios.id}).from(studios).where(eq(studios.id,ctx.studioId)).limit(1).for("update");
+        const [registration] = await tx.select().from(inventoryMaterialRegistrations).where(and(eq(inventoryMaterialRegistrations.studioId,ctx.studioId),eq(inventoryMaterialRegistrations.registrationKey,input.registrationKey))).limit(1);
+        if (registration) {
+          if (registration.payloadHash !== payloadHash) throw new TRPCError({code:"CONFLICT",message:"Este cadastro já foi salvo com outros dados. Atualize os materiais antes de continuar."});
+          await requireOwnedMaterial(tx as unknown as InventoryDatabase,ctx,registration.tenantMaterialId);
+          return {id:registration.tenantMaterialId};
+        }
+      }
       const catalogItem = input.catalogItemId ? (await tx.select().from(materialCatalogItems).where(and(
         eq(materialCatalogItems.id, input.catalogItemId),
         eq(materialCatalogItems.isActive, 1),
@@ -325,6 +344,8 @@ export const podSaasRouter = router({
       });
       const materialId = insertId(inserted);
       if (!materialId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível criar o material do estoque." });
+      if (input.suppliedArtistId) await tx.insert(studioMaterialArtists).values({studioId:ctx.studioId,tenantMaterialId:materialId,artistId:input.suppliedArtistId});
+      if (input.registrationKey) await tx.insert(inventoryMaterialRegistrations).values({studioId:ctx.studioId,registrationKey:input.registrationKey,payloadHash,tenantMaterialId:materialId,createdByUserId:ctx.user.id});
       await tx.insert(tenantInventoryMovements).values({
         studioId: ctx.studioId,
         tenantMaterialId: materialId,
