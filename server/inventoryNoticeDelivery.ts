@@ -1,5 +1,11 @@
 import { and, eq } from "drizzle-orm";
-import { artists, studios } from "../drizzle/schema";
+import {
+  artists,
+  studios,
+  appointmentPlannedMaterials,
+  appointments,
+} from "../drizzle/schema";
+import { hoursUntil } from "./inventoryWorkflowRules";
 import {
   inventoryAlertPreferences,
   inventoryLoans,
@@ -85,6 +91,45 @@ export async function inventoryNoticeDeliveryError(
         notice.recipientArtistId !== forecast.appointment.artistId)
     )
       return "A previsão foi resolvida ou o agendamento mudou.";
+  }
+  if (notice.kind === "material_registration") {
+    const plannedId = Number(
+      /^material-registration:(\d+):/.exec(notice.eventKey)?.[1] ?? 0
+    );
+    const [row] = await db
+      .select({
+        materialId: appointmentPlannedMaterials.tenantMaterialId,
+        quantity: appointmentPlannedMaterials.quantityPlanned,
+        plannedStatus: appointmentPlannedMaterials.status,
+        artistId: appointments.artistId,
+        date: appointments.date,
+        status: appointments.status,
+      })
+      .from(appointmentPlannedMaterials)
+      .innerJoin(
+        appointments,
+        and(
+          eq(appointments.id, appointmentPlannedMaterials.appointmentId),
+          eq(appointments.studioId, studioId)
+        )
+      )
+      .where(
+        and(
+          eq(appointmentPlannedMaterials.id, plannedId),
+          eq(appointmentPlannedMaterials.studioId, studioId)
+        )
+      )
+      .limit(1);
+    if (
+      !row ||
+      row.materialId != null ||
+      row.plannedStatus !== "planejado" ||
+      ["cancelado", "concluido"].includes(row.status) ||
+      hoursUntil(row.date) < 0 ||
+      row.artistId !== notice.recipientArtistId ||
+      !notice.eventKey.includes(`:${row.date}:${row.quantity}:`)
+    )
+      return "A pendência de material foi resolvida ou o agendamento mudou.";
   }
   if (notice.loanId) {
     const [loan] = await db

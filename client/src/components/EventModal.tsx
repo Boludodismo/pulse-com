@@ -1,4 +1,5 @@
-import { MaterialForecast, PlannedQuantityEditor } from "./MaterialForecast";
+import AppointmentMaterials from "./AppointmentMaterials";
+import { emptyAppointmentKit, type AppointmentKitDraft } from "@shared/appointmentKit";
 import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -98,11 +99,9 @@ export function EventModal({
   const [automaticReminderTiming, setAutomaticReminderTiming] = useState<"day_before" | "same_day" | "none">("day_before");
   const [automaticReminderTime, setAutomaticReminderTime] = useState<string>("09:00");
   const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(false);
-  const [plannedTenantMaterialId, setPlannedTenantMaterialId] = useState<string | undefined>();
-  const [plannedQuantity, setPlannedQuantity] = useState("1");
-  const [pendingPlannedMaterials, setPendingPlannedMaterials] = useState<Array<{ tenantMaterialId: number; name: string; unit: string; quantity: string }>>([]);
-  const [selectedInventoryKitId, setSelectedInventoryKitId] = useState<string | undefined>();
-  const [newInventoryKitName, setNewInventoryKitName] = useState("");
+  const [materialDraft, setMaterialDraft] = useState<AppointmentKitDraft>(emptyAppointmentKit);
+  const [kitRecovery, setKitRecovery] = useState<{ appointmentId: number; draft: AppointmentKitDraft } | null>(null);
+  const saveClientKit = trpc.pod.planning.clientKit.save.useMutation();
 
   const clientListInput = useMemo(
     () => requiresStudioSelection && selectedStudioId ? { studioId: Number(selectedStudioId) } : undefined,
@@ -168,16 +167,7 @@ export function EventModal({
     { appointmentId: eventId! },
     { enabled: !!eventId && isOpen }
   );
-  const { data: tenantMaterials = [] } = trpc.pod.inventory.list.useQuery({ artistId: Number(artistId) }, { enabled: isOpen && canAccess("stock") && Boolean(artistId) });
-  const { data: existingPlannedMaterials = [], refetch: refetchPlannedMaterials } = trpc.pod.planning.listByAppointment.useQuery(
-    { appointmentId: eventId ?? 0 },
-    { enabled: Boolean(eventId) && isOpen },
-  );
-  const { data: inventoryKits = [], refetch: refetchInventoryKits } = trpc.pod.planning.kits.list.useQuery(undefined, { enabled: isOpen && canAccess("stock") });
-  const { data: inventoryForecast = [], refetch: refetchInventoryForecast } = trpc.pod.planning.forecast.useQuery({ appointmentId: eventId ?? 0 }, { enabled: Boolean(eventId) && isOpen && activeTab === "pod" });
-
   const planningArtistChanged = Boolean(eventId && Number(artistId) !== existingEvent?.artistId);
-  const previewForecast = trpc.pod.planning.preview.useQuery({ artistId: Number(artistId), date: `${date} ${startTime}:00`, items: pendingPlannedMaterials.map(m => ({ tenantMaterialId: m.tenantMaterialId, quantity: m.quantity })) }, { enabled: isOpen && !eventId && activeTab === "pod" && Boolean(artistId && date && startTime && pendingPlannedMaterials.length) });
 
   // Mutations de lembretes
   const createReminderMutation = trpc.appointments.reminders.create.useMutation({
@@ -206,35 +196,6 @@ export function EventModal({
       refetchReminders();
     },
     onError: (e) => toast.error(`Erro: ${e.message}`),
-  });
-
-  const addPlannedMaterialMutation = trpc.pod.planning.add.useMutation({
-    onSuccess: (result) => {
-      setPlannedTenantMaterialId(undefined);
-      setPlannedQuantity("1");
-      void refetchPlannedMaterials();
-      void refetchInventoryForecast();
-      if (result.forecast?.critical) toast.warning(`${result.forecast.materialName}: saldo projetado crítico (${result.forecast.projectedQuantity.toFixed(3)} ${result.forecast.unit}). O aviso fica registrado no sistema; o envio usa a integração de mensagens.`, { duration: 10000 });
-      else toast.success("Material previsto salvo. Nenhum saldo foi baixado.");
-    },
-    onError: (error) => toast.error(`Não foi possível salvar o material previsto: ${error.message}`),
-  });
-
-  const createInventoryKitMutation = trpc.pod.planning.kits.create.useMutation({ onSuccess: () => { setNewInventoryKitName(""); void refetchInventoryKits(); toast.success("Kit salvo para os próximos agendamentos."); }, onError: error => toast.error(`Não foi possível salvar o kit: ${error.message}`) });
-  const applyInventoryKit = async () => {
-    const kit = inventoryKits.find(item => item.id === Number(selectedInventoryKitId)); if (!kit) return;
-    if (kit.items.some(item => !tenantMaterials.some(m => m.id === item.tenantMaterialId))) { toast.error("Este kit contém materiais não disponibilizados para o artista selecionado. Escolha os materiais deste artista."); return; }
-    if (eventId) { const results = await Promise.allSettled(kit.items.map(item => addPlannedMaterialMutation.mutateAsync({ appointmentId: eventId, tenantMaterialId: item.tenantMaterialId, quantityPlanned: item.quantity }))); const failures = results.filter(result => result.status === "rejected").length; if (failures) toast.warning(`${failures} item(ns) do kit não puderam ser adicionados.`); }
-    else { setPendingPlannedMaterials(current => { const next = current.map(item => ({ ...item })); for (const item of kit.items) { const existing = next.find(entry => entry.tenantMaterialId === item.tenantMaterialId); if (existing) existing.quantity = String(Number(existing.quantity) + Number(item.quantity)); else next.push({ tenantMaterialId: item.tenantMaterialId, name: item.materialName, unit: item.unit, quantity: item.quantity }); } return next; }); toast.success(`Kit “${kit.name}” adicionado à preparação.`); }
-    setSelectedInventoryKitId(undefined);
-  };
-
-  const markPlannedMaterialUnusedMutation = trpc.pod.planning.markUnused.useMutation({
-    onSuccess: () => {
-      void refetchPlannedMaterials();
-      toast.success("Material marcado como não utilizado. Nenhum saldo foi alterado.");
-    },
-    onError: (error) => toast.error(`Não foi possível atualizar o material previsto: ${error.message}`),
   });
 
   // Atalho de teclado para deletar (Bug 7: ignorar quando foco em input/textarea)
@@ -331,18 +292,16 @@ export function EventModal({
           }
         }
       }
-      if (pendingPlannedMaterials.length > 0 && result?.id) {
-        const planningResults = await Promise.allSettled(pendingPlannedMaterials.map((material) => addPlannedMaterialMutation.mutateAsync({
-          appointmentId: result.id,
-          tenantMaterialId: material.tenantMaterialId,
-          quantityPlanned: material.quantity,
-        })));
-        const failures = planningResults.filter((result) => result.status === "rejected").length;
-        if (failures === 0) {
-          setPendingPlannedMaterials([]);
-          toast.success("Materiais previstos salvos sem movimentar o estoque.");
-        } else {
-          toast.warning(`${failures} material(is) previsto(s) não foram salvos. O agendamento foi criado sem baixa de estoque.`);
+      if ((materialDraft.name || materialDraft.items.length > 0) && result?.id) {
+        try {
+          await saveClientKit.mutateAsync({ appointmentId: result.id, ...materialDraft, name: materialDraft.name || undefined });
+          setMaterialDraft(emptyAppointmentKit());
+        } catch (error) {
+          setKitRecovery({ appointmentId: result.id, draft: materialDraft });
+          setActiveTab("pod");
+          void utils.appointments.list.invalidate();
+          toast.error(`Agendamento criado. O kit ainda não foi salvo: ${error instanceof Error ? error.message : "tente novamente"}`);
+          return;
         }
       }
       if (result?.warnings?.length) {
@@ -483,9 +442,8 @@ export function EventModal({
     setAutomaticReminderTiming("day_before");
     setAutomaticReminderTime("09:00");
     setRecordWhatsAppConsent(false);
-    setPlannedTenantMaterialId(undefined);
-    setPlannedQuantity("1");
-    setPendingPlannedMaterials([]);
+    setMaterialDraft(emptyAppointmentKit());
+    setKitRecovery(null);
   };
 
   // Gerar e abrir link WhatsApp imediato
@@ -614,9 +572,11 @@ export function EventModal({
       return;
     }
 
-    if (!eventId && pendingPlannedMaterials.some(m => !tenantMaterials.some(t => t.id === m.tenantMaterialId))) {
-      toast.error("Revise os materiais: um item não está disponível para o artista selecionado.");
-      setActiveTab("pod"); return;
+    if (kitRecovery) { setActiveTab("pod"); toast.error("O agendamento já foi criado. Use Tentar salvar o kit novamente."); return; }
+    if (!eventId && (materialDraft.name || materialDraft.items.length)) {
+      if (!artistId || (materialDraft.name && materialDraft.name.trim().length < 2) || materialDraft.items.length > 100 || materialDraft.items.some(m => !/^\d{1,9}(?:\.\d{1,3})?$/.test(m.quantity) || Number(m.quantity) <= 0 || (!m.tenantMaterialId && (m.name.trim().length < 2 || !m.unit.trim())))) {
+        toast.error("Confira o artista, o nome do kit e as quantidades dos materiais."); setActiveTab("pod"); return;
+      }
     }
     const duration = sessionDuration;
 
@@ -1084,8 +1044,7 @@ export function EventModal({
                 <Select value={artistId} onValueChange={(value) => {
                   const selected = artists.find((item) => String(item.id) === value);
                   setArtistId(value);
-                  setPlannedTenantMaterialId(undefined);
-                  if (!eventId && pendingPlannedMaterials.length) { setPendingPlannedMaterials([]); toast.info("Artista alterado. Selecione os materiais do estoque correspondente."); }
+                  if (!eventId && materialDraft.items.some(m => m.tenantMaterialId)) { setMaterialDraft(current => ({ ...current, items: current.items.filter(m => !m.tenantMaterialId), operationKey: crypto.randomUUID() })); toast.info("Artista alterado. Selecione os materiais do estoque correspondente. Os itens pendentes foram mantidos."); }
                   setArtist(selected?.name ?? "");
                   setIncludeArtistCard(false);
                 }}>
@@ -1474,97 +1433,14 @@ export function EventModal({
         </div>
           </TabsContent>  {/* fim TabsContent info */}
 
-          {/* ABA: POD / MATERIAIS PREVISTOS */}
+          {/* ABA: KIT DO CLIENTE E MATERIAIS PREVISTOS */}
           <TabsContent value="pod" className="flex-1 overflow-y-auto">
-            <div className="space-y-4 py-2 pr-2">
-              <div className="rounded-lg border border-primary/25 bg-primary/[0.04] p-3">
-                <p className="text-sm font-semibold text-primary">Preparação da sessão POD</p>
-                <p className="mt-1 text-xs text-muted-foreground">Planeje os materiais desta agenda. A seleção não reduz saldo; a baixa só acontece quando o consumo for confirmado na sessão POD.</p>
-              </div>
-
-              {planningArtistChanged && <p className="rounded-lg border border-amber-500/40 p-3 text-sm">Salve a alteração do artista na aba Informações para atualizar o planejamento de materiais. <Button type="button" variant="link" onClick={() => setActiveTab("info")}>Ir para Informações</Button></p>}
-              <fieldset disabled={planningArtistChanged} className="space-y-4 disabled:opacity-60">
-              <div className="space-y-2 rounded-lg border p-3">
-                <Label className="flex items-center gap-2 text-sm"><Boxes className="h-4 w-4 text-primary" />Kit de materiais (opcional)</Label>
-                {inventoryKits.length > 0 ? <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2"><Select value={selectedInventoryKitId} onValueChange={setSelectedInventoryKitId}><SelectTrigger><SelectValue placeholder="Escolher kit salvo" /></SelectTrigger><SelectContent>{inventoryKits.map(kit => <SelectItem key={kit.id} value={String(kit.id)}>{kit.name} · {kit.items.length} item(ns)</SelectItem>)}</SelectContent></Select><Button type="button" variant="outline" disabled={!selectedInventoryKitId} onClick={() => void applyInventoryKit()}>Adicionar</Button></div> : <p className="text-xs text-muted-foreground">Você ainda não possui kits salvos.</p>}
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-t pt-2">
-                  <Input value={newInventoryKitName} onChange={event => setNewInventoryKitName(event.target.value)} placeholder="Nome para salvar esta lista como kit" />
-                  <Button type="button" variant="secondary" disabled={!newInventoryKitName.trim() || createInventoryKitMutation.isPending || (eventId ? existingPlannedMaterials.filter(item => item.status === "planejado" && item.tenantMaterialId).length === 0 : pendingPlannedMaterials.length === 0)} onClick={() => createInventoryKitMutation.mutate({ name: newInventoryKitName.trim(), items: eventId ? existingPlannedMaterials.filter(item => item.status === "planejado" && item.tenantMaterialId).map(item => ({ tenantMaterialId: item.tenantMaterialId!, quantity: item.quantityPlanned })) : pendingPlannedMaterials.map(item => ({ tenantMaterialId: item.tenantMaterialId, quantity: item.quantity })) })}>Salvar kit</Button>
-                </div>
-              </div>
-
-              <MaterialForecast rows={eventId ? inventoryForecast : (previewForecast.data ?? [])} />
-              {previewForecast.error && <p role="alert" className="text-sm text-destructive">{previewForecast.error.message}</p>}
-
-              {tenantMaterials.length === 0 ? (
-                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                  Selecione um artista na aba Informações. Aqui aparecem os materiais próprios dele, os recebidos por empréstimo e os insumos que o estúdio disponibilizou para esse artista.
-                </div>
-              ) : (
-                <div className="space-y-2 rounded-lg border p-3">
-                  <Label className="text-sm">Adicionar material previsto</Label>
-                  <div className="grid grid-cols-[minmax(0,1fr)_82px] gap-2">
-                    <Select value={plannedTenantMaterialId} onValueChange={setPlannedTenantMaterialId}>
-                      <SelectTrigger className="min-w-0"><SelectValue placeholder="Selecionar material" /></SelectTrigger>
-                      <SelectContent>
-                        {tenantMaterials.map((material) => (
-                          <SelectItem key={material.id} value={String(material.id)}>{material.name} · {material.loan ? `Empréstimo #${material.loan.id}` : material.ownerArtistId == null ? "Estúdio" : "Artista"} · saldo {material.currentQuantity} {material.unit}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Input inputMode="decimal" value={plannedQuantity} onChange={(event) => setPlannedQuantity(event.target.value.replace(",", "."))} aria-label="Quantidade prevista" />
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="w-full"
-                    disabled={!plannedTenantMaterialId || addPlannedMaterialMutation.isPending || !/^\d{1,9}(?:\.\d{1,3})?$/.test(plannedQuantity) || Number(plannedQuantity) <= 0}
-                    onClick={() => {
-                      const material = tenantMaterials.find((item) => item.id === Number(plannedTenantMaterialId));
-                      if (!material) return;
-                      if (eventId) {
-                        addPlannedMaterialMutation.mutate({ appointmentId: eventId, tenantMaterialId: material.id, quantityPlanned: plannedQuantity });
-                      } else {
-                        setPendingPlannedMaterials(current => { const found = current.find(m => m.tenantMaterialId === material.id); return found ? current.map(m => m === found ? { ...m, quantity: String((Math.round(Number(m.quantity) * 1000) + Math.round(Number(plannedQuantity) * 1000)) / 1000) } : m) : [...current, { tenantMaterialId: material.id, name: material.name, unit: material.unit, quantity: plannedQuantity }]; });
-                        setPlannedTenantMaterialId(undefined);
-                        setPlannedQuantity("1");
-                      }
-                    }}
-                  >
-                    <Plus className="mr-1.5 h-4 w-4" />Adicionar à preparação
-                  </Button>
-                </div>
-              )}
-
-              {eventId && existingPlannedMaterials.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Materiais planejados</p>
-                  {existingPlannedMaterials.map((material) => (
-                    <div key={material.id} className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-2.5 text-sm">
-                      <div className="min-w-0 flex-1"><p className="truncate font-medium">{material.nameSnapshot}</p><p className="text-xs text-muted-foreground">{material.quantityPlanned} {material.unitSnapshot} · {material.status}</p></div>
-                      {material.status === "planejado" && <PlannedQuantityEditor id={material.id} value={material.quantityPlanned} unit={material.unitSnapshot} onSaved={() => { void refetchPlannedMaterials(); void refetchInventoryForecast(); }} />}
-                      {material.status === "planejado" && (
-                        <Button type="button" size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground" disabled={markPlannedMaterialUnusedMutation.isPending} onClick={() => markPlannedMaterialUnusedMutation.mutate({ plannedMaterialId: material.id })}>Não usar</Button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {!eventId && pendingPlannedMaterials.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Materiais que serão salvos ao criar ({pendingPlannedMaterials.length})</p>
-                  {pendingPlannedMaterials.map((material, index) => (
-                    <div key={`${material.tenantMaterialId}-${index}`} className="flex items-center gap-2 rounded-lg border bg-muted/20 p-2.5 text-sm">
-                      <span className="min-w-0 flex-1 truncate">{material.name} · {material.quantity} {material.unit}</span>
-                      <Button type="button" size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setPendingPlannedMaterials((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remover ${material.name}`}><Trash2 className="h-3.5 w-3.5" /></Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              </fieldset>
-              {!eventId && <Button type="button" className="w-full" onClick={() => setActiveTab("info")}>Voltar para concluir o agendamento</Button>}
-            </div>
+            {planningArtistChanged && <p className="rounded-lg border border-amber-500/40 p-3 text-sm">Salve a alteração do artista na aba Informações antes de atualizar o kit. <Button type="button" variant="link" onClick={() => setActiveTab("info")}>Ir para Informações</Button></p>}
+            {kitRecovery && <div role="alert" className="rounded-lg border border-amber-500/40 p-3 text-sm space-y-2"><p>O agendamento #{kitRecovery.appointmentId} foi criado. O kit abaixo ainda precisa ser salvo.</p><Button type="button" disabled={saveClientKit.isPending} onClick={async () => {
+              try { await saveClientKit.mutateAsync({ appointmentId: kitRecovery.appointmentId, ...kitRecovery.draft, name: kitRecovery.draft.name || undefined }); void utils.appointments.list.invalidate(); onSuccess?.(); onClose(); resetForm(); toast.success("Kit do cliente salvo."); } catch (error) { toast.error(error instanceof Error ? error.message : "Não foi possível salvar o kit."); }
+            }}>Tentar salvar o kit novamente</Button></div>}
+            <AppointmentMaterials appointmentId={eventId ?? undefined} artistId={Number(artistId)} artistName={artist} clientName={clients.find((c: any) => String(c.id) === clientId)?.name || ""} date={`${date} ${startTime}:00`} enabled={isOpen && activeTab === "pod" && !planningArtistChanged && !kitRecovery} canReadStock={canAccess("stock")} draft={materialDraft} onDraftChange={setMaterialDraft} />
+            {!eventId && !kitRecovery && <Button type="button" className="mt-3 w-full" onClick={() => setActiveTab("info")}>Voltar para concluir o agendamento</Button>}
           </TabsContent>
 
           {/* ABA: LEMBRETES */}

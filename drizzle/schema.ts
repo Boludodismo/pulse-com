@@ -953,3 +953,5 @@ export const inventoryBatches = mysqlTable("inventory_batches", {
 
 // Keep workflow tables visible to the schema tooling as well as runtime migrations.
 export { inventoryLoans, inventoryLoanEvents, inventoryNotices, inventoryAlertPreferences } from "./inventoryWorkflowSchema";
+
+export { appointmentMaterialKits, appointmentKitOperations } from "./appointmentKitSchema";

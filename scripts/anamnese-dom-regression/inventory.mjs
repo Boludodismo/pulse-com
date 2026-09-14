@@ -8,7 +8,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const dom = new JSDOM('<div id="root"></div>', { url: 'https://example.test/stock' });
 globalThis.window = dom.window; globalThis.document = dom.window.document;
 globalThis.HTMLElement = dom.window.HTMLElement; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const { createElement, act } = await import('react');
+const { createElement, act, useState } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const ui = `import React from 'react';
 export const Button=({children,variant,size,...p})=>React.createElement('button',p,children);
@@ -17,7 +17,7 @@ export const Label=({children,...p})=>React.createElement('label',p,children);
 export const Dialog=({children,open})=>open?React.createElement('div',{},children):null;
 export const DialogContent=({children,...p})=>React.createElement('div',p,children);
 export const DialogHeader=DialogContent; export const DialogTitle=DialogContent;`;
-const mockTrpc = `const chain=(p=[])=>new Proxy(()=>{}, {get:(_,k)=> k==='useQuery'?(()=>({data:globalThis.fixtures[p.join('.')],isLoading:false,refetch:async()=>{}})):k==='useMutation'?((options)=>({isPending:false,mutate:input=>{globalThis.sent.push({path:p.join('.'),input});}})):k==='useUtils'?(()=>chain()):k==='invalidate'?(async()=>{}):chain([...p,k])}); export const trpc=chain();`;
+const mockTrpc = `const chain=(p=[])=>new Proxy(()=>{}, {get:(_,k)=> k==='useQuery'?(()=>({data:globalThis.fixtures[p.join('.')],isLoading:false,refetch:async()=>{}})):k==='useMutation'?((options)=>({isPending:false,mutate:input=>{globalThis.sent.push({path:p.join('.'),input});},mutateAsync:async input=>{globalThis.sent.push({path:p.join('.'),input});options?.onSuccess?.({success:true});return {success:true};}})):k==='useUtils'?(()=>chain()):k==='invalidate'?(async()=>{}):chain([...p,k])}); export const trpc=chain();`;
 async function compile(name) {
   const out = path.join(here, `.inventory-${name}.mjs`);
   await build({ entryPoints: [path.resolve(here, `../../client/src/components/${name}.tsx`)], outfile: out, bundle: true, format: 'esm', platform: 'node', jsx: 'automatic', external: ['react'], plugins: [{ name: 'mocks', setup(b) {
@@ -46,3 +46,60 @@ await mount(Loans);await act(async()=>button('Abrir empréstimo #42').click());a
 const {default:Notices}=await compile('InventoryNotices');fixtures={'pod.inventory.notices.preferences':{leadHours:48,scope:'artist',whatsappEnabled:false},'pod.inventory.notices.list':[{id:9,title:'Falta prevista',message:'Material da sessão',recipientArtistId:3102,createdAt:'2026-09-14 12:00:00',deliveryStatus:'internal',severity:'danger'}]};
 await mount(Notices);assert(document.body.textContent.includes('WhatsApp desativado'));await act(async()=>document.querySelector('input[type="checkbox"]').click());await act(async()=>document.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true})));assert.deepEqual(sent[0],{path:'pod.inventory.notices.savePreferences',input:{leadHours:48,whatsappEnabled:true}});await act(async()=>button('Marcar como lido').click());assert.deepEqual(sent[1],{path:'pod.inventory.notices.read',input:{id:9}});await unmount();
 console.log('PASS: forecast levels and origin, quantity editing with concurrency check, approval deadline form, explicit WhatsApp opt-in and read acknowledgements');
+
+const {default:AppointmentMaterials}=await compile('AppointmentMaterials');
+const baseProps={artistId:3101,artistName:'Artista A',clientName:'João Cliente',date:'2099-10-15 12:30:00',enabled:true,canReadStock:true};
+let latestDraft;
+function DraftKit(props) {
+  const [draft,setDraft]=useState({name:'',items:[],operationKey:crypto.randomUUID()});
+  latestDraft=draft;
+  return createElement(AppointmentMaterials,{...baseProps,...props,draft,onDraftChange:setDraft});
+}
+fixtures={'pod.inventory.list':[],'pod.planning.kits.list':[]};
+await mount(DraftKit);
+assert(!button('Criar kit do cliente').disabled,'empty stock allows a client-specific kit');
+assert(!document.querySelector('fieldset').disabled);
+await act(async()=>button('Criar kit do cliente').click());
+assert.equal(latestDraft.name,'Kit de João');
+assert.equal(sent.length,0,'new appointment kit stays in the draft until appointment creation');
+await change('appointment-client-kit-name','Reforma oriental');
+await act(async()=>button('Material não listado').click());
+await change('appointment-missing-name','Cartucho especial 3RL');
+await change('appointment-material-quantity','2,5');
+const addButton=()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Adicionar ao kit');
+await act(async()=>addButton().click());
+assert.deepEqual(latestDraft.items,[{name:'Cartucho especial 3RL',unit:'unidade',quantity:'2.5'}]);
+assert(document.body.textContent.includes('Pendente de cadastro'));
+assert(document.body.textContent.includes('O lembrete será criado ao salvar o agendamento'));
+assert(button('Salvar também como modelo reutilizável').disabled,'pending items cannot become a stock template');
+await unmount();
+
+fixtures={'pod.inventory.list':[], 'pod.planning.kits.list':[],'pod.planning.listByAppointment':[]};
+await mount(DraftKit,{appointmentId:51});
+await change('appointment-client-kit-name','Kit exclusivo João');
+await act(async()=>button('Criar kit do cliente').click());
+assert.equal(sent[0].path,'pod.planning.clientKit.save');
+assert.equal(sent[0].input.name,'Kit exclusivo João');
+assert.deepEqual(sent[0].input.items,[]);
+await act(async()=>button('Material não listado').click());
+await change('appointment-missing-name','Filme protetor');
+await act(async()=>addButton().click());
+assert.equal(sent[1].input.appointmentId,51);
+assert.deepEqual(sent[1].input.items,[{name:'Filme protetor',unit:'unidade',quantity:'1'}]);
+assert.notEqual(sent[0].input.operationKey,sent[1].input.operationKey,'successful distinct actions use distinct operation keys');
+await unmount();
+
+fixtures={'pod.inventory.list':[{id:71,name:'Cartucho disponível',unit:'unidade',ownerArtistId:3101,currentQuantity:'10'},{id:72,name:'Pigmento',unit:'ml',ownerArtistId:3101,currentQuantity:'5'}],'pod.planning.kits.list':[{id:5,name:'Modelo salvo',items:[{tenantMaterialId:71,materialName:'Cartucho disponível',unit:'unidade',quantity:'2.000'}]}],'pod.planning.listByAppointment':[{id:81,tenantMaterialId:null,nameSnapshot:'Cartucho pendente',unitSnapshot:'un',quantityPlanned:'3.000',status:'planejado'}],'pod.planning.clientKit.get':{name:'Kit João'}};
+await mount(DraftKit,{appointmentId:51});
+assert.equal(document.getElementById('appointment-client-kit-name').value,'Kit João');
+assert(document.querySelector('a[href="/stock"]'));
+assert.equal(document.getElementById('link-material-81').options.length,2,'only equivalent units are offered for linking');
+await change('link-material-81','71');
+await act(async()=>button('Vincular ao estoque').click());
+assert.deepEqual(sent[0],{path:'pod.planning.clientKit.linkMaterial',input:{appointmentId:51,plannedMaterialId:81,tenantMaterialId:71}});
+await change('appointment-kit-template','5');
+await act(async()=>button('Adicionar ao kit do cliente').click());
+assert.deepEqual(sent[1].input.items,[{tenantMaterialId:71,name:'Cartucho disponível',unit:'unidade',quantity:'2.000'}]);
+assert.equal(fixtures['pod.planning.kits.list'][0].items[0].quantity,'2.000');
+await unmount();
+console.log('PASS: client-specific kit with empty stock, freeform material draft and saved appointment, registration reminder state, operation keys, stock linkage with unit matching, independent template copy');
