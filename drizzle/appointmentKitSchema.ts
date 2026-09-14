@@ -52,3 +52,24 @@ export const appointmentKitOperations = mysqlTable(
     ),
   ]
 );
+
+export const inventoryMaterialRegistrations = mysqlTable(
+  "inventory_material_registrations",
+  {
+    id: int().autoincrement().primaryKey(),
+    studioId: int().notNull(),
+    registrationKey: varchar({ length: 36 }).notNull(),
+    payloadHash: varchar({ length: 64 }).notNull(),
+    tenantMaterialId: int().notNull(),
+    createdByUserId: int().notNull(),
+    createdAt: timestamp({ mode: "string" })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  t => [
+    uniqueIndex("inventory_material_registration_unique").on(
+      t.studioId,
+      t.registrationKey
+    ),
+  ]
+);

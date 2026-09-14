@@ -1,4 +1,6 @@
 import { useState } from "react";
+import AppointmentMaterialPicker from "./AppointmentMaterialPicker";
+import { materialUiError } from "@shared/materialSearch";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
@@ -23,6 +25,7 @@ export default function AppointmentMaterials({
   date,
   enabled,
   canReadStock,
+  canWriteStock,
   draft,
   onDraftChange,
 }: {
@@ -33,6 +36,7 @@ export default function AppointmentMaterials({
   date: string;
   enabled: boolean;
   canReadStock: boolean;
+  canWriteStock: boolean;
   draft: AppointmentKitDraft;
   onDraftChange: (draft: AppointmentKitDraft) => void;
 }) {
@@ -73,11 +77,6 @@ export default function AppointmentMaterials({
   );
   const [name, setName] = useState<string | null>(null);
   const [selectedKit, setSelectedKit] = useState("");
-  const [mode, setMode] = useState<"stock" | "missing">("stock");
-  const [materialId, setMaterialId] = useState("");
-  const [materialName, setMaterialName] = useState("");
-  const [unit, setUnit] = useState("unidade");
-  const [quantity, setQuantity] = useState("1");
   const [operationKey, setOperationKey] = useState(() => crypto.randomUUID());
   const refresh = () => {
     void utils.pod.planning.invalidate();
@@ -88,18 +87,36 @@ export default function AppointmentMaterials({
       setOperationKey(crypto.randomUUID());
       refresh();
     },
-    onError: e => toast.error(e.message),
+    onError: e =>
+      toast.error(
+        materialUiError(
+          e,
+          "Não foi possível salvar a alteração. Tente novamente."
+        )
+      ),
   });
   const unused = trpc.pod.planning.markUnused.useMutation({
     onSuccess: refresh,
-    onError: e => toast.error(e.message),
+    onError: e =>
+      toast.error(
+        materialUiError(
+          e,
+          "Não foi possível salvar a alteração. Tente novamente."
+        )
+      ),
   });
   const template = trpc.pod.planning.kits.create.useMutation({
     onSuccess: () => {
       refresh();
       toast.success("Modelo salvo para outros agendamentos.");
     },
-    onError: e => toast.error(e.message),
+    onError: e =>
+      toast.error(
+        materialUiError(
+          e,
+          "Não foi possível salvar a alteração. Tente novamente."
+        )
+      ),
   });
   const defaultName = `Kit de ${clientName.trim().split(/\s+/)[0] || "cliente"}`;
   const kitName =
@@ -129,35 +146,13 @@ export default function AppointmentMaterials({
       );
     } else {
       if (draft.items.length + items.length > 100) {
-        toast.error("Use até 100 itens por kit.");
-        return;
+        throw new Error("Use até 100 itens por kit.");
       }
       changeDraft({
         ...draft,
         name: kitName.trim(),
         items: [...draft.items, ...items],
       });
-    }
-  };
-  const addMaterial = async () => {
-    const material = materials.find(m => m.id === Number(materialId));
-    if (mode === "stock" && !material) return;
-    const item: AppointmentKitItem =
-      mode === "stock"
-        ? {
-            tenantMaterialId: material!.id,
-            name: material!.name,
-            unit: material!.unit,
-            quantity,
-          }
-        : { name: materialName.trim(), unit: unit.trim(), quantity };
-    try {
-      await addItems([item]);
-      setMaterialId("");
-      setMaterialName("");
-      setQuantity("1");
-    } catch {
-      /* Keep the item and operation key for a safe retry. */
     }
   };
   const applyKit = async () => {
@@ -247,7 +242,21 @@ export default function AppointmentMaterials({
             Os itens serão copiados para este agendamento. Você poderá
             personalizar as quantidades.
           </p>
-          {kits.error && <p role="alert">{kits.error.message}</p>}
+          {kits.error && (
+            <p role="alert">
+              {materialUiError(
+                kits.error,
+                "Não foi possível carregar os kits. Tente novamente."
+              )}{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => void kits.refetch()}
+              >
+                Recarregar kits
+              </button>
+            </p>
+          )}
         </div>
         <div className="space-y-2 rounded-lg border p-3">
           <Label htmlFor="appointment-client-kit-name">
@@ -299,126 +308,45 @@ export default function AppointmentMaterials({
             Este kit pertence a este agendamento, incluindo materiais que ainda
             precisam ser cadastrados.
           </p>
-          {savedKit.error && <p role="alert">{savedKit.error.message}</p>}
-        </div>
-        <div className="space-y-3 rounded-lg border p-3">
-          <h4 className="text-sm font-semibold">Adicionar material ao kit</h4>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "stock" ? "default" : "outline"}
-              onClick={() => setMode("stock")}
-            >
-              Do estoque
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "missing" ? "default" : "outline"}
-              onClick={() => setMode("missing")}
-            >
-              Material não listado
-            </Button>
-          </div>
-          {mode === "stock" ? (
-            <div>
-              <Label htmlFor="appointment-stock-material">
-                Material disponível para o artista
-              </Label>
-              <select
-                id="appointment-stock-material"
-                className={selectClass}
-                value={materialId}
-                onChange={e => setMaterialId(e.target.value)}
-              >
-                <option value="">Selecionar material</option>
-                {materials.map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ·{" "}
-                    {m.loan
-                      ? `Empréstimo #${m.loan.id}`
-                      : m.ownerArtistId == null
-                        ? "Estúdio"
-                        : "Artista"}{" "}
-                    · {m.currentQuantity} {m.unit}
-                  </option>
-                ))}
-              </select>
-              {inventory.isLoading && (
-                <p role="status" className="text-xs">
-                  Carregando materiais…
-                </p>
+          {savedKit.error && (
+            <p role="alert">
+              {materialUiError(
+                savedKit.error,
+                "Não foi possível carregar o kit deste agendamento."
               )}
-              {inventory.error && <p role="alert">{inventory.error.message}</p>}
-              {artistId > 0 && !inventory.isLoading && !materials.length && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Nenhum material disponível para este artista. Use “Material
-                  não listado” para preparar o kit e lembrar o cadastro no
-                  estoque.
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="appointment-missing-name">
-                  Nome e especificação do material
-                </Label>
-                <Input
-                  id="appointment-missing-name"
-                  maxLength={255}
-                  value={materialName}
-                  onChange={e => setMaterialName(e.target.value)}
-                  placeholder="Ex.: Cartucho 3RL, 0,25 mm, marca…"
-                />
-              </div>
-              <div>
-                <Label htmlFor="appointment-missing-unit">Unidade de uso</Label>
-                <Input
-                  id="appointment-missing-unit"
-                  maxLength={50}
-                  value={unit}
-                  onChange={e => setUnit(e.target.value)}
-                  placeholder="unidade, ml, g…"
-                />
-              </div>
-              <p className="text-xs text-amber-700 dark:text-amber-300">
-                Será criado um lembrete para o artista cadastrar e vincular este
-                material ao estoque. Essa inclusão não cria saldo disponível.
-              </p>
-            </div>
+            </p>
           )}
-          <div>
-            <Label htmlFor="appointment-material-quantity">
-              Quantidade prevista{" "}
-              {mode === "stock"
-                ? `(${materials.find(m => m.id === Number(materialId))?.unit || "unidade do material"})`
-                : `(${unit || "unidade"})`}
-            </Label>
-            <Input
-              id="appointment-material-quantity"
-              className="sm:w-32"
-              inputMode="decimal"
-              value={quantity}
-              onChange={e => setQuantity(e.target.value.replace(",", "."))}
-            />
-          </div>
-          <Button
-            type="button"
-            className="w-full"
-            disabled={
-              !validQuantity(quantity) ||
-              kitName.trim().length < 2 ||
-              (mode === "stock"
-                ? !materialId
-                : materialName.trim().length < 2 || !unit.trim())
-            }
-            onClick={() => void addMaterial()}
-          >
-            Adicionar ao kit
-          </Button>
         </div>
+        {inventory.isLoading && (
+          <p role="status" className="text-xs">
+            Carregando estoque…
+          </p>
+        )}
+        {inventory.error && (
+          <p role="alert" className="text-sm">
+            {materialUiError(
+              inventory.error,
+              "Não foi possível carregar os materiais do estoque."
+            )}{" "}
+            <button
+              type="button"
+              className="underline"
+              onClick={() => void inventory.refetch()}
+            >
+              Recarregar estoque
+            </button>
+          </p>
+        )}
+        <AppointmentMaterialPicker
+          key={artistId}
+          artistId={artistId}
+          artistName={artistName}
+          materials={materials}
+          enabled={enabled}
+          canReadStock={canReadStock}
+          canWriteStock={canWriteStock}
+          onAdd={addItems}
+        />
         {missing > 0 && (
           <p
             role="status"
@@ -430,7 +358,14 @@ export default function AppointmentMaterials({
               : "O lembrete será criado ao salvar o agendamento."}
           </p>
         )}
-        {planned.error && <p role="alert">{planned.error.message}</p>}
+        {planned.error && (
+          <p role="alert">
+            {materialUiError(
+              planned.error,
+              "Não foi possível carregar os materiais previstos."
+            )}
+          </p>
+        )}
         {appointmentId
           ? rows.map(row => (
               <article
@@ -531,7 +466,12 @@ export default function AppointmentMaterials({
           rows={appointmentId ? (forecast.data ?? []) : (preview.data ?? [])}
         />
         {(forecast.error || preview.error) && (
-          <p role="alert">{(forecast.error || preview.error)?.message}</p>
+          <p role="alert">
+            {materialUiError(
+              forecast.error || preview.error,
+              "Não foi possível conferir o saldo previsto."
+            )}
+          </p>
         )}
         <div className="space-y-2 border-t pt-3">
           <Button
@@ -586,7 +526,13 @@ function LinkPendingMaterial({
         "Material vinculado. Pendência de cadastro resolvida; confira o saldo previsto."
       );
     },
-    onError: e => toast.error(e.message),
+    onError: e =>
+      toast.error(
+        materialUiError(
+          e,
+          "Não foi possível salvar a alteração. Tente novamente."
+        )
+      ),
   });
   return (
     <div className="space-y-2 rounded-md bg-amber-500/5 p-2">

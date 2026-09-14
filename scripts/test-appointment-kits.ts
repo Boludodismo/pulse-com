@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import {
+  TECHNICAL_CATALOG_2026,
+  canAddCatalogItemToOperationalStock,
+} from "../shared/technicalCatalog2026";
 import mysql, { type RowDataPacket } from "mysql2/promise";
 import { upgradeAppointmentKits } from "../server/_core/appointmentKitSchema";
 import { podSaasRouter } from "../server/routers/podSaas";
@@ -19,16 +22,6 @@ async function main() {
     uri: url.toString(),
     dateStrings: true,
   });
-  // Match the existing production template schema in this isolated fixture database.
-  const templates = await readFile(
-    "drizzle/0053_session_inventory_kits.sql",
-    "utf8"
-  );
-  for (const statement of templates
-    .split(";")
-    .map(s => s.trim())
-    .filter(Boolean))
-    await c.query(statement);
   await upgradeAppointmentKits(c);
   await upgradeAppointmentKits(c);
   await c.query(
@@ -405,6 +398,234 @@ async function main() {
         !n.resolvedAt
     ).length,
     0
+  );
+  // Runtime initialization must repair the missing reusable-kit tables and preserve them on restart.
+  await upgradeAppointmentKits(c);
+  assert.equal(
+    (await artist.planning.kits.list()).find(k => k.id === template.id)
+      ?.items[0].quantity,
+    "2.000"
+  );
+  const registrationInput = {
+    registrationKey: randomUUID(),
+    ownerArtistId: 4101,
+    name: "Luva nitrílica M personalizada",
+    category: "Luvas",
+    unit: "unidade",
+    brand: "Marca própria",
+    currentQuantity: "0",
+    minimumQuantity: "0",
+    unitCost: "0",
+  };
+  const beforeRegistrations = await scalar(
+    "SELECT COUNT(*) n FROM tenant_materials"
+  );
+  const registeredTwice = await Promise.all([
+    artist.inventory.create(registrationInput),
+    artist.inventory.create(registrationInput),
+  ]);
+  assert.equal(registeredTwice[0].id, registeredTwice[1].id);
+  assert.equal(
+    (await artist.inventory.create(registrationInput)).id,
+    registeredTwice[0].id
+  );
+  assert.equal(
+    await scalar("SELECT COUNT(*) n FROM tenant_materials"),
+    beforeRegistrations + 1,
+    "retries and concurrent registration create one stock material"
+  );
+  await assert.rejects(
+    artist.inventory.create({ ...registrationInput, name: "Outro nome" }),
+    /outros dados/
+  );
+  await assert.rejects(other.inventory.create(registrationInput));
+  await assert.rejects(
+    artist.inventory.create({
+      ...registrationInput,
+      registrationKey: randomUUID(),
+      ownerArtistId: null,
+      suppliedArtistId: 4101,
+    })
+  );
+  const ownMaterial = (await artist.inventory.list()).find(
+    m => m.id === registeredTwice[0].id
+  )!;
+  assert.equal(ownMaterial.category, "Luvas");
+  assert.equal(ownMaterial.currentQuantity, "0.000");
+  assert.equal(ownMaterial.ownerArtistId, 4101);
+  assert.equal(
+    (await other.inventory.list()).some(m => m.id === ownMaterial.id),
+    false
+  );
+  assert.equal(
+    await scalar(
+      "SELECT COUNT(*) n FROM tenant_inventory_movements WHERE tenantMaterialId=? AND quantity > 0",
+      [ownMaterial.id]
+    ),
+    0
+  );
+
+  const studioInput = {
+    ...registrationInput,
+    registrationKey: randomUUID(),
+    ownerArtistId: null,
+    suppliedArtistId: 4101,
+    name: "Vaselina do estúdio",
+    category: "Vaselina",
+    unit: "g",
+  };
+  const studioMaterial = await admin.inventory.create(studioInput);
+  assert.equal(
+    (await admin.inventory.create(studioInput)).id,
+    studioMaterial.id
+  );
+  assert.equal(
+    (await artist.inventory.list()).some(m => m.id === studioMaterial.id),
+    true
+  );
+  assert.equal(
+    (await other.inventory.list()).some(m => m.id === studioMaterial.id),
+    false
+  );
+  await assert.rejects(
+    admin.inventory.create({
+      ...studioInput,
+      registrationKey: randomUUID(),
+      suppliedArtistId: 4201,
+    })
+  );
+  await assert.rejects(
+    artist.inventory.create({
+      ...registrationInput,
+      registrationKey: randomUUID(),
+      suppliedArtistId: 4102,
+    })
+  );
+  const external = await foreign.inventory.create({
+    ...registrationInput,
+    ownerArtistId: null,
+  });
+  assert.notEqual(
+    external.id,
+    ownMaterial.id,
+    "registration keys are scoped to the studio"
+  );
+
+  await c.query(
+    "INSERT INTO material_catalog_categories(id,code,name,isActive) VALUES(5101,'kit_gloves','Luvas',1)"
+  );
+  await c.query(
+    "INSERT INTO material_catalog_items(id,categoryId,code,name,defaultUnit,isActive) VALUES(5101,5101,'kit_gloves_m','Luva referência M','unidade',1)"
+  );
+  assert.ok((await artist.catalog.list()).items.some(i => i.id === 5101));
+  const globalStock = await artist.inventory.create({
+    ...registrationInput,
+    registrationKey: randomUUID(),
+    catalogItemId: 5101,
+    name: "Nome ignorado",
+  });
+  assert.equal(
+    (await artist.inventory.list()).find(m => m.id === globalStock.id)?.name,
+    "Luva referência M"
+  );
+  const technicalIndex = TECHNICAL_CATALOG_2026.findIndex(
+    canAddCatalogItemToOperationalStock
+  );
+  const technicalStock = await artist.inventory.create({
+    ...registrationInput,
+    registrationKey: randomUUID(),
+    technicalCatalogIndex: technicalIndex,
+  });
+  const technicalSaved = (await artist.inventory.list()).find(
+    m => m.id === technicalStock.id
+  )!;
+  assert.equal(
+    technicalSaved.brand,
+    TECHNICAL_CATALOG_2026[technicalIndex].brandName
+  );
+  assert.equal(
+    technicalSaved.unit,
+    TECHNICAL_CATALOG_2026[technicalIndex].baseUnit
+  );
+  assert.equal(technicalSaved.currentQuantity, "0.000");
+  const blockedIndex = TECHNICAL_CATALOG_2026.findIndex(
+    i => !canAddCatalogItemToOperationalStock(i)
+  );
+  assert.ok(blockedIndex >= 0);
+  await assert.rejects(
+    artist.inventory.create({
+      ...registrationInput,
+      registrationKey: randomUUID(),
+      technicalCatalogIndex: blockedIndex,
+    }),
+    /bloqueado/
+  );
+  await assert.rejects(
+    artist.inventory.create({
+      ...registrationInput,
+      registrationKey: randomUUID(),
+      catalogItemId: 5101,
+      technicalCatalogIndex: technicalIndex,
+    }),
+    /apenas um/
+  );
+  await c.query(
+    "UPDATE user_module_permissions SET canWrite=0 WHERE userId=4101 AND studioId=101 AND module='stock'"
+  );
+  await assert.rejects(
+    artist.inventory.create({
+      ...registrationInput,
+      registrationKey: randomUUID(),
+    })
+  );
+  await c.query(
+    "UPDATE user_module_permissions SET canWrite=1 WHERE userId=4101 AND studioId=101 AND module='stock'"
+  );
+  await c.query(
+    "INSERT INTO appointments(id,studioId,clientId,artistId,artist,service,duration,date,status) VALUES(4103,101,4101,4101,'Artista do kit','Sessão',60,?,'agendado')",
+    [future]
+  );
+  await kitApi.save({
+    appointmentId: 4103,
+    name: "Kit com cadastro direto",
+    operationKey: randomUUID(),
+    items: [
+      { tenantMaterialId: ownMaterial.id, quantity: "2" },
+      { tenantMaterialId: studioMaterial.id, quantity: "5" },
+    ],
+  });
+  assert.equal(
+    (await artist.planning.listByAppointment({ appointmentId: 4103 })).length,
+    2
+  );
+  assert.equal(
+    (await artist.planning.forecast({ appointmentId: 4103 })).find(
+      f => f?.material.id === ownMaterial.id
+    )?.level,
+    "shortage"
+  );
+  assert.ok(
+    (await artist.inventory.notices.list()).some(
+      n =>
+        n.appointmentId === 4103 &&
+        n.kind === "forecast" &&
+        n.recipientArtistId === 4101
+    )
+  );
+  assert.equal(
+    (await artist.inventory.notices.list()).filter(
+      n => n.appointmentId === 4103 && n.kind === "material_registration"
+    ).length,
+    0,
+    "already registered materials need replenishment rather than a registration reminder"
+  );
+  await upgradeAppointmentKits(c);
+  assert.equal(
+    (await artist.inventory.create(registrationInput)).id,
+    ownMaterial.id
+  );
+  console.log(
+    "PASS: runtime repairs missing template tables and preserves existing kits; direct registration is idempotent, scoped, category-aware, zero-balance, supports studio allocations and both catalogs, keeps blocked references blocked and triggers real shortage forecasts"
   );
   await c.end();
   console.log(
