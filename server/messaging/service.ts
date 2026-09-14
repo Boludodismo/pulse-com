@@ -1,4 +1,6 @@
 import { getDb } from "../db";
+import { inventoryNotices } from "../../drizzle/inventoryWorkflowSchema";
+import { inventoryNoticeDeliveryError } from "../inventoryNoticeDelivery";
 import { whatsappIntegrations, messageQueue, messageTemplates, integrationContacts, integrationEvents, integrationJobs, appointmentReminders, appointments, messageAutomationSettings } from "../../drizzle/schema";
 import { appointmentInstant } from "../../shared/appointmentTime";
 import { DEFAULT_STUDIO_TIMEZONE, zonedSqlDateTime } from "../../shared/studioClock";
@@ -245,6 +247,7 @@ export async function processPendingIntegrationJobs(limit = 10) {
     result.processed += 1;
 
     let payload: MessageDeliveryPayload | null = null;
+    const inventoryNoticeId = /^inventory-notice:(\d+)$/.exec(job.idempotencyKey ?? "")?.[1];
     try {
       const integration = (await db.select().from(whatsappIntegrations).where(and(
         eq(whatsappIntegrations.id, job.integrationId),
@@ -254,6 +257,10 @@ export async function processPendingIntegrationJobs(limit = 10) {
         throw new Error("Integração inativa ou indisponível para este estúdio.");
       }
       payload = JSON.parse(job.payload) as MessageDeliveryPayload;
+      if (inventoryNoticeId) {
+        const reason = await inventoryNoticeDeliveryError(db, job.studioId, Number(inventoryNoticeId), payload.recipientPhone, payload.message);
+        if (reason) throw new PermanentDeliveryError(reason);
+      }
       if (payload.messageQueueId) {
         const queueItem = (await db.select({ trigger: messageQueue.trigger, appointmentId: messageQueue.appointmentId }).from(messageQueue)
           .where(and(eq(messageQueue.id, payload.messageQueueId), eq(messageQueue.studioId, job.studioId))).limit(1))[0];
@@ -272,7 +279,7 @@ export async function processPendingIntegrationJobs(limit = 10) {
         if (normalizeBrazilianPhone(payload.recipientPhone) !== integration.sandboxTestPhone) {
           throw new Error("Modo de teste: o destinatário não corresponde ao telefone de homologação.");
         }
-      } else {
+      } else if (!inventoryNoticeId) {
         if (!payload.clientId) throw new Error("Envios em produção exigem um cliente identificado e com consentimento de WhatsApp.");
         const consent = (await db.select().from(integrationContacts).where(and(
           eq(integrationContacts.studioId, job.studioId),
@@ -302,10 +309,12 @@ export async function processPendingIntegrationJobs(limit = 10) {
       await db.update(whatsappIntegrations).set({ lastSuccessAt: sqlDate(), failureCount: 0, lastErrorMessage: null })
         .where(eq(whatsappIntegrations.id, integration.id));
       result.completed += 1;
+      if (inventoryNoticeId) await db.update(inventoryNotices).set({ deliveryStatus: "delivered", lastError: null }).where(and(eq(inventoryNotices.id, Number(inventoryNoticeId)), eq(inventoryNotices.studioId, job.studioId)));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro não identificado no processamento.";
       const nextAttempt = job.attemptCount + 1;
       const terminal = error instanceof PermanentDeliveryError || nextAttempt >= job.maxAttempts;
+      if (inventoryNoticeId) await db.update(inventoryNotices).set({ deliveryStatus: terminal ? "failed" : "queued", lastError: message.slice(0, 500) }).where(and(eq(inventoryNotices.id, Number(inventoryNoticeId)), eq(inventoryNotices.studioId, job.studioId)));
       const nextAttemptAt = new Date(Date.now() + retryDelayMinutes(nextAttempt) * 60_000).toISOString().slice(0, 19).replace("T", " ");
       await db.update(integrationJobs).set({
         status: terminal ? "failed" : "retry",

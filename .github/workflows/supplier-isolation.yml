@@ -11,6 +11,7 @@ on:
       - 'server/routers/contactImport.ts'
       - 'scripts/test-contact-import.ts'
       - 'server/messaging/consent.ts'
+      - 'server/messaging/service.ts'
       - 'server/routers/messaging.ts'
       - 'drizzle/schema.ts'
       - 'shared/appointmentTime.ts'
@@ -19,6 +20,14 @@ on:
       - 'server/routers/podSaas.ts'
       - 'server/_core/inventoryTraceSchema.ts'
       - 'scripts/test-inventory-trace.ts'
+      - 'server/inventory*.ts'
+      - 'server/routers/inventoryLoans.ts'
+      - 'server/_core/inventoryWorkflowSchema.ts'
+      - 'drizzle/inventoryWorkflowSchema.ts'
+      - 'scripts/test-inventory-loans.ts'
+      - 'client/src/components/Inventory*.tsx'
+      - 'client/src/components/MaterialForecast.tsx'
+      - 'scripts/anamnese-dom-regression/inventory.mjs'
 permissions:
   contents: read
 jobs:
@@ -51,3 +60,7 @@ jobs:
       - run: pnpm tsx scripts/test-contact-import.ts
       - run: pnpm tsx scripts/test-appointment-conflicts.ts
       - run: pnpm tsx scripts/test-inventory-trace.ts
+      - run: pnpm exec vitest run server/podInventoryForecast.test.ts server/inventoryWorkflowRules.test.ts server/inventoryAccess.test.ts
+      - run: pnpm tsx scripts/test-inventory-loans.ts
+      - run: npm ci --prefix scripts/anamnese-dom-regression
+      - run: node scripts/anamnese-dom-regression/inventory.mjs

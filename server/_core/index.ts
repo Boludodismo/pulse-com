@@ -1,3 +1,4 @@
+import { ensureInventoryWorkflowSchema } from "./inventoryWorkflowSchema";
 import {ensureInventoryTraceSchema} from "./inventoryTraceSchema";
 import { ensureLegacyStockScope } from "./legacyStockScope";
 import { ensureStudioSettingsScope } from "./studioSettingsScope";
@@ -38,6 +39,7 @@ async function startServer() {
   await ensureLegacyStockScope();
   await ensureAppointmentCardSchema();
   await ensureInventoryTraceSchema();
+  await ensureInventoryWorkflowSchema();
   await ensureContactImportSchema();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {
