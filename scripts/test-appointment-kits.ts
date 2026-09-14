@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import mysql, { type RowDataPacket } from "mysql2/promise";
 import { upgradeAppointmentKits } from "../server/_core/appointmentKitSchema";
 import { podSaasRouter } from "../server/routers/podSaas";
@@ -18,6 +19,16 @@ async function main() {
     uri: url.toString(),
     dateStrings: true,
   });
+  // Match the existing production template schema in this isolated fixture database.
+  const templates = await readFile(
+    "drizzle/0053_session_inventory_kits.sql",
+    "utf8"
+  );
+  for (const statement of templates
+    .split(";")
+    .map(s => s.trim())
+    .filter(Boolean))
+    await c.query(statement);
   await upgradeAppointmentKits(c);
   await upgradeAppointmentKits(c);
   await c.query(
