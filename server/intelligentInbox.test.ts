@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { getTableConfig } from "drizzle-orm/mysql-core";
 const mocks = vi.hoisted(() => ({
   getDb: vi.fn(),
+  getUserById: vi.fn(),
   hasModulePermission: vi.fn(),
   listUserPermissions: vi.fn(),
 }));
-vi.mock("./db", () => ({ getDb: mocks.getDb }));
+vi.mock("./db", () => ({ getDb: mocks.getDb, getUserById: mocks.getUserById }));
 vi.mock("./saas", () => ({
   isUserAccessActive: vi.fn(async () => true),
   hasModulePermission: mocks.hasModulePermission,
@@ -21,17 +22,19 @@ import {
   inboxMessages,
   inboxSummaries,
 } from "../drizzle/intelligentInboxSchema";
-const ctx = (studioId = 10, role = "admin") =>
+const ctx = (studioId = 10, role = "superadmin") =>
   ({
-    user: { id: 5, role, studioId, isActive: 1, artistId: 7 },
+    user: { id: 5, openId: "owner", email: "owner@example.test", role, studioId, isActive: 1, artistId: 7 },
     studioId: 999,
   }) as any;
 beforeEach(() => {
   vi.clearAllMocks();
+  ENV.authMode = "local";
+  vi.stubEnv("LOCAL_ADMIN_EMAIL", "owner@example.test");
   mocks.listUserPermissions.mockResolvedValue([]);
   mocks.hasModulePermission.mockResolvedValue(false);
 });
-describe("Central Inteligente somente leitura", () => {
+describe("Central Inteligente privada", () => {
   it("retorna indicadores zerados quando não há banco ou integração", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const result = await intelligentInboxRouter.createCaller(ctx()).dashboard();
@@ -75,35 +78,29 @@ describe("Central Inteligente somente leitura", () => {
         .conversations({ limit: 25, studioId: 20 } as any)
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
-  it("usa exclusivamente o estúdio da sessão na verificação RBAC", async () => {
-    await expect(
-      intelligentInboxRouter.createCaller(ctx(10, "collaborator")).dashboard()
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mocks.hasModulePermission).toHaveBeenCalledWith({
-      userId: 5,
-      studioId: 10,
-      module: "intelligent_inbox",
-      write: false,
-    });
+  it.each(["admin", "collaborator", "user"])("nega %s mesmo com todas as permissões RBAC", async role => {
+    mocks.hasModulePermission.mockResolvedValue(true);
+    mocks.listUserPermissions.mockResolvedValue([{module: "intelligent_inbox", canRead: 1, canWrite: 1}]);
+    const c = intelligentInboxRouter.createCaller(ctx(10, role));
+    const calls = [() => c.access(), () => c.status(), () => c.dashboard(),
+      () => c.conversations({limit: 10}), () => c.messages({conversationId: 1, limit: 10}),
+      () => c.settings(), () => c.summaries({limit: 10}), () => c.priorities({limit: 10}),
+      () => c.opportunities({limit: 10}), () => c.clientContext({clientId: 1}),
+      () => c.suggestedReply({conversationId: 1}), () => c.configure(),
+      () => c.generateSuggestedReply({conversationId: 1}),
+      () => c.sendReply({conversationId: 1, text: "Oi", requestId: "550e8400-e29b-41d4-a716-446655440000"})];
+    for (const call of calls) await expect(call()).rejects.toMatchObject({code: "FORBIDDEN"});
+    expect(mocks.getDb).not.toHaveBeenCalled();
   });
-  it("trocar a sessão de estúdio altera o escopo e não reutiliza a permissão anterior", async () => {
-    mocks.hasModulePermission.mockImplementation(async p => p.studioId === 10);
-    await intelligentInboxRouter
-      .createCaller(ctx(10, "collaborator"))
-      .dashboard();
-    await expect(
-      intelligentInboxRouter.createCaller(ctx(20, "collaborator")).dashboard()
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  it("nega outro superadmin e permite apenas resposta manual ao proprietário", async () => {
+    const other = ctx(); other.user.email = "other@example.test";
+    await expect(intelligentInboxRouter.createCaller(other).dashboard()).rejects.toMatchObject({code: "FORBIDDEN"});
+    const access = await intelligentInboxRouter.createCaller(ctx()).access();
+    expect(access.permissions.filter(p => p.canWrite).map(p => p.module)).toEqual(["inbox_conversations"]);
   });
-  it("permissão de visão geral não libera conversas nem configurações", async () => {
-    mocks.hasModulePermission.mockImplementation(
-      async p => p.module === "intelligent_inbox"
-    );
-    const c = intelligentInboxRouter.createCaller(ctx(10, "collaborator"));
-    await expect(c.conversations({ limit: 25 })).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-    await expect(c.settings()).rejects.toMatchObject({ code: "FORBIDDEN" });
+  it("nega se a identidade proprietária não estiver configurada", async () => {
+    vi.stubEnv("LOCAL_ADMIN_EMAIL", "");
+    await expect(intelligentInboxRouter.createCaller(ctx()).status()).rejects.toMatchObject({code: "FORBIDDEN"});
   });
   it("ler sugestões não permite gerá-las", async () => {
     mocks.hasModulePermission.mockImplementation(async p => !p.write);

@@ -1,3 +1,4 @@
+import { isOutboundMessagingBlocked } from "./outboundSafety";
 import { processPendingIntegrationJobs } from "./service";
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -68,6 +69,10 @@ export function createIntegrationJobWorker(options: IntegrationJobWorkerOptions 
 const integrationJobWorker = createIntegrationJobWorker();
 
 export function startIntegrationJobWorker() {
+  if (isOutboundMessagingBlocked()) {
+    console.log("[Messaging worker] Envio bloqueado neste ambiente; fila preservada.");
+    return;
+  }
   integrationJobWorker.start();
   console.log("[Messaging worker] Processamento da fila ativo a cada 15 segundos.");
 }

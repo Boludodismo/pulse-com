@@ -1,3 +1,4 @@
+import { isOutboundMessagingBlocked, OUTBOUND_BLOCKED_ERROR } from "../outboundSafety";
 import type { WhatsAppProvider, SendMessageResult, TestConnectionResult, ProviderConfig } from "../provider";
 
 /**
@@ -17,6 +18,7 @@ export class ZApiProvider implements WhatsAppProvider {
   }
 
   async sendMessage(to: string, message: string): Promise<SendMessageResult> {
+    if (isOutboundMessagingBlocked()) return { success: false, error: OUTBOUND_BLOCKED_ERROR };
     try {
       const phone = to.replace(/[\s\-\+\(\)]/g, "");
 

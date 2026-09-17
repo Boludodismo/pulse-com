@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { TRPCClientError } from "@trpc/client";
@@ -11,6 +12,7 @@ type UseAuthOptions = {
 export function useAuth(options?: UseAuthOptions) {
   const { redirectOnUnauthenticated = false, redirectPath } = options ?? {};
   const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
@@ -35,10 +37,12 @@ export function useAuth(options?: UseAuthOptions) {
       }
       throw error;
     } finally {
+      await queryClient.cancelQueries();
+      queryClient.clear();
       utils.auth.me.setData(undefined, null);
       await utils.auth.me.invalidate();
     }
-  }, [logoutMutation, utils]);
+  }, [logoutMutation, utils, queryClient]);
 
   const state = useMemo(() => {
     localStorage.setItem(

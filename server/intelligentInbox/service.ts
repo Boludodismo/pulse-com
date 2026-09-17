@@ -1,22 +1,23 @@
-import { and, desc, eq } from "drizzle-orm";
+import { isPrivateInboxOwner } from "./access";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { clients, inboxConversations, inboxMessages, inboxSyncState, whatsappIntegrations } from "../../drizzle/schema";
 import { emptyInboxMetrics } from "../../shared/intelligentInbox";
-import { getDb } from "../db";
+import { getDb, getUserById } from "../db";
 import { normalizeBrazilianPhone } from "../messaging/phone";
 
 const now = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
 export function inboxStatus(connected = false) {
-  return { requestedEnabled: true, operational: connected, status: connected ? "connected" as const : "not_configured" as const, phase: "readonly" as const, botConversaConnected: connected, aiConnected: false, webhookActive: connected, syncActive: connected, summaryJobActive: false, readOnly: true as const };
+  return { requestedEnabled: true, operational: connected, status: connected ? "connected" as const : "not_configured" as const, phase: "manual" as const, botConversaConnected: connected, aiConnected: false, webhookActive: connected, syncActive: connected, summaryJobActive: false, readOnly: false as const };
 }
 
-async function activeIntegration(studioId: number) {
+async function activeIntegration(studioId: number, ownerUserId: number) {
   const db = await getDb();
   if (!db) return null;
-  return (await db.select().from(whatsappIntegrations).where(and(eq(whatsappIntegrations.studioId, studioId), eq(whatsappIntegrations.provider, "botconversa"), eq(whatsappIntegrations.isEnabled, 1), eq(whatsappIntegrations.status, "ativo"))).orderBy(desc(whatsappIntegrations.updatedAt)).limit(1))[0] ?? null;
+  return (await db.select().from(whatsappIntegrations).where(and(eq(whatsappIntegrations.studioId, studioId), eq(whatsappIntegrations.productionActivatedByUserId, ownerUserId), eq(whatsappIntegrations.provider, "botconversa"), eq(whatsappIntegrations.isEnabled, 1), eq(whatsappIntegrations.status, "ativo"))).orderBy(desc(whatsappIntegrations.updatedAt)).limit(1))[0] ?? null;
 }
 
-export async function readonlyInboxStatus(studioId: number) { return inboxStatus(!!(await activeIntegration(studioId))); }
+export async function readonlyInboxStatus(studioId: number, ownerUserId: number) { return inboxStatus(!!(await activeIntegration(studioId, ownerUserId))); }
 
 function classify(text: string) {
   const value = text.toLocaleLowerCase("pt-BR");
@@ -34,6 +35,16 @@ function classify(text: string) {
 export async function ingestReadonlyMessage(input: { studioId: number; integrationId: number; eventId: string; phone: string; text: string; clientName?: string; messageAt?: string }) {
   const db = await getDb();
   if (!db) return { stored: false };
+  const integration = (await db.select().from(whatsappIntegrations).where(and(
+    eq(whatsappIntegrations.id, input.integrationId), eq(whatsappIntegrations.studioId, input.studioId),
+    eq(whatsappIntegrations.provider, "botconversa"), eq(whatsappIntegrations.isEnabled, 1),
+    eq(whatsappIntegrations.status, "ativo"),
+  )).limit(1))[0];
+  // No fallback to another studio/account or to a legacy unowned connection.
+  const owner = integration?.productionActivatedByUserId
+    ? await getUserById(integration.productionActivatedByUserId) : null;
+  if (!isPrivateInboxOwner(owner)) return { stored: false };
+
   const phone = normalizeBrazilianPhone(input.phone);
   const timestamp = input.messageAt ?? now();
   let sync = (await db.select().from(inboxSyncState).where(and(eq(inboxSyncState.studioId, input.studioId), eq(inboxSyncState.integrationId, input.integrationId))).limit(1))[0];
@@ -61,34 +72,44 @@ export async function ingestReadonlyMessage(input: { studioId: number; integrati
   return { stored: !duplicate, conversationId: conversation.id };
 }
 
-export async function inboxDashboard(studioId: number) {
-  const db = await getDb(); const status = await readonlyInboxStatus(studioId); const metrics = emptyInboxMetrics();
+/** A studio alone is not an authorization boundary for private conversations. */
+export function privateConversationScope(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, studioId: number, ownerUserId: number) {
+  return and(eq(inboxConversations.studioId, studioId), inArray(inboxConversations.syncStateId,
+    db.select({ id: inboxSyncState.id }).from(inboxSyncState)
+      .innerJoin(whatsappIntegrations, and(eq(inboxSyncState.integrationId, whatsappIntegrations.id), eq(inboxSyncState.studioId, whatsappIntegrations.studioId)))
+      .where(and(eq(inboxSyncState.studioId, studioId), eq(whatsappIntegrations.productionActivatedByUserId, ownerUserId),
+        eq(whatsappIntegrations.provider, "botconversa"), eq(whatsappIntegrations.isEnabled, 1), eq(whatsappIntegrations.status, "ativo")))
+  ));
+}
+
+export async function inboxDashboard(studioId: number, ownerUserId: number) {
+  const db = await getDb(); const status = await readonlyInboxStatus(studioId, ownerUserId); const metrics = emptyInboxMetrics();
   if (!db || !status.operational) return { status, metrics, period: null, lastProcessedAt: null };
-  const rows = await db.select().from(inboxConversations).where(eq(inboxConversations.studioId, studioId)); metrics.moved = rows.length;
+  const rows = await db.select().from(inboxConversations).where(privateConversationScope(db, studioId, ownerUserId)); metrics.moved = rows.length;
   for (const row of rows) { if (row.classification === "needs_reply") metrics.needsReply++; if (row.classification === "quote_request") metrics.quotes++; if (row.classification === "reschedule") metrics.reschedules++; if (row.classification === "cancellation") metrics.cancellations++; if (row.classification === "waiting_information") metrics.waitingInformation++; if (row.classification === "reference_received") metrics.references++; if (row.classification === "high_purchase_intent") metrics.opportunities++; if (row.classification === "complaint") metrics.complaints++; if (row.priority === "HIGH" || row.priority === "URGENT") metrics.highPriority++; if (row.status === "resolved") metrics.resolved++; }
   return { status, metrics, period: "all", lastProcessedAt: rows.map(r => r.lastProcessedAt).filter(Boolean).sort().at(-1) ?? null };
 }
 
-export async function listInboxConversations(studioId: number, filters: { limit: number; cursor?: number; search?: string; classification?: string; priority?: string; clientId?: number }) {
+export async function listInboxConversations(studioId: number, ownerUserId: number, filters: { limit: number; cursor?: number; search?: string; classification?: string; priority?: string; clientId?: number }) {
   const db = await getDb(); if (!db) return { items: [], nextCursor: null, status: inboxStatus(false) };
-  let rows = await db.select().from(inboxConversations).where(eq(inboxConversations.studioId, studioId)).orderBy(desc(inboxConversations.lastInteractionAt), desc(inboxConversations.id)).limit(500);
+  let rows = await db.select().from(inboxConversations).where(privateConversationScope(db, studioId, ownerUserId)).orderBy(desc(inboxConversations.lastInteractionAt), desc(inboxConversations.id)).limit(500);
   if (filters.cursor) rows = rows.filter(row => row.id < filters.cursor!);
   if (filters.search) { const q = filters.search.toLocaleLowerCase("pt-BR"); rows = rows.filter(row => `${row.clientName ?? ""} ${row.phone ?? ""} ${row.summary ?? ""}`.toLocaleLowerCase("pt-BR").includes(q)); }
   if (filters.classification) rows = rows.filter(row => row.classification === filters.classification); if (filters.priority) rows = rows.filter(row => row.priority === filters.priority); if (filters.clientId) rows = rows.filter(row => row.clientId === filters.clientId);
-  const items = rows.slice(0, filters.limit); return { items, nextCursor: rows.length > filters.limit ? items.at(-1)?.id ?? null : null, status: await readonlyInboxStatus(studioId) };
+  const items = rows.slice(0, filters.limit); return { items, nextCursor: rows.length > filters.limit ? items.at(-1)?.id ?? null : null, status: await readonlyInboxStatus(studioId, ownerUserId) };
 }
 
-export async function listInboxMessages(studioId: number, conversationId: number, limit: number, cursor?: number) {
+export async function listInboxMessages(studioId: number, ownerUserId: number, conversationId: number, limit: number, cursor?: number) {
   const db = await getDb(); if (!db) return { items: [], nextCursor: null, status: inboxStatus(false) };
-  const conversation = (await db.select({ id: inboxConversations.id }).from(inboxConversations).where(and(eq(inboxConversations.studioId, studioId), eq(inboxConversations.id, conversationId))).limit(1))[0];
-  if (!conversation) return { items: [], nextCursor: null, status: await readonlyInboxStatus(studioId) };
+  const conversation = (await db.select({ id: inboxConversations.id }).from(inboxConversations).where(and(privateConversationScope(db, studioId, ownerUserId), eq(inboxConversations.id, conversationId))).limit(1))[0];
+  if (!conversation) return { items: [], nextCursor: null, status: await readonlyInboxStatus(studioId, ownerUserId) };
   let rows = await db.select().from(inboxMessages).where(and(eq(inboxMessages.studioId, studioId), eq(inboxMessages.conversationId, conversationId))).orderBy(desc(inboxMessages.id)).limit(500); if (cursor) rows = rows.filter(row => row.id < cursor);
-  const items = rows.slice(0, limit); return { items, nextCursor: rows.length > limit ? items.at(-1)?.id ?? null : null, status: await readonlyInboxStatus(studioId) };
+  const items = rows.slice(0, limit); return { items, nextCursor: rows.length > limit ? items.at(-1)?.id ?? null : null, status: await readonlyInboxStatus(studioId, ownerUserId) };
 }
 
-export async function inboxSettings(studioId: number) {
-  const integration = await activeIntegration(studioId); const db = await getDb(); const sync = db && integration ? (await db.select().from(inboxSyncState).where(and(eq(inboxSyncState.studioId, studioId), eq(inboxSyncState.integrationId, integration.id))).limit(1))[0] : null;
-  return { provider: "BotConversa", name: integration?.name ?? null, status: integration ? "connected" : "not_configured", externalId: integration ? String(integration.id) : null, connectedAt: sync?.connectedAt ?? null, lastSyncAt: sync?.lastSyncAt ?? null, webhookConfigured: !!integration, syncActive: !!integration, intelligentSummaryActive: false, summaryIntervalMinutes: 60, editable: false, readOnly: true };
+export async function inboxSettings(studioId: number, ownerUserId: number) {
+  const integration = await activeIntegration(studioId, ownerUserId); const db = await getDb(); const sync = db && integration ? (await db.select().from(inboxSyncState).where(and(eq(inboxSyncState.studioId, studioId), eq(inboxSyncState.integrationId, integration.id))).limit(1))[0] : null;
+  return { provider: "BotConversa", name: integration?.name ?? null, status: integration ? "connected" : "not_configured", externalId: integration ? String(integration.id) : null, connectedAt: sync?.connectedAt ?? null, lastSyncAt: sync?.lastSyncAt ?? null, webhookConfigured: !!integration, syncActive: !!integration, intelligentSummaryActive: false, summaryIntervalMinutes: 60, editable: false, readOnly: false };
 }
 
 export function disabledInboxOperation() { return { accepted: false as const, reason: "read_only" as const, message: "Central em modo somente leitura. Nenhuma resposta será enviada." }; }
