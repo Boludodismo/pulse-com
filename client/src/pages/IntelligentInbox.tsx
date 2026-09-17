@@ -35,17 +35,19 @@ const formatDate = (value?: string | null) => value ? new Date(value.replace(" "
 
 export default function IntelligentInbox() {
   const { user } = useAuth();
+  const eligible = !!user?.canAccessPrivateInbox && !!user?.studioId;
   const [section, setSection] = useState("overview");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const access = trpc.intelligentInbox.access.useQuery(undefined, { enabled: !!user?.studioId, retry: false });
+  const access = trpc.intelligentInbox.access.useQuery(undefined, { enabled: eligible, retry: false });
   const can = (module: InboxModule) => !!access.data?.permissions.find(p => p.module === module)?.canRead;
-  const dashboard = trpc.intelligentInbox.dashboard.useQuery(undefined, { enabled: !!user?.studioId, refetchInterval: 30000 });
-  const settings = trpc.intelligentInbox.settings.useQuery(undefined, { enabled: !!user?.studioId && section === "settings" });
+  const dashboard = trpc.intelligentInbox.dashboard.useQuery(undefined, { enabled: eligible && can("intelligent_inbox"), refetchInterval: 30000 });
+  const settings = trpc.intelligentInbox.settings.useQuery(undefined, { enabled: eligible && can("inbox_settings") && section === "settings" });
   const filters = filterFor(section);
-  const conversations = trpc.intelligentInbox.conversations.useQuery({ limit: 50, search: search || undefined, ...filters }, { enabled: !!user?.studioId && !!access.data && can("inbox_conversations") && !["settings", "history"].includes(section), refetchInterval: 15000 });
-  const messages = trpc.intelligentInbox.messages.useQuery({ conversationId: selectedId ?? 0, limit: 50 }, { enabled: !!selectedId });
+  const conversations = trpc.intelligentInbox.conversations.useQuery({ limit: 50, search: search || undefined, ...filters }, { enabled: eligible && !!access.data && can("inbox_conversations") && !["settings", "history"].includes(section), refetchInterval: 15000 });
+  const messages = trpc.intelligentInbox.messages.useQuery({ conversationId: selectedId ?? 0, limit: 50 }, { enabled: eligible && can("inbox_conversations") && !!selectedId });
 
+  if (!user?.canAccessPrivateInbox) return <p role="alert" className="p-4">A Central está disponível somente para a conta proprietária.</p>;
   if (!user?.studioId) return <p className="p-4">Selecione uma empresa ativa para abrir a Central Inteligente.</p>;
   if (access.isLoading) return <p role="status" className="p-4">Verificando acesso…</p>;
   if (access.error || !can("intelligent_inbox")) return <section className="p-4"><h1 className="text-2xl font-bold">Central Inteligente</h1><p role="alert">Você não tem acesso à Central Inteligente deste estúdio.</p></section>;
