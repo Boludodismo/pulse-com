@@ -1,3 +1,4 @@
+import { isOutboundMessagingBlocked, OUTBOUND_BLOCKED_ERROR } from "../outboundSafety";
 import type { WhatsAppProvider, SendMessageResult, TestConnectionResult, ProviderConfig } from "../provider";
 
 /**
@@ -16,6 +17,7 @@ export class MetaProvider implements WhatsAppProvider {
   }
 
   async sendMessage(to: string, message: string): Promise<SendMessageResult> {
+    if (isOutboundMessagingBlocked()) return { success: false, error: OUTBOUND_BLOCKED_ERROR };
     try {
       // Meta exige número com código do país, sem +
       const phone = to.replace(/[\s\-\+\(\)]/g, "");
