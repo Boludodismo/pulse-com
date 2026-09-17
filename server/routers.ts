@@ -1,3 +1,4 @@
+import { isPrivateInboxOwner } from "./intelligentInbox/access";
 import { clientBirthDate, clientPersonalPrefill } from "../shared/clientPersonal";
 import { parseAnamneseExpiry } from "./anamneseTime";
 import { issuePilotInvitation, inspectPilotInvitation, registerPilot, pilotToken, pilotRegistration } from "./pilotInvitations";
@@ -194,7 +195,7 @@ export const appRouter = router({
       if (!opts.ctx.user) return null;
       const { passwordHash: _secret, ...safeUser } = opts.ctx.user;
       const studio = safeUser.studioId ? await db.getStudioById(safeUser.studioId) : null;
-      return { ...safeUser, studioName: studio?.name ?? null };
+      return { ...safeUser, studioName: studio?.name ?? null, canAccessPrivateInbox: isPrivateInboxOwner(safeUser) };
     }),
     setActiveStudio: protectedProcedure
       .input(z.object({ studioId: z.number().int().positive() }))
