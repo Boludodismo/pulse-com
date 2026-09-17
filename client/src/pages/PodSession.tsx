@@ -1,3 +1,4 @@
+import SessionWorkspace from "@/components/session/SessionWorkspace";
 import ConsumeMaterialBatch from "@/components/ConsumeMaterialBatch";
 import { useState, useEffect, useRef, useCallback } from "react";
 import React, { type ReactNode } from "react";
@@ -323,7 +324,7 @@ export default function PodSession() {
 
   useEffect(() => {
     if (!referenceFullscreen) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setReferenceFullscreen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[role="dialog"]')) setReferenceFullscreen(false); };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [referenceFullscreen]);
@@ -339,14 +340,11 @@ export default function PodSession() {
 
   // ── Controles do timer ───────────────────────────────────────────────────
   const handleStart = () => {
-    startTimeRef.current = Date.now();
-    timerMutation.mutate({ id: procedureId, action: "start" });
-    setIsRunning(true);
+    timerMutation.mutate({ id: procedureId, action: "start" }, { onSuccess: () => { startTimeRef.current = Date.now(); setIsRunning(true); } });
   };
 
   const handlePause = () => {
-    setIsRunning(false);
-    startPauseMutation.mutate({ procedureId });
+    startPauseMutation.mutate({ procedureId }, { onSuccess: () => setIsRunning(false) });
   };
 
   const handleResume = () => {
@@ -501,6 +499,7 @@ export default function PodSession() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {referenceFullscreen && <SessionWorkspace procedureId={procedureId} studioId={procedure.studioId} clientId={procedure.clientId} artistId={procedure.artistId ?? undefined} title={procedure.title} elapsed={formatTime(elapsed)} running={isRunning} finished={isFinished} timerBusy={timerMutation.isPending || startPauseMutation.isPending || resumePauseMutation.isPending} onTimer={isNew ? handleStart : isPaused ? handleResume : handlePause} onClose={() => { if (document.fullscreenElement) void document.exitFullscreen(); setReferenceFullscreen(false); }} images={images} originalSrc={referenceImage?.imageUrl} stencilSrc={stencilImage?.imageUrl} /> }
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="border-b bg-card px-3 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-3 sticky top-0 z-40">
         <Button
@@ -580,7 +579,7 @@ export default function PodSession() {
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
 
         {/* ── Coluna esquerda: imagem + timer ──────────────────────────── */}
-        <div className={referenceFullscreen ? "fixed inset-0 z-[100] flex flex-col bg-background" : "lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r"}>
+        <div className="lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r">
 
           {/* Timer */}
           <div className="bg-card border-b px-4 py-3 flex items-center justify-between gap-3">
@@ -598,7 +597,7 @@ export default function PodSession() {
             </div>
 
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span className="hidden sm:inline">{referenceFullscreen ? "Sair da tela cheia" : "Tela cheia"}</span></Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span className="hidden sm:inline">{referenceFullscreen ? "Sair do Modo Sessão" : "Modo Sessão"}</span></Button>
               {isNew && (
                 <Button size="sm" onClick={handleStart} className="gap-1.5 bg-green-600 hover:bg-green-700">
                   <Play className="w-4 h-4" />
