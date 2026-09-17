@@ -1,3 +1,4 @@
+import { importTestInventory } from "../inventoryTestImport";
 import { resolveProcedureArtist } from "../procedureArtist";
 import { appointmentKitsRouter } from "./appointmentKits";
 import { createHash } from "node:crypto";
@@ -225,6 +226,10 @@ export const podSaasRouter = router({
   }),
 
   inventory: router({
+    importTestCatalog: tenantProcedure.input(z.object({artistId:z.number().int().positive(),offset:z.number().int().min(0).max(TECHNICAL_CATALOG_2026.length-1)})).mutation(async ({ctx,input})=>{
+      await requireModule(ctx,"stock",true);
+      return importTestInventory(await requireDatabase(),ctx,input);
+    }),
     loans: inventoryLoansRouter,
     notices: inventoryNoticesRouter,
     list: tenantProcedure.input(z.object({ artistId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {
