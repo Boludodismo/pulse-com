@@ -15,3 +15,14 @@ Exemplos: Skin Ink RL/Fine Line R$189/20 = R$9,45/un; BIG R$189/10 = R$18,90/un;
 Novos registros pertencem ao artista escolhido; cada entrada recebe histórico e identificação de teste. Cartuchos: 20 un, mínimo 5. Líquidos: apresentação do catálogo ou ao menos 30 ml. Demais consumíveis: apresentação ou ao menos 10 unidades-base. Mínimo inicial: 25%. Equipamentos: 2 un, mínimo 1. Valores são convenções de teste, não previsão de consumo real.
 
 Registros existentes de mesma marca/linha/SKU são preservados, inclusive inativos. Saldos não são repostos ao repetir. Custos zero são preenchidos uma única vez com movimentação sem alteração de quantidade; custos positivos, mínimos existentes, proprietário e fornecimento permanecem. Cada bloco de 25 referências é transacional, com lock do estúdio para evitar duplicação entre importações simultâneas. Não há alteração de mensagens, lembretes ou aniversários.
+
+## Complemento de sessão autorizado em 17/09/2026
+
+- Importação opcional `profile=session`, reutilizando transação, autorização e trilha do importador. Dez referências adicionais com identidades por SKU e embalagem. Repetir não repõe saldos consumidos.
+- Batoques Electric Ink P 500, M 300, G 200; capacidades 0,5/1/2 ml confirmadas no fabricante: https://www.electricink.com.br/inkcap-batoquesdesiliconerosa/p . Estimativa por unidade baseada no P 500 a R$61,50; M/G são comparáveis, não cotações exatas.
+- Vaselina Slip Premium 800 g, estimativa R$85/pote observada em https://www.blackhousetattooshop.com.br/ . Saída inicial 20 g, escolhida pelo proprietário como parâmetro operacional de teste.
+- Seis frascos 240 ml: Preto Linha, Preto Tribal, Raven Black, Raven Black Fineline, Ultra Liner Black, Ultra Tribal Black (Dark Vader). Novos SKUs por volume preservam os registros anteriores com volume não especificado. Preço por ml continua estimativa comparável de Raven Black 240 ml, R$272,50/frasco.
+- Fabricante confirma Dark Vader 240 ml: https://www.electricink.com.br/ultra-tribal-black-eg-dark-vader/p . Fineline: https://www.electricink.com.br/raven-black-fineline-eg/p . Fontes de embalagem adicional: https://www.mkinktattoo.com.br/ (Preto Tribal 240), https://www.madhousetattooshop.com.br/ (Ultra Liner Black 240).
+- Dynamic permanece excluída por bloqueio do catálogo existente; não há alteração de controles sanitários.
+- Consumo por toque em unidade base: cartucho 1, luva 1 par, batoque 1, vaselina 20 g, tinta 0,5 ml. Valores são editáveis no atalho; selecionar material não baixa estoque. Consumo mantém vínculo de cliente/sessão e reversão auditada.
+- Zoom direto 20–1000%, giro ±15°, restaurar enquadramento. Bloqueio protege gestos involuntários, mantendo comandos explícitos disponíveis. Barra inferior respeita área segura móvel.

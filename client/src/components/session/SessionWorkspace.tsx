@@ -1,3 +1,4 @@
+import { defaultSessionQuantity } from "@shared/sessionMaterialDefaults";
 import { chooseConsumptionSource } from "./materialShortcut";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -19,6 +20,7 @@ import {
   ChevronDown,
   Trash2,
   RotateCcw,
+  RotateCw,
   ZoomIn,
   ZoomOut,
   Settings2,
@@ -293,14 +295,14 @@ function Workspace(
         )
         .map(p => ({
           materialId: p.tenantMaterialId!,
-          quantity: p.quantityPlanned,
+          quantity: defaultSessionQuantity(materials.find(m => m.id === p.tenantMaterialId) ?? {name:p.nameSnapshot,unit:p.unitSnapshot}),
           configured: false,
         }));
       return additions.length
         ? { ...s, shortcuts: [...s.shortcuts, ...additions] }
         : s;
     });
-  }, [session.data]);
+  }, [session.data, materials]);
   const setPosition = (name: string, p: Point) =>
     setState(s => ({ ...s, positions: { ...s.positions, [name]: p } }));
   const panel = (name: string, title: string, content: ReactNode) => (
@@ -540,8 +542,7 @@ function Workspace(
     baseline();
   };
   const zoom = (factor: number) => {
-    if (!locked)
-      patch({
+    patch({
         view: {
           ...state.view,
           scale: limit(state.view.scale * factor, 0.2, 10),
@@ -678,7 +679,7 @@ function Workspace(
             ...s,
             shortcuts: [
               ...s.shortcuts,
-              { materialId: id, quantity: "1", configured: false },
+              { materialId: id, quantity: defaultSessionQuantity(materials.find(m => m.id === id)), configured: false },
             ],
             hidden: s.hidden.filter(k => k !== `material-${id}`),
           }));
@@ -1037,6 +1038,14 @@ function Workspace(
           </div>
         )}
       </div>
+      <div className="session-view-tools" role="toolbar" aria-label="Enquadramento da referência">
+        <IconButton label="Diminuir zoom" onClick={() => zoom(1 / 1.2)}><ZoomOut size={19} /></IconButton>
+        <output aria-label="Zoom da referência">{Math.round(state.view.scale * 100)}%</output>
+        <IconButton label="Aumentar zoom" onClick={() => zoom(1.2)}><ZoomIn size={19} /></IconButton>
+        <IconButton label="Girar 15 graus à esquerda" onClick={() => patch({view:{...state.view,rotation:state.view.rotation-15}})}><RotateCcw size={19} /></IconButton>
+        <IconButton label="Girar 15 graus à direita" onClick={() => patch({view:{...state.view,rotation:state.view.rotation+15}})}><RotateCw size={19} /></IconButton>
+        <IconButton label="Restaurar enquadramento" onClick={() => patch({view:initialView})}><Minimize2 size={19} /></IconButton>
+      </div>
       <div className="session-panels">
         <FloatingPanel
           title="Ferramentas"
@@ -1081,7 +1090,7 @@ function Workspace(
           </IconButton>
           <IconButton
             label={
-              locked ? "Desbloquear visualização" : "Bloquear visualização"
+              locked ? "Liberar gestos na imagem" : "Bloquear gestos na imagem"
             }
             active={locked}
             onClick={() => {
@@ -1147,36 +1156,6 @@ function Workspace(
                   onChange={e => patch({ opacity: Number(e.target.value) })}
                 />
               </label>
-              <div className="session-row">
-                <IconButton
-                  label="Diminuir zoom"
-                  disabled={locked}
-                  onClick={() => zoom(0.85)}
-                >
-                  <ZoomOut />
-                </IconButton>
-                <IconButton
-                  label="Aumentar zoom"
-                  disabled={locked}
-                  onClick={() => zoom(1.15)}
-                >
-                  <ZoomIn />
-                </IconButton>
-                <IconButton
-                  label="Girar visualização"
-                  disabled={locked}
-                  onClick={() =>
-                    patch({
-                      view: {
-                        ...state.view,
-                        rotation: state.view.rotation + 15,
-                      },
-                    })
-                  }
-                >
-                  <RotateCcw />
-                </IconButton>
-              </div>
               <button
                 onClick={() =>
                   patch({ positions: initialSettings.positions, compact: true })

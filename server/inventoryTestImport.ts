@@ -1,3 +1,4 @@
+import { SESSION_TEST_SUPPLIES } from '../shared/sessionTestSupplies';
 import { TRPCError } from '@trpc/server';
 import { and, eq } from 'drizzle-orm';
 import { tenantMaterials, tenantInventoryMovements, studios } from '../drizzle/schema';
@@ -5,7 +6,7 @@ import { TECHNICAL_CATALOG_2026, canAddCatalogItemToOperationalStock } from '../
 import { catalogIdentity, estimatePrice, readTestMetadata, testStock, TEST_CATALOG_VERSION, TEST_STOCK_REASON } from '../shared/inventoryTestCatalog';
 import { isInventoryManager, requireInventoryArtist, type InventoryContext, type InventoryDatabase } from './inventoryAccess';
 
-export async function importTestInventory(database:InventoryDatabase, ctx:InventoryContext & {user:{role:string;id:number}}, input:{artistId:number;offset:number}) {
+export async function importTestInventory(database:InventoryDatabase, ctx:InventoryContext & {user:{role:string;id:number}}, input:{artistId:number;offset:number;profile?:'session'}) {
  if(!isInventoryManager(ctx))throw new TRPCError({code:'FORBIDDEN',message:'Somente o administrador pode importar o estoque de teste.'});
  await requireInventoryArtist(database,ctx.studioId,input.artistId);
  return database.transaction(async tx=>{
@@ -13,9 +14,10 @@ export async function importTestInventory(database:InventoryDatabase, ctx:Invent
    // Include inactive records: a repeat import must never recreate archived test items.
    const existing=await tx.select().from(tenantMaterials).where(eq(tenantMaterials.studioId,ctx.studioId)).for('update');
    let created=0,preserved=0,priced=0,blocked=0;
-   const end=Math.min(input.offset+25,TECHNICAL_CATALOG_2026.length);
+   const catalog=input.profile==='session'?SESSION_TEST_SUPPLIES:TECHNICAL_CATALOG_2026;
+   const end=Math.min(input.offset+25,catalog.length);
    for(let index=input.offset;index<end;index++){
-     const item=TECHNICAL_CATALOG_2026[index];
+     const item=catalog[index];
      if(!canAddCatalogItemToOperationalStock(item)){blocked++;continue;}
      const identity=catalogIdentity(item),price=estimatePrice(item),stock=testStock(item);
      const found=existing.find(m=>readTestMetadata(m.notes).testCatalogIdentity===identity || catalogIdentity({brandName:m.brand??'',lineName:m.line??'',sku:m.model,name:m.name})===identity);
@@ -40,6 +42,6 @@ export async function importTestInventory(database:InventoryDatabase, ctx:Invent
      existing.push({id,notes,brand:item.brandName,line:item.lineName,model:item.sku,name:item.name} as typeof existing[number]);
      created++;
    }
-   return {nextOffset:end,total:TECHNICAL_CATALOG_2026.length,created,preserved,priced,blocked};
+   return {nextOffset:end,total:catalog.length,created,preserved,priced,blocked};
  });
 }

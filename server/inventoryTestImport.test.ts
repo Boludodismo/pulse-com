@@ -42,3 +42,19 @@ describe('audited test import',()=>{
    expect((await importTestInventory(f.db,ctx,{artistId:7,offset:908})).created).toBe(0);
  });
 });
+
+describe('session package supplement',()=>{
+ it('imports full packages once, retains consumption on repeat and excludes blocked brands',async()=>{
+  const f=fixture();
+  expect((await importTestInventory(f.db,ctx,{artistId:7,offset:0,profile:'session'})).created).toBe(10);
+  expect(f.records.filter(x=>x.brand==='Dynamic')).toHaveLength(0);
+  expect(f.records.find(x=>x.model==='EI-INKCAP-P').currentQuantity).toBe('500.000');
+  expect(f.records.find(x=>x.model==='EI-INKCAP-M').currentQuantity).toBe('300.000');
+  expect(f.records.find(x=>x.model==='EI-INKCAP-G').currentQuantity).toBe('200.000');
+  expect(f.records.find(x=>x.model==='EI-SLIP-PREMIUM-800').currentQuantity).toBe('800.000');
+  expect(f.records.filter(x=>x.unit==='ml').every(x=>x.currentQuantity==='240.000')).toBe(true);
+  f.records[0].currentQuantity='499.000';
+  expect((await importTestInventory(f.db,ctx,{artistId:7,offset:0,profile:'session'})).created).toBe(0);
+  expect(f.records[0].currentQuantity).toBe('499.000');expect(f.movements).toHaveLength(10);
+ });
+});

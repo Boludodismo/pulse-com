@@ -277,3 +277,7 @@
     max-height: calc(100dvh - 124px);
   }
 }
+
+.session-view-tools { position:absolute; z-index:6; bottom:max(8px,env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:2px; padding:4px; border-radius:12px; border:1px solid #ffffff26; background:#18181bd9; backdrop-filter:blur(12px); max-width:calc(100vw - 16px); }
+.session-view-tools output { min-width:38px; text-align:center; font-size:12px; font-variant-numeric:tabular-nums; }
+.session-panels { bottom:calc(68px + env(safe-area-inset-bottom)); }

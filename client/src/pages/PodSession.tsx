@@ -1,3 +1,4 @@
+import { defaultSessionQuantity } from "@shared/sessionMaterialDefaults";
 import SessionWorkspace from "@/components/session/SessionWorkspace";
 import ConsumeMaterialBatch from "@/components/ConsumeMaterialBatch";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -679,12 +680,12 @@ export default function PodSession() {
                         key={item.id}
                         type="button"
                         disabled={!stock || isFinished || consumeTenantMaterialMutation.isPending}
-                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,plannedMaterialId:item.id,quantity:item.quantityPlanned})}
+                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,plannedMaterialId:item.status === "planejado" ? item.id : undefined,quantity:defaultSessionQuantity(stock)})}
                         className={referenceFullscreen
                           ? "group flex min-h-[70px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-black/30 px-1.5 py-2 text-center text-white shadow-lg transition hover:border-white/30 hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                           : "group max-w-[220px] rounded-xl border border-white/20 bg-black/45 px-3 py-2 text-left text-xs text-white shadow-xl backdrop-blur-md transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                         }
-                        title={`Baixar ${item.quantityPlanned} ${item.unitSnapshot} de ${item.nameSnapshot}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
+                        title={`Baixar ${defaultSessionQuantity(stock)} ${item.unitSnapshot} de ${item.nameSnapshot}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
                       >
                         {referenceFullscreen && (
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 text-white">
@@ -701,7 +702,7 @@ export default function PodSession() {
                           ? "block text-[9px] leading-none text-white/70 group-hover:text-white"
                           : "block text-[10px] text-white/75 group-hover:text-white"
                         }>
-                          − {item.quantityPlanned} {item.unitSnapshot}
+                          − {defaultSessionQuantity(stock)} {item.unitSnapshot}
                           {!referenceFullscreen && (stock ? ` · saldo ${stock.currentQuantity}` : " · indisponível")}
                         </span>
                       </button>

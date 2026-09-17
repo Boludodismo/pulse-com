@@ -226,7 +226,7 @@ export const podSaasRouter = router({
   }),
 
   inventory: router({
-    importTestCatalog: tenantProcedure.input(z.object({artistId:z.number().int().positive(),offset:z.number().int().min(0).max(TECHNICAL_CATALOG_2026.length-1)})).mutation(async ({ctx,input})=>{
+    importTestCatalog: tenantProcedure.input(z.object({artistId:z.number().int().positive(),profile:z.literal("session").optional(),offset:z.number().int().min(0).max(TECHNICAL_CATALOG_2026.length-1)})).mutation(async ({ctx,input})=>{
       await requireModule(ctx,"stock",true);
       return importTestInventory(await requireDatabase(),ctx,input);
     }),

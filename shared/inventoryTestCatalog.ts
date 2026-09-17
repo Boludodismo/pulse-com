@@ -5,6 +5,8 @@ export const TEST_STOCK_REASON = 'SALDO FICTÍCIO PARA TESTES — ajustar após 
 export type PriceReference = { label: string; url: string; price: number; quantity: number; unit: string };
 const medina = 'https://medinatattoosupplies.com.br/';
 export const PRICE_REFERENCES: Record<string, PriceReference> = {
+ electricCaps:{label:'Ink Cap Electric Ink P 500 (comparável por unidade para P/M/G)',url:'https://www.electricink.com.br/inkcap-batoquesdesiliconerosa/p',price:61.50,quantity:500,unit:'un'},
+ vaseline:{label:'Vaselina Electric Ink Slip Premium 800 g',url:'https://www.blackhousetattooshop.com.br/',price:85,quantity:800,unit:'g'},
  sulfite:{label:'Chamex A4 500 folhas',url:'https://www.kalunga.com.br/prod/papel-sulfite-a4-75g-210mmx297mm-chamex-pt-500-fl/476102',price:34.50,quantity:500,unit:'folha'},
  bleach:{label:'Cloro Rio 1% 5 L Rioquímica (similar)',url:'https://magazinemedica.com.br/produtos/desinfetante-hipoclorito-de-sodio-1-cloro-rio-rioquimica_5l/',price:48.14,quantity:5000,unit:'ml'},
  stencil:{label:'Transfer GT Stencil 150 ml (similar)',url:medina+'categoria/transfer/',price:45,quantity:150,unit:'ml'},
@@ -62,7 +64,9 @@ export const PRICE_REFERENCES: Record<string, PriceReference> = {
 export function estimatePrice(item: TechnicalCatalogSeedItem) {
  let ref: string | undefined, factor = 1;
  const n = item.name.toLocaleLowerCase(), cat = item.category, brand = item.brandName;
- if (cat === 'Cartuchos e agulhas') {
+ if (item.sku?.startsWith('EI-INKCAP-')) ref='electricCaps';
+ else if (item.sku==='EI-SLIP-PREMIUM-800') ref='vaseline';
+ else if (cat === 'Cartuchos e agulhas') {
    ref = ({'Skin Ink':/big/i.test(item.lineName)?'big':'skin',Peak:'peak',EMALLA:'emalla',EZ:'ez',Dragonhawk:'dragon',Kwadron:'kwadron',Cheyenne:/capillary/i.test(item.lineName)?'capillary':/craft/i.test(item.lineName)?'craft':'cheyenne','Electric Ink':'skin'} as Record<string,string>)[brand];
  } else if(cat === 'Tintas e pigmentos') {
    ref = (item.volumeMl ?? 30) <= 15 ? 'ink15' : (item.volumeMl ?? 30) >= 120 ? 'ink240' : 'ink';
