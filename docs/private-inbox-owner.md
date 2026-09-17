@@ -17,3 +17,7 @@ Contas de artistas e usuários devem ter associação explícita de proprietári
 ## Publicação
 
 Sem migração de banco. Alterações preparadas em branch isolada; produção não é atualizada por criar a PR. Validar em ambiente de teste da versão atual e registrar o commit publicado antes de concluir WIL-19.
+
+
+## Homologação sem envio
+O ambiente Railway staging-custos (92e8281a-668a-43ed-b2ba-cac84082a91c) bloqueia envios nos três provedores e não processa a fila, independentemente de SCHEDULER_MODE. OUTBOUND_MESSAGING_DISABLED=true também bloqueia outros ambientes. Nenhum envio bloqueado é reportado como sucesso. O bloqueio não desativa a leitura da Central.
