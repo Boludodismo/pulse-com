@@ -36,7 +36,7 @@ jobs:
         run: pnpm exec vitest run server/contactImport/matching.test.ts
 
       - name: Private inbox access and connection isolation
-        run: pnpm exec vitest run server/intelligentInbox.test.ts server/privateConnectionAccess.test.ts server/privateInboxScope.test.ts server/messaging/secureWebhook.status.test.ts
+        run: pnpm exec vitest run server/intelligentInbox.test.ts server/privateConnectionAccess.test.ts server/privateInboxScope.test.ts server/messaging/outboundSafety.test.ts server/messaging/secureWebhook.status.test.ts
 
       - name: Reminder delivery regressions
         run: pnpm exec vitest run server/messaging.job-worker.test.ts server/messaging.automatic-reminders.test.ts server/messaging.job-claim.test.ts server/messaging.retry-guard.test.ts server/messaging/appointmentReminderSchedule.test.ts server/messaging.studio-clock.test.ts
