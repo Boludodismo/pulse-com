@@ -1,6 +1,7 @@
+import { assertPrivateConnectionAccess } from "../messaging/privateConnectionAccess";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure, tenantProcedure } from "../_core/trpc";
+import { router, protectedProcedure, tenantProcedure as baseTenantProcedure } from "../_core/trpc";
 import { getDb } from "../db";
 import { saveWhatsappConsent } from "../messaging/consent";
 import {
@@ -21,6 +22,13 @@ import { getOutboundEventIdempotencyKey, getProviderForIntegration, sendAndLog, 
 import { createConnectionKey, encryptIntegrationSecret, maskSecret } from "../messaging/crypto";
 import { normalizeBrazilianPhone } from "../messaging/phone";
 import { resolveManualRecipient } from "../messaging/manualRecipient";
+
+// Metadata, credentials, histories, manual sends and management share the same guard.
+// Reminder badges carry no connection metadata or conversation content.
+const tenantProcedure = baseTenantProcedure.use(async ({ ctx, next }) => {
+  await assertPrivateConnectionAccess(ctx.user, ctx.studioId);
+  return next({ ctx });
+});
 
 function requireIntegrationManager(ctx: { user?: { role?: string } | null }) {
   if (ctx.user?.role !== "admin" && ctx.user?.role !== "superadmin") {
@@ -481,7 +489,7 @@ export const messagingRouter = router({
     }),
 
   /** Indicadores compactos de lembretes já entregues, sempre isolados por estúdio. */
-  getReminderIndicators: tenantProcedure
+  getReminderIndicators: baseTenantProcedure
     .input(z.object({ appointmentIds: z.array(z.number().int().positive()).max(500) }))
     .query(async ({ input, ctx }) => {
       if (input.appointmentIds.length === 0) return {} as Record<number, { sentAt: string | null; types: string[] }>;
