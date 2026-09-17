@@ -147,6 +147,7 @@ function DashboardLayoutContent({
   const invited = isInvitedArtist(user);
   const access = trpc.artistInvitations.access.useQuery(undefined,{enabled:invited});
   const canVisit = (path:string) => {
+    if (path === "/intelligent-inbox") return !!user?.canAccessPrivateInbox;
     if (path === "/saas" || path.startsWith("/saas/")) return user?.role === "superadmin";
     if (!invited) return true;
     const module = artistRouteModule(path);
@@ -271,6 +272,7 @@ function DashboardLayoutContent({
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-1">
               {menuItems
+                .filter(item => item.path !== "/intelligent-inbox" || !!user?.canAccessPrivateInbox)
                 .filter(item => invited ? canVisit(item.path) : !user || item.roles.includes(user.role))
                 .map(item => {
                   const isActive = location === item.path;
