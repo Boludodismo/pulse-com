@@ -147,4 +147,31 @@ export class BotConversaProvider implements WhatsAppProvider {
       return { success: false, error: timedOut ? "Tempo limite excedido ao testar a conexão." : "Falha ao conectar com o BotConversa." };
     }
   }
+
+  /** Manual replies never create contacts, change opt-in or retry a send. */
+  async sendExistingContactReply(to: string, message: string): Promise<{ status: "accepted" | "failed" | "unknown"; messageId?: string; error?: string }> {
+    if (isOutboundMessagingBlocked()) return { status: "failed", error: OUTBOUND_BLOCKED_ERROR };
+    let attempted = false;
+    try {
+      const phone = normalizeBrazilianPhone(to);
+      let response: Response | undefined;
+      for (const candidate of [phone, phone.replace(/\D/g, "")]) {
+        response = await this.request(`/webhook/subscriber/get_by_phone/${encodeURIComponent(candidate)}/`, { method: "GET" });
+        if (response.status !== 404) break;
+      }
+      if (!response?.ok) return { status: "failed", error: "Não foi possível localizar o contato no BotConversa. Confira a conexão e o telefone." };
+      const contact = await response.json() as { id?: string | number };
+      if (!contact.id) return { status: "failed", error: "Contato sem identificador no BotConversa." };
+      attempted = true;
+      const sent = await this.request(`/webhook/subscriber/${encodeURIComponent(String(contact.id))}/send_message/`, {
+        method: "POST", body: JSON.stringify({ type: "text", value: message }),
+      });
+      if (!sent.ok) return { status: sent.status >= 500 || sent.status === 408 ? "unknown" : "failed", error: `BotConversa retornou HTTP ${sent.status}.` };
+      // A successful empty/non-JSON response still means the provider accepted it.
+      const data = await sent.json().catch(() => null);
+      return { status: "accepted", messageId: data?.id?.toString() ?? data?.message_id?.toString() };
+    } catch {
+      return { status: attempted ? "unknown" : "failed", error: "Não foi possível confirmar a resposta do BotConversa." };
+    }
+  }
 }

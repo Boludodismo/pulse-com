@@ -8,7 +8,7 @@ import { normalizeBrazilianPhone } from "../messaging/phone";
 const now = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
 export function inboxStatus(connected = false) {
-  return { requestedEnabled: true, operational: connected, status: connected ? "connected" as const : "not_configured" as const, phase: "readonly" as const, botConversaConnected: connected, aiConnected: false, webhookActive: connected, syncActive: connected, summaryJobActive: false, readOnly: true as const };
+  return { requestedEnabled: true, operational: connected, status: connected ? "connected" as const : "not_configured" as const, phase: "manual" as const, botConversaConnected: connected, aiConnected: false, webhookActive: connected, syncActive: connected, summaryJobActive: false, readOnly: false as const };
 }
 
 async function activeIntegration(studioId: number, ownerUserId: number) {
@@ -73,7 +73,7 @@ export async function ingestReadonlyMessage(input: { studioId: number; integrati
 }
 
 /** A studio alone is not an authorization boundary for private conversations. */
-function privateConversationScope(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, studioId: number, ownerUserId: number) {
+export function privateConversationScope(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, studioId: number, ownerUserId: number) {
   return and(eq(inboxConversations.studioId, studioId), inArray(inboxConversations.syncStateId,
     db.select({ id: inboxSyncState.id }).from(inboxSyncState)
       .innerJoin(whatsappIntegrations, and(eq(inboxSyncState.integrationId, whatsappIntegrations.id), eq(inboxSyncState.studioId, whatsappIntegrations.studioId)))
@@ -109,7 +109,7 @@ export async function listInboxMessages(studioId: number, ownerUserId: number, c
 
 export async function inboxSettings(studioId: number, ownerUserId: number) {
   const integration = await activeIntegration(studioId, ownerUserId); const db = await getDb(); const sync = db && integration ? (await db.select().from(inboxSyncState).where(and(eq(inboxSyncState.studioId, studioId), eq(inboxSyncState.integrationId, integration.id))).limit(1))[0] : null;
-  return { provider: "BotConversa", name: integration?.name ?? null, status: integration ? "connected" : "not_configured", externalId: integration ? String(integration.id) : null, connectedAt: sync?.connectedAt ?? null, lastSyncAt: sync?.lastSyncAt ?? null, webhookConfigured: !!integration, syncActive: !!integration, intelligentSummaryActive: false, summaryIntervalMinutes: 60, editable: false, readOnly: true };
+  return { provider: "BotConversa", name: integration?.name ?? null, status: integration ? "connected" : "not_configured", externalId: integration ? String(integration.id) : null, connectedAt: sync?.connectedAt ?? null, lastSyncAt: sync?.lastSyncAt ?? null, webhookConfigured: !!integration, syncActive: !!integration, intelligentSummaryActive: false, summaryIntervalMinutes: 60, editable: false, readOnly: false };
 }
 
 export function disabledInboxOperation() { return { accepted: false as const, reason: "read_only" as const, message: "Central em modo somente leitura. Nenhuma resposta será enviada." }; }

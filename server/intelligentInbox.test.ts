@@ -34,7 +34,7 @@ beforeEach(() => {
   mocks.listUserPermissions.mockResolvedValue([]);
   mocks.hasModulePermission.mockResolvedValue(false);
 });
-describe("Central Inteligente somente leitura", () => {
+describe("Central Inteligente privada", () => {
   it("retorna indicadores zerados quando não há banco ou integração", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const result = await intelligentInboxRouter.createCaller(ctx()).dashboard();
@@ -87,15 +87,16 @@ describe("Central Inteligente somente leitura", () => {
       () => c.settings(), () => c.summaries({limit: 10}), () => c.priorities({limit: 10}),
       () => c.opportunities({limit: 10}), () => c.clientContext({clientId: 1}),
       () => c.suggestedReply({conversationId: 1}), () => c.configure(),
-      () => c.generateSuggestedReply({conversationId: 1})];
+      () => c.generateSuggestedReply({conversationId: 1}),
+      () => c.sendReply({conversationId: 1, text: "Oi", requestId: "550e8400-e29b-41d4-a716-446655440000"})];
     for (const call of calls) await expect(call()).rejects.toMatchObject({code: "FORBIDDEN"});
     expect(mocks.getDb).not.toHaveBeenCalled();
   });
-  it("nega outro superadmin e não concede gravação ao proprietário", async () => {
+  it("nega outro superadmin e permite apenas resposta manual ao proprietário", async () => {
     const other = ctx(); other.user.email = "other@example.test";
     await expect(intelligentInboxRouter.createCaller(other).dashboard()).rejects.toMatchObject({code: "FORBIDDEN"});
     const access = await intelligentInboxRouter.createCaller(ctx()).access();
-    expect(access.permissions.every(p => p.canRead && !p.canWrite)).toBe(true);
+    expect(access.permissions.filter(p => p.canWrite).map(p => p.module)).toEqual(["inbox_conversations"]);
   });
   it("nega se a identidade proprietária não estiver configurada", async () => {
     vi.stubEnv("LOCAL_ADMIN_EMAIL", "");

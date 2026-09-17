@@ -16,6 +16,6 @@ export function isPrivateInboxOwner(user?: Identity | null): boolean {
 export function assertPrivateInboxOwner(user?: Identity | null) {
   if (!isPrivateInboxOwner(user)) throw new TRPCError({
     code: "FORBIDDEN",
-    message: "A Central está disponível somente para a conta proprietária, em modo de leitura.",
+    message: "A Central está disponível somente para a conta proprietária.",
   });
 }

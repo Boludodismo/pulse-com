@@ -2,6 +2,7 @@ import { z } from "zod";
 import { router, tenantProcedure } from "../_core/trpc";
 import { assertPrivateInboxOwner } from "../intelligentInbox/access";
 import { INBOX_MODULES } from "../../shared/intelligentInbox";
+import { sendManualInboxReply } from "../intelligentInbox/manualReply";
 import {
   inboxStatus,
   readonlyInboxStatus,
@@ -39,11 +40,16 @@ export const intelligentInboxRouter = router({
       permissions: INBOX_MODULES.map(module => ({
         module,
         canRead: true,
-        canWrite: false,
+        canWrite: module === "inbox_conversations",
       })),
     };
   }),
   status: privateInboxProcedure.query(({ ctx }) => readonlyInboxStatus(ctx.studioId, ctx.user.id)),
+  sendReply: privateInboxProcedure.input(z.strictObject({
+    conversationId: z.number().int().positive(),
+    text: z.string().trim().min(1).max(4000),
+    requestId: z.uuid(),
+  })).mutation(({ ctx, input }) => sendManualInboxReply(ctx.studioId, ctx.user.id, input)),
   dashboard: privateInboxProcedure.query(({ ctx }) => inboxDashboard(ctx.studioId, ctx.user.id)),
   conversations: privateInboxProcedure
     .input(page)
