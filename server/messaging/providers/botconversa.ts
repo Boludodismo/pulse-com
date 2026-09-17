@@ -1,3 +1,4 @@
+import { isOutboundMessagingBlocked, OUTBOUND_BLOCKED_ERROR } from "../outboundSafety";
 import type { WhatsAppProvider, SendMessageResult, TestConnectionResult, ProviderConfig } from "../provider";
 import { normalizeBrazilianPhone } from "../phone";
 
@@ -41,6 +42,7 @@ export class BotConversaProvider implements WhatsAppProvider {
   }
 
   async sendMessage(to: string, message: string): Promise<SendMessageResult> {
+    if (isOutboundMessagingBlocked()) return { success: false, error: OUTBOUND_BLOCKED_ERROR };
     try {
       // A API do BotConversa recebe E.164 completo, incluindo o sinal de +.
       const normalizedDigits = normalizeBrazilianPhone(to).replace(/\D/g, "");
