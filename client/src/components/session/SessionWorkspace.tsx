@@ -1,3 +1,4 @@
+import { chooseConsumptionSource } from "./materialShortcut";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -335,10 +336,6 @@ function Workspace(
       setNotice("Vincule o artista responsável antes de consumir materiais.");
       return;
     }
-    if (!shortcut.configured) {
-      setConfiguring(shortcut.materialId);
-      return;
-    }
     try {
       localStorage.setItem(pendingKey, String(Date.now()));
     } catch {
@@ -350,6 +347,21 @@ function Workspace(
     pending.current = true;
     setBusy(true);
     try {
+      if (!shortcut.configured) {
+        const material = materials.find(m => m.id === shortcut.materialId);
+        const batches = await utils.pod.inventory.batches.fetch({ tenantMaterialId: shortcut.materialId, artistId });
+        const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date());
+        const source = chooseConsumptionSource(Number(material?.currentQuantity ?? 0), Number(shortcut.quantity), batches, today, material?.expiresAt);
+        if (!source.ready) {
+          localStorage.removeItem(pendingKey);
+          setConfiguring(shortcut.materialId);
+          setNotice("Confira o lote e a quantidade deste material. Depois, cada toque registra o uso.");
+          return;
+        }
+        shortcut = { ...shortcut, configured: true, batchId: source.batchId };
+        const readyShortcut = shortcut;
+        setState(s => ({ ...s, shortcuts: s.shortcuts.map(k => k.materialId === readyShortcut.materialId ? readyShortcut : k) }));
+      }
       const planned = session.data?.plannedMaterials.find(
         p =>
           p.tenantMaterialId === shortcut.materialId && p.status === "planejado"
@@ -539,7 +551,7 @@ function Workspace(
   const materialContent = (
     <div className="session-stack">
       <p className="session-muted">
-        Configure lote e quantidade; depois toque para consumir.
+        Toque no material para dar saída. Use os ajustes para mudar a quantidade ou o lote.
       </p>
       {!artistId && (
         <div className="session-stack">
@@ -615,9 +627,7 @@ function Workspace(
                 {m.name}
                 <br />
                 <span className="session-muted">
-                  {shortcut.configured
-                    ? `+${shortcut.quantity} ${m.unit} por toque`
-                    : "Configurar atalho"}{" "}
+                  {`+${Number(shortcut.quantity).toLocaleString("pt-BR")} ${m.unit} por toque`}{" "}
                   · Usado: {used.toLocaleString("pt-BR")} {m.unit}
                 </span>
               </span>
@@ -625,7 +635,8 @@ function Workspace(
             <div className="session-row">
               <span className="session-muted grow">
                 {m.ownerArtistId == null ? "Estúdio" : "Artista"} · Saldo{" "}
-                {m.currentQuantity}
+                {Number(m.currentQuantity).toLocaleString("pt-BR")}
+                {Number(m.currentQuantity) < Number(shortcut.quantity) && <strong className="session-error"> · Saldo insuficiente</strong>}
               </span>
               <IconButton
                 label={`Configurar ${m.name}`}
@@ -671,7 +682,6 @@ function Workspace(
             ],
             hidden: s.hidden.filter(k => k !== `material-${id}`),
           }));
-          setConfiguring(id);
         }}
       >
         <option value="">Selecionar material…</option>
@@ -1110,7 +1120,7 @@ function Workspace(
                 >
                   <Package size={16} />
                   {m.name.slice(0, 7)}
-                  <span>+{k.quantity}</span>
+                  <span>+{Number(k.quantity).toLocaleString("pt-BR")}</span>
                 </button>
               ) : null;
             })}

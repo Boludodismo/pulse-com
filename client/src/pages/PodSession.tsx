@@ -146,7 +146,7 @@ export default function PodSession() {
   });
   const [tenantMaterialId, setTenantMaterialId] = useState<string | undefined>();
   const [tenantConsumptionQuantity, setTenantConsumptionQuantity] = useState("1");
-  const [referenceFullscreen, setReferenceFullscreen] = useState(false);
+  const [referenceFullscreen, setReferenceFullscreen] = useState(() => new URLSearchParams(window.location.search).get("session") === "1");
 
   // ── Estado do upload de imagem ───────────────────────────────────────────
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -170,7 +170,7 @@ export default function PodSession() {
     { procedureId },
     { enabled: procedureId > 0, refetchInterval: 30_000 }
   );
-  const tenantInventoryQuery = trpc.pod.inventory.list.useQuery({ artistId: procedureQuery.data?.procedure?.artistId ?? undefined }, { enabled: procedureId > 0 && !!procedureQuery.data?.procedure?.artistId });
+  const tenantInventoryQuery = trpc.pod.inventory.list.useQuery({ artistId: procedureQuery.data?.procedure?.artistId ?? undefined }, { enabled: procedureId > 0 && !!procedureQuery.data?.procedure });
 
   const utils = trpc.useUtils();
 
@@ -472,7 +472,7 @@ export default function PodSession() {
 
   const isFinished = procedure.status === "finalizado";
   const isPaused = procedure.status === "pausado";
-  const isActive = procedure.status === "em_andamento";
+  const isActive = procedure.status === "em_andamento" && !!procedure.startedAt;
   const isNew = !procedure.startedAt;
 
   // Agrupar insumos por categoria
@@ -582,7 +582,7 @@ export default function PodSession() {
         <div className="lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r">
 
           {/* Timer */}
-          <div className="bg-card border-b px-4 py-3 flex items-center justify-between gap-3">
+          <div className="bg-card border-b px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Clock className={`w-5 h-5 ${isRunning ? "text-green-500 animate-pulse" : "text-muted-foreground"}`} />
               <span className={`font-mono text-2xl font-bold tabular-nums ${isRunning ? "text-green-500" : isFinished ? "text-muted-foreground" : "text-foreground"}`}>
@@ -596,8 +596,8 @@ export default function PodSession() {
               )}
             </div>
 
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span className="hidden sm:inline">{referenceFullscreen ? "Sair do Modo Sessão" : "Modo Sessão"}</span></Button>
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+              <Button size="sm" variant="default" className="gap-1.5 w-full sm:w-auto" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span>{referenceFullscreen ? "Sair do painel" : "Abrir painel da sessão"}</span></Button>
               {isNew && (
                 <Button size="sm" onClick={handleStart} className="gap-1.5 bg-green-600 hover:bg-green-700">
                   <Play className="w-4 h-4" />
@@ -752,7 +752,7 @@ export default function PodSession() {
             {tenantInventoryQuery.isLoading ? (
               <p className="text-xs text-muted-foreground">Carregando estoque...</p>
             ) : tenantMaterials.length === 0 ? (
-              <p className="rounded-md border border-dashed bg-background/60 p-2 text-xs text-muted-foreground">Nenhum material do estoque isolado foi cadastrado ainda. Os materiais legados permanecem sem associação automática.</p>
+              <p className="rounded-md border border-dashed bg-background/60 p-2 text-xs text-muted-foreground">Nenhum material disponível para o artista desta sessão. Abra o painel para conferir o responsável e os materiais.</p>
             ) : (
               <div className="grid grid-cols-[minmax(0,1fr)_84px_auto] gap-2">
                 <Select value={tenantMaterialId} onValueChange={setTenantMaterialId}>

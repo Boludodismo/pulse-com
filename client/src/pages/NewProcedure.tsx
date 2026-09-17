@@ -74,6 +74,7 @@ export default function NewProcedure() {
     bodyLocation: "",
     tattooStyle: "",
     artistName: "",
+    artistId: undefined as number | undefined,
     notes: "",
     referenceImageBase64: "",
     referenceImageMime: "",
@@ -82,6 +83,7 @@ export default function NewProcedure() {
   const [plannedMaterialId, setPlannedMaterialId] = useState<string | undefined>();
   const [plannedQuantity, setPlannedQuantity] = useState("1");
 
+  const artistsQuery = trpc.artists.list.useQuery();
   const clientsQuery = trpc.clients.list.useQuery();
   const clients = clientsQuery.data ?? [];
 
@@ -103,7 +105,7 @@ export default function NewProcedure() {
 
   // Agendamento selecionado
   const selectedAppointment = clientAppointments.find((a) => a.id === form.appointmentId) ?? null;
-  const { data: availableMaterials = [] } = trpc.pod.inventory.list.useQuery(undefined, { enabled: Boolean(selectedAppointment) });
+  const { data: availableMaterials = [] } = trpc.pod.inventory.list.useQuery({ artistId: selectedAppointment?.artistId ?? undefined }, { enabled: Boolean(selectedAppointment) });
   const { data: plannedMaterials = [], refetch: refetchPlannedMaterials } = trpc.pod.planning.listByAppointment.useQuery({ appointmentId: form.appointmentId ?? 0 }, { enabled: Boolean(form.appointmentId) });
   const addPlannedMaterialMutation = trpc.pod.planning.add.useMutation({ onSuccess: result => { setPlannedMaterialId(undefined); setPlannedQuantity("1"); void refetchPlannedMaterials(); if (result.forecast?.critical) toast.warning(`${result.forecast.materialName} ficará em nível crítico. O aviso foi enviado ao estúdio e ao artista.`, { duration: 10000 }); else toast.success("Material vinculado à sessão sem baixar o estoque."); }, onError: error => toast.error(`Não foi possível adicionar o material: ${error.message}`) });
 
@@ -113,7 +115,8 @@ export default function NewProcedure() {
     setForm((f) => ({
       ...f,
       title: f.title || (selectedAppointment.service ?? ""),
-      artistName: f.artistName || (selectedAppointment.artist ?? ""),
+      artistName: selectedAppointment.artist ?? "",
+      artistId: selectedAppointment.artistId ?? undefined,
     }));
   }, [selectedAppointment?.id]);
 
@@ -155,6 +158,7 @@ export default function NewProcedure() {
     createMutation.mutate({
       clientId: form.clientId,
       appointmentId: form.appointmentId ?? undefined,
+      artistId: selectedAppointment?.artistId ?? form.artistId,
       title: form.title.trim(),
       bodyLocation: form.bodyLocation || undefined,
       tattooStyle: form.tattooStyle || undefined,
@@ -323,8 +327,8 @@ export default function NewProcedure() {
                 {selectedAppointment && <div className="mt-3 space-y-2 rounded-lg border p-3">
                   <Label className="flex items-center gap-2"><Package className="h-4 w-4 text-primary" />Materiais da sessão (opcional)</Label>
                   <p className="text-xs text-muted-foreground">A seleção apenas prepara a sessão; o estoque será baixado quando o artista confirmar o uso.</p>
-                  <div className="grid grid-cols-[minmax(0,1fr)_80px_auto] gap-2"><Select value={plannedMaterialId} onValueChange={setPlannedMaterialId}><SelectTrigger><SelectValue placeholder="Material" /></SelectTrigger><SelectContent>{availableMaterials.map(material => <SelectItem key={material.id} value={String(material.id)}>{material.name} · {material.currentQuantity} {material.unit}</SelectItem>)}</SelectContent></Select><Input value={plannedQuantity} inputMode="decimal" onChange={event => setPlannedQuantity(event.target.value.replace(",", "."))} aria-label="Quantidade prevista" /><Button type="button" size="icon" disabled={!plannedMaterialId || addPlannedMaterialMutation.isPending} onClick={() => addPlannedMaterialMutation.mutate({ appointmentId: selectedAppointment.id, tenantMaterialId: Number(plannedMaterialId), quantityPlanned: plannedQuantity })}><Plus className="h-4 w-4" /></Button></div>
-                  {plannedMaterials.filter(item => item.status === "planejado").map(item => <div key={item.id} className="rounded-md bg-muted/40 px-2 py-1.5 text-xs">{item.nameSnapshot} · {item.quantityPlanned} {item.unitSnapshot}</div>)}
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_80px_auto] gap-2"><Select value={plannedMaterialId} onValueChange={setPlannedMaterialId}><SelectTrigger className="col-span-2 sm:col-span-1 w-full min-w-0 [&>span]:truncate"><SelectValue placeholder="Material" /></SelectTrigger><SelectContent>{availableMaterials.map(material => <SelectItem key={material.id} value={String(material.id)}>{material.name} · {Number(material.currentQuantity).toLocaleString("pt-BR")} {material.unit}</SelectItem>)}</SelectContent></Select><Input value={plannedQuantity} inputMode="decimal" onChange={event => setPlannedQuantity(event.target.value.replace(",", "."))} aria-label="Quantidade prevista" /><Button type="button" size="icon" disabled={!plannedMaterialId || addPlannedMaterialMutation.isPending} onClick={() => addPlannedMaterialMutation.mutate({ appointmentId: selectedAppointment.id, tenantMaterialId: Number(plannedMaterialId), quantityPlanned: plannedQuantity })}><Plus className="h-4 w-4" /></Button></div>
+                  {plannedMaterials.filter(item => item.status === "planejado").map(item => <div key={item.id} className="rounded-md bg-muted/40 px-2 py-1.5 text-xs">{item.nameSnapshot} · {Number(item.quantityPlanned).toLocaleString("pt-BR")} {item.unitSnapshot}</div>)}
                 </div>}
               </div>
             )}
@@ -384,12 +388,13 @@ export default function NewProcedure() {
             {/* Artista */}
             <div>
               <Label>Artista responsável</Label>
-              <Input
-                value={form.artistName}
-                onChange={(e) => setForm((f) => ({ ...f, artistName: e.target.value }))}
-                placeholder="Nome do tatuador"
-                className="mt-1"
-              />
+              <Select value={String(selectedAppointment?.artistId ?? form.artistId ?? "")} disabled={!!selectedAppointment?.artistId} onValueChange={value => {
+                const artist = artistsQuery.data?.find(a => a.id === Number(value));
+                setForm(f => ({ ...f, artistId: artist?.id, artistName: artist?.name ?? "" }));
+              }}>
+                <SelectTrigger className="mt-1 w-full"><SelectValue placeholder="Selecione o artista para usar o estoque" /></SelectTrigger>
+                <SelectContent>{artistsQuery.data?.map(a => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}</SelectContent>
+              </Select>
               {selectedAppointment?.artist && form.artistName === selectedAppointment.artist && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Pré-preenchido a partir do agendamento selecionado
