@@ -175,7 +175,7 @@ function Workspace(
   stateRef.current = state;
   const inventory = trpc.pod.inventory.list.useQuery(
     { artistId },
-    { enabled: !!artistId && can("stock") }
+    { enabled: can("stock") }
   );
   const session = trpc.pod.session.get.useQuery({ procedureId });
   const materials = inventory.data ?? [];
@@ -384,7 +384,12 @@ function Workspace(
       const base64 = await new Promise<string>((resolve, reject) => {
         const r = new FileReader();
         r.onload = () => resolve(String(r.result).split(",")[1]);
-        r.onerror = reject;
+        r.onerror = () =>
+          reject(
+            new Error(
+              r.error?.message || "Não foi possível ler o arquivo selecionado."
+            )
+          );
         r.readAsDataURL(file);
       });
       const result = await upload.mutateAsync({
@@ -418,7 +423,7 @@ function Workspace(
       setSelected(layer.id);
       await utils.procedures.getById.invalidate({ id: procedureId });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar imagem");
+      setNotice(e instanceof Error ? e.message : "Erro ao salvar imagem");
     }
   }
   const pointers = useRef(new Map<number, Point>());
@@ -806,8 +811,11 @@ function Workspace(
           disabled={upload.isPending}
           onChange={e => {
             const f = e.target.files?.[0];
-            if (f) void addImage(f);
-            e.target.value = "";
+            const input = e.currentTarget;
+            if (f)
+              void addImage(f).finally(() => {
+                input.value = "";
+              });
           }}
         />
       </label>
