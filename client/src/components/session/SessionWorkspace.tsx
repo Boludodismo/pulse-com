@@ -155,7 +155,7 @@ function Workspace(
   props: Parameters<typeof SessionWorkspace>[0] & { storageKey: string }
 ) {
   const { procedureId, clientId, artistId, storageKey } = props;
-  const { can } = useArtistAccess();
+  const { can, invited } = useArtistAccess();
   const utils = trpc.useUtils();
   const [state, setState] = useState<Settings>(() => readSettings(storageKey));
   const [open, setOpen] = useState<string | null>(null);
@@ -167,7 +167,14 @@ function Workspace(
   const [kind, setKind] = useState("reference");
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
-  const [uncertain, setUncertain] = useState(false);
+  const pendingKey = `${storageKey}:pending-consumption`;
+  const [uncertain, setUncertain] = useState(() => {
+    try {
+      return !!localStorage.getItem(pendingKey);
+    } catch {
+      return false;
+    }
+  });
   const [notice, setNotice] = useState("");
   const [lastConsumption, setLastConsumption] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -179,6 +186,16 @@ function Workspace(
   );
   const session = trpc.pod.session.get.useQuery({ procedureId });
   const materials = inventory.data ?? [];
+  const artists = trpc.artists.list.useQuery(undefined, {
+    enabled: !artistId && !invited,
+  });
+  const assignArtist = trpc.procedures.update.useMutation({
+    onSuccess: async () => {
+      await utils.procedures.getById.invalidate({ id: procedureId });
+      await utils.pod.session.get.invalidate({ procedureId });
+    },
+    onError: e => setNotice(e.message),
+  });
   const consume = trpc.pod.session.consume.useMutation({ retry: false });
   const revert = trpc.pod.session.revertConsumption.useMutation({
     retry: false,
@@ -313,8 +330,21 @@ function Workspace(
   };
   async function useMaterial(shortcut: Shortcut) {
     if (pending.current || props.finished || uncertain) return;
+    if (!artistId) {
+      setOpen("materials");
+      setNotice("Vincule o artista responsável antes de consumir materiais.");
+      return;
+    }
     if (!shortcut.configured) {
       setConfiguring(shortcut.materialId);
+      return;
+    }
+    try {
+      localStorage.setItem(pendingKey, String(Date.now()));
+    } catch {
+      setNotice(
+        "Não foi possível proteger o registro neste aparelho. Use a tela de consumo da sessão."
+      );
       return;
     }
     pending.current = true;
@@ -331,6 +361,7 @@ function Workspace(
         batchId: shortcut.batchId,
         plannedMaterialId: planned?.id,
       });
+      localStorage.removeItem(pendingKey);
       setLastConsumption(result.id);
       setNotice(
         `${shortcut.quantity} ${materials.find(m => m.id === shortcut.materialId)?.unit ?? ""} registrado`
@@ -343,10 +374,12 @@ function Workspace(
         setNotice(
           "Resultado do envio incerto. Confira o histórico antes de registrar novamente."
         );
-      } else
+      } else {
+        localStorage.removeItem(pendingKey);
         setNotice(
           error instanceof Error ? error.message : "Não foi possível registrar."
         );
+      }
       await refreshStock();
     } finally {
       pending.current = false;
@@ -508,12 +541,44 @@ function Workspace(
       <p className="session-muted">
         Configure lote e quantidade; depois toque para consumir.
       </p>
+      {!artistId && (
+        <div className="session-stack">
+          <p>Vincule o artista responsável para usar o estoque nesta sessão.</p>
+          {!invited && (
+            <select
+              aria-label="Artista responsável pela sessão"
+              value=""
+              disabled={assignArtist.isPending || props.finished}
+              onChange={e => {
+                const artist = artists.data?.find(
+                  a => a.id === Number(e.target.value)
+                );
+                if (artist)
+                  assignArtist.mutate({
+                    id: procedureId,
+                    artistId: artist.id,
+                    artistName: artist.name,
+                  });
+              }}
+            >
+              <option value="">Selecionar artista…</option>
+              {artists.data?.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {invited && <p>Peça ao gestor para vincular seu cadastro.</p>}
+        </div>
+      )}
       {uncertain && (
         <div role="alert">
           <p>Confira o histórico atualizado antes de repetir o consumo.</p>
           <button
             disabled={session.isFetching}
             onClick={() => {
+              localStorage.removeItem(pendingKey);
               setUncertain(false);
               setNotice("");
             }}
