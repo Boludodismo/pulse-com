@@ -1,8 +1,7 @@
 import { z } from "zod";
-import { TRPCError } from "@trpc/server";
 import { router, tenantProcedure } from "../_core/trpc";
-import { hasModulePermission, listUserPermissions } from "../saas";
-import { INBOX_MODULES, type InboxModule } from "../../shared/intelligentInbox";
+import { assertPrivateInboxOwner } from "../intelligentInbox/access";
+import { INBOX_MODULES } from "../../shared/intelligentInbox";
 import {
   inboxStatus,
   readonlyInboxStatus,
@@ -12,23 +11,6 @@ import {
   inboxSettings,
   disabledInboxOperation,
 } from "../intelligentInbox/service";
-async function permit(ctx: any, module: InboxModule, write = false) {
-  if (ctx.user.role === "admin" || ctx.user.role === "superadmin") return;
-  if (
-    ctx.user.role !== "collaborator" ||
-    !(await hasModulePermission({
-      userId: ctx.user.id,
-      studioId: ctx.studioId,
-      module,
-      write,
-    }))
-  )
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message:
-        "Você não tem permissão para acessar esta área da Central Inteligente.",
-    });
-}
 const page = z.strictObject({
   limit: z.number().int().min(1).max(100).default(25),
   cursor: z.number().int().positive().optional(),
@@ -46,35 +28,27 @@ const emptyPage = () => ({
   nextCursor: null,
   status: inboxStatus(),
 });
-const read = (module: InboxModule) =>
-  tenantProcedure.use(async ({ ctx, next }) => {
-    await permit(ctx, "intelligent_inbox");
-    if (module !== "intelligent_inbox") await permit(ctx, module);
-    return next({ ctx });
-  });
+const privateInboxProcedure = tenantProcedure.use(({ ctx, next }) => {
+  assertPrivateInboxOwner(ctx.user);
+  return next({ ctx });
+});
 export const intelligentInboxRouter = router({
-  access: tenantProcedure.query(async ({ ctx }) => {
-    const manager = ["admin", "superadmin"].includes(ctx.user.role);
-    const permissions = manager
-      ? []
-      : await listUserPermissions(ctx.user.id, ctx.studioId);
+  access: privateInboxProcedure.query(async ({ ctx }) => {
     return {
       studioId: ctx.studioId,
       permissions: INBOX_MODULES.map(module => ({
         module,
-        canRead:
-          manager || permissions.some(p => p.module === module && !!p.canRead),
-        canWrite:
-          manager || permissions.some(p => p.module === module && !!p.canWrite),
+        canRead: true,
+        canWrite: false,
       })),
     };
   }),
-  status: read("intelligent_inbox").query(({ ctx }) => readonlyInboxStatus(ctx.studioId)),
-  dashboard: read("intelligent_inbox").query(({ ctx }) => inboxDashboard(ctx.studioId)),
-  conversations: read("inbox_conversations")
+  status: privateInboxProcedure.query(({ ctx }) => readonlyInboxStatus(ctx.studioId, ctx.user.id)),
+  dashboard: privateInboxProcedure.query(({ ctx }) => inboxDashboard(ctx.studioId, ctx.user.id)),
+  conversations: privateInboxProcedure
     .input(page)
-    .query(({ ctx, input }) => listInboxConversations(ctx.studioId, input)),
-  messages: read("inbox_conversations")
+    .query(({ ctx, input }) => listInboxConversations(ctx.studioId, ctx.user.id, input)),
+  messages: privateInboxProcedure
     .input(
       z.strictObject({
         conversationId: z.number().int().positive(),
@@ -82,17 +56,17 @@ export const intelligentInboxRouter = router({
         cursor: z.number().int().positive().optional(),
       })
     )
-    .query(({ ctx, input }) => listInboxMessages(ctx.studioId, input.conversationId, input.limit, input.cursor)),
-  summaries: read("inbox_summaries")
+    .query(({ ctx, input }) => listInboxMessages(ctx.studioId, ctx.user.id, input.conversationId, input.limit, input.cursor)),
+  summaries: privateInboxProcedure
     .input(page)
     .query(() => emptyPage()),
-  priorities: read("inbox_priorities")
+  priorities: privateInboxProcedure
     .input(page)
     .query(() => emptyPage()),
-  opportunities: read("inbox_opportunities")
+  opportunities: privateInboxProcedure
     .input(page)
     .query(() => emptyPage()),
-  clientContext: read("inbox_conversations")
+  clientContext: privateInboxProcedure
     .input(z.strictObject({ clientId: z.number().int().positive() }))
     .query(() => ({
       ...emptyPage(),
@@ -105,18 +79,16 @@ export const intelligentInboxRouter = router({
       pendingActions: [],
       nextRecommendedAction: null,
     })),
-  settings: read("inbox_settings").query(({ ctx }) => inboxSettings(ctx.studioId)),
-  configure: read("inbox_settings").mutation(async ({ ctx }) => {
-    await permit(ctx, "inbox_settings", true);
+  settings: privateInboxProcedure.query(({ ctx }) => inboxSettings(ctx.studioId, ctx.user.id)),
+  configure: privateInboxProcedure.mutation(async ({ ctx }) => {
     return disabledInboxOperation();
   }),
-  suggestedReply: read("inbox_suggestions")
+  suggestedReply: privateInboxProcedure
     .input(z.strictObject({ conversationId: z.number().int().positive() }))
     .query(() => ({ reply: null, status: inboxStatus() })),
-  generateSuggestedReply: read("inbox_suggestions")
+  generateSuggestedReply: privateInboxProcedure
     .input(z.strictObject({ conversationId: z.number().int().positive() }))
     .mutation(async ({ ctx }) => {
-      await permit(ctx, "inbox_suggestions", true);
       return disabledInboxOperation();
     }),
 });
