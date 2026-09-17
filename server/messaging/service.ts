@@ -1,3 +1,4 @@
+import { isOutboundMessagingBlocked } from "./outboundSafety";
 import { getDb } from "../db";
 import { inventoryNotices } from "../../drizzle/inventoryWorkflowSchema";
 import { inventoryNoticeDeliveryError } from "../inventoryNoticeDelivery";
@@ -231,6 +232,7 @@ function retryDelayMinutes(attempt: number): number {
 
 /** Processa de forma limitada jobs prontos. O claim atômico evita entrega concorrente. */
 export async function processPendingIntegrationJobs(limit = 10) {
+  if (isOutboundMessagingBlocked()) return { processed: 0, completed: 0, retried: 0, failed: 0 };
   const db = await getDb();
   if (!db) return { processed: 0, completed: 0, retried: 0, failed: 0 };
   const now = sqlDate();
