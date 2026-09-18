@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { storageGet, storagePut } from "../storage";
+import { installCoresSync, SYNC_FILES } from "./coresReaderSync";
 
 const PREFIX = "/estudos/cores";
 const SHA = "01fca88802f3a428c0c869031a80ae9c28888f6e1080df6219c96e3476465a59";
@@ -116,6 +117,7 @@ async function ensureReader(): Promise<string> {
     try {
       const files = unpackReader(await obtainBundle());
       adaptHostedReader(files);
+      try { installCoresSync(files); } catch { console.warn("[CoresSync] Extension unavailable; base reader remains available"); }
       dir = await fs.mkdtemp(path.join(tmpdir(), "tatuei-cores-"));
       for (const [rel, bytes] of files) {
         const dest = path.join(dir, rel);
@@ -144,7 +146,7 @@ export function registerCoresReader(app: Express): void {
     let asset: string;
     try { asset = decodeURIComponent(req.path).replace(/^\//, "") || "index.html"; }
     catch { res.status(400).end(); return; }
-    if (!READER_FILES.has(asset)) { res.status(404).type("text").send("Arquivo não encontrado."); return; }
+    if (!READER_FILES.has(asset) && !SYNC_FILES.has(asset)) { res.status(404).type("text").send("Arquivo não encontrado."); return; }
     res.set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
     ensureReader().then(dir => {
       serve ??= express.static(dir, {
