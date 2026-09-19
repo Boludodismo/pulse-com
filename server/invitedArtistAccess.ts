@@ -7,7 +7,7 @@ import * as schema from '../drizzle/schema';
 
 type User = { id: number; openId: string; role: string; studioId: number | null; artistId: number | null };
 const denied = () => new TRPCError({code:'FORBIDDEN',message:'Seu acesso não permite esta operação. Solicite a permissão ao proprietário.'});
-const self = new Set(['artistInvitations.access','users.changePassword','artists.list','artists.getById','artists.uploadAvatar','studioRelations.card','studioRelations.saveCard','studioRelations.uploadWork','studioRelations.removeWork','intelligentInbox.access']);
+const self = new Set(['artistInvitations.access','users.changePassword','artists.list','artists.getById','artists.uploadAvatar','studioRelations.card','studioRelations.saveCard','studioRelations.uploadWork','studioRelations.removeWork','studioRelations.uploadPresentationMedia','studioRelations.updateMediaFocal','studioRelations.removePresentationMedia','studioRelations.reorderWorks','intelligentInbox.access']);
 const routes: Record<string, SaasModule> = {};
 function group(prefix: string, module: SaasModule, operations: string[]) { for (const operation of operations) routes[prefix+'.'+operation]=module; }
 group('clients','clients',['list','search','getById','create','update','delete']);
