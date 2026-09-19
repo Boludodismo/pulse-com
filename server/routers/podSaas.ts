@@ -1,3 +1,5 @@
+import { importTestInventory } from "../inventoryTestImport";
+import { resolveProcedureArtist } from "../procedureArtist";
 import { appointmentKitsRouter } from "./appointmentKits";
 import { createHash } from "node:crypto";
 import { inventoryMaterialRegistrations } from "../../drizzle/appointmentKitSchema";
@@ -124,8 +126,9 @@ async function requireProcedure(database: Awaited<ReturnType<typeof requireDatab
     eq(technicalProcedures.studioId, ctx.studioId),
   )).limit(1))[0];
   if (!procedure) throw new TRPCError({ code: "NOT_FOUND", message: "Sessão POD não encontrada nesta empresa." });
-  assertOwnArtist(ctx, procedure.artistId);
-  return procedure;
+  const resolved = await resolveProcedureArtist(database, procedure);
+  assertOwnArtist(ctx, resolved.artistId ?? null);
+  return { ...procedure, ...resolved };
 }
 
 function calculateTiming(startedAt: string | null, finishedAt: string | null, pauses: Array<{ startedAt: string; endedAt: string | null }>) {
@@ -223,6 +226,10 @@ export const podSaasRouter = router({
   }),
 
   inventory: router({
+    importTestCatalog: tenantProcedure.input(z.object({artistId:z.number().int().positive(),profile:z.literal("session").optional(),offset:z.number().int().min(0).max(TECHNICAL_CATALOG_2026.length-1)})).mutation(async ({ctx,input})=>{
+      await requireModule(ctx,"stock",true);
+      return importTestInventory(await requireDatabase(),ctx,input);
+    }),
     loans: inventoryLoansRouter,
     notices: inventoryNoticesRouter,
     list: tenantProcedure.input(z.object({ artistId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {

@@ -1,3 +1,5 @@
+import { defaultSessionQuantity } from "@shared/sessionMaterialDefaults";
+import SessionWorkspace from "@/components/session/SessionWorkspace";
 import ConsumeMaterialBatch from "@/components/ConsumeMaterialBatch";
 import { useState, useEffect, useRef, useCallback } from "react";
 import React, { type ReactNode } from "react";
@@ -145,7 +147,7 @@ export default function PodSession() {
   });
   const [tenantMaterialId, setTenantMaterialId] = useState<string | undefined>();
   const [tenantConsumptionQuantity, setTenantConsumptionQuantity] = useState("1");
-  const [referenceFullscreen, setReferenceFullscreen] = useState(false);
+  const [referenceFullscreen, setReferenceFullscreen] = useState(() => new URLSearchParams(window.location.search).get("session") === "1");
 
   // ── Estado do upload de imagem ───────────────────────────────────────────
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -169,7 +171,7 @@ export default function PodSession() {
     { procedureId },
     { enabled: procedureId > 0, refetchInterval: 30_000 }
   );
-  const tenantInventoryQuery = trpc.pod.inventory.list.useQuery({ artistId: procedureQuery.data?.procedure?.artistId ?? undefined }, { enabled: procedureId > 0 && !!procedureQuery.data?.procedure?.artistId });
+  const tenantInventoryQuery = trpc.pod.inventory.list.useQuery({ artistId: procedureQuery.data?.procedure?.artistId ?? undefined }, { enabled: procedureId > 0 && !!procedureQuery.data?.procedure });
 
   const utils = trpc.useUtils();
 
@@ -323,7 +325,7 @@ export default function PodSession() {
 
   useEffect(() => {
     if (!referenceFullscreen) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setReferenceFullscreen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[role="dialog"]')) setReferenceFullscreen(false); };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [referenceFullscreen]);
@@ -339,14 +341,11 @@ export default function PodSession() {
 
   // ── Controles do timer ───────────────────────────────────────────────────
   const handleStart = () => {
-    startTimeRef.current = Date.now();
-    timerMutation.mutate({ id: procedureId, action: "start" });
-    setIsRunning(true);
+    timerMutation.mutate({ id: procedureId, action: "start" }, { onSuccess: () => { startTimeRef.current = Date.now(); setIsRunning(true); } });
   };
 
   const handlePause = () => {
-    setIsRunning(false);
-    startPauseMutation.mutate({ procedureId });
+    startPauseMutation.mutate({ procedureId }, { onSuccess: () => setIsRunning(false) });
   };
 
   const handleResume = () => {
@@ -474,7 +473,7 @@ export default function PodSession() {
 
   const isFinished = procedure.status === "finalizado";
   const isPaused = procedure.status === "pausado";
-  const isActive = procedure.status === "em_andamento";
+  const isActive = procedure.status === "em_andamento" && !!procedure.startedAt;
   const isNew = !procedure.startedAt;
 
   // Agrupar insumos por categoria
@@ -500,7 +499,8 @@ export default function PodSession() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col" inert={referenceFullscreen ? true : undefined}>
+      {referenceFullscreen && <SessionWorkspace procedureId={procedureId} studioId={procedure.studioId} clientId={procedure.clientId} artistId={procedure.artistId ?? undefined} title={procedure.title} elapsed={formatTime(elapsed)} running={isRunning} finished={isFinished} timerBusy={timerMutation.isPending || startPauseMutation.isPending || resumePauseMutation.isPending} onTimer={isNew ? handleStart : isPaused ? handleResume : handlePause} onClose={() => { if (document.fullscreenElement) void document.exitFullscreen(); setReferenceFullscreen(false); }} images={images} originalSrc={referenceImage?.imageUrl} stencilSrc={stencilImage?.imageUrl} /> }
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="border-b bg-card px-3 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-3 sticky top-0 z-40">
         <Button
@@ -580,10 +580,10 @@ export default function PodSession() {
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
 
         {/* ── Coluna esquerda: imagem + timer ──────────────────────────── */}
-        <div className={referenceFullscreen ? "fixed inset-0 z-[100] flex flex-col bg-background" : "lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r"}>
+        <div className="lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r">
 
           {/* Timer */}
-          <div className="bg-card border-b px-4 py-3 flex items-center justify-between gap-3">
+          <div className="bg-card border-b px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Clock className={`w-5 h-5 ${isRunning ? "text-green-500 animate-pulse" : "text-muted-foreground"}`} />
               <span className={`font-mono text-2xl font-bold tabular-nums ${isRunning ? "text-green-500" : isFinished ? "text-muted-foreground" : "text-foreground"}`}>
@@ -597,8 +597,8 @@ export default function PodSession() {
               )}
             </div>
 
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span className="hidden sm:inline">{referenceFullscreen ? "Sair da tela cheia" : "Tela cheia"}</span></Button>
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+              <Button size="sm" variant="default" className="gap-1.5 w-full sm:w-auto" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span>{referenceFullscreen ? "Sair do painel" : "Abrir painel da sessão"}</span></Button>
               {isNew && (
                 <Button size="sm" onClick={handleStart} className="gap-1.5 bg-green-600 hover:bg-green-700">
                   <Play className="w-4 h-4" />
@@ -680,12 +680,12 @@ export default function PodSession() {
                         key={item.id}
                         type="button"
                         disabled={!stock || isFinished || consumeTenantMaterialMutation.isPending}
-                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,plannedMaterialId:item.id,quantity:item.quantityPlanned})}
+                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,plannedMaterialId:item.status === "planejado" ? item.id : undefined,quantity:defaultSessionQuantity(stock)})}
                         className={referenceFullscreen
                           ? "group flex min-h-[70px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-black/30 px-1.5 py-2 text-center text-white shadow-lg transition hover:border-white/30 hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                           : "group max-w-[220px] rounded-xl border border-white/20 bg-black/45 px-3 py-2 text-left text-xs text-white shadow-xl backdrop-blur-md transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                         }
-                        title={`Baixar ${item.quantityPlanned} ${item.unitSnapshot} de ${item.nameSnapshot}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
+                        title={`Baixar ${defaultSessionQuantity(stock)} ${item.unitSnapshot} de ${item.nameSnapshot}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
                       >
                         {referenceFullscreen && (
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 text-white">
@@ -702,7 +702,7 @@ export default function PodSession() {
                           ? "block text-[9px] leading-none text-white/70 group-hover:text-white"
                           : "block text-[10px] text-white/75 group-hover:text-white"
                         }>
-                          − {item.quantityPlanned} {item.unitSnapshot}
+                          − {defaultSessionQuantity(stock)} {item.unitSnapshot}
                           {!referenceFullscreen && (stock ? ` · saldo ${stock.currentQuantity}` : " · indisponível")}
                         </span>
                       </button>
@@ -753,7 +753,7 @@ export default function PodSession() {
             {tenantInventoryQuery.isLoading ? (
               <p className="text-xs text-muted-foreground">Carregando estoque...</p>
             ) : tenantMaterials.length === 0 ? (
-              <p className="rounded-md border border-dashed bg-background/60 p-2 text-xs text-muted-foreground">Nenhum material do estoque isolado foi cadastrado ainda. Os materiais legados permanecem sem associação automática.</p>
+              <p className="rounded-md border border-dashed bg-background/60 p-2 text-xs text-muted-foreground">Nenhum material disponível para o artista desta sessão. Abra o painel para conferir o responsável e os materiais.</p>
             ) : (
               <div className="grid grid-cols-[minmax(0,1fr)_84px_auto] gap-2">
                 <Select value={tenantMaterialId} onValueChange={setTenantMaterialId}>

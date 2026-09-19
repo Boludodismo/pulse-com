@@ -1,3 +1,4 @@
+import { resolveProcedureArtist } from "../procedureArtist";
 /**
  * POD Session — Módulo de Execução Técnica da Tatuagem
  * Router tRPC isolado. Não altera nenhum router existente.
@@ -126,7 +127,7 @@ export const proceduresRouter = router({
         .where(eq(procedureImages.procedureId, input.id))
         .orderBy(procedureImages.createdAt);
 
-      return { procedure, consumables, images };
+      return { procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images };
     }),
 
   // ── Criar novo procedimento ──────────────────────────────────────────────
@@ -150,6 +151,7 @@ export const proceduresRouter = router({
       const studioId = ctx.studioId;
       const db = await requireDb();
       await assertProcedureLinks(db, { studioId, clientId: input.clientId, appointmentId: input.appointmentId, artistId: input.artistId });
+      const resolvedArtist = await resolveProcedureArtist(db, { ...input, studioId });
       let referenceImageUrl: string | undefined;
       let referenceImageKey: string | undefined;
 
@@ -168,8 +170,8 @@ export const proceduresRouter = router({
           studioId,
           clientId: input.clientId,
           appointmentId: input.appointmentId ?? null,
-          artistId: input.artistId ?? null,
-          artistName: input.artistName ?? null,
+          artistId: resolvedArtist.artistId ?? null,
+          artistName: resolvedArtist.artistName ?? null,
           title: input.title,
           description: input.description ?? null,
           bodyLocation: input.bodyLocation ?? null,

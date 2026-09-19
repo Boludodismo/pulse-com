@@ -1,3 +1,5 @@
+import ImportTestInventory from "./ImportTestInventory";
+import { readTestMetadata } from "@shared/inventoryTestCatalog";
 import InventoryLoans from "./InventoryLoans";
 import InventoryNotices from "./InventoryNotices";
 import MaterialSpecificationFields,{emptySpecification,specificationFromMaterial,type SpecificationForm} from "./MaterialSpecificationFields";
@@ -195,6 +197,7 @@ export default function ArtistInventory() {
       <div className="flex flex-wrap gap-2"><Button variant={view === "stock" ? "default" : "outline"} onClick={() => setView("stock")}>Estoque operacional</Button><Button variant={view === "catalog" ? "default" : "outline"} onClick={() => setView("catalog")}>Catálogo técnico</Button><Button variant={view === "loans" ? "default" : "outline"} onClick={() => setView("loans")}>Empréstimos de materiais</Button><Button variant={view === "notices" ? "default" : "outline"} onClick={() => setView("notices")}>Avisos e antecedência</Button></div>
       {view === "loans" && <InventoryLoans />}
       {view === "notices" && <InventoryNotices />}
+      {view === "catalog" && manager && <ImportTestInventory artists={artists} onComplete={refresh} />}
       {view === "catalog" && <TechnicalCatalog onSelect={index => {
         const item = TECHNICAL_CATALOG_2026[index];
         setEditingId(null);
@@ -253,6 +256,7 @@ export default function ArtistInventory() {
             (user?.artistId != null &&
               material.ownerArtistId === user.artistId));
           const artist = artists.find(a => a.id === material.ownerArtistId);
+          const testMetadata = readTestMetadata(material.notes);
           return (
             <Card key={material.id}>
               <CardContent className="p-5 space-y-4">
@@ -284,6 +288,16 @@ export default function ArtistInventory() {
                     </p>
                   </div>
                 </div>
+                {(testMetadata.testStock || testMetadata.marketEstimate) && <details className="rounded-md border border-orange-500/30 p-2 text-xs">
+                  <summary className="cursor-pointer text-orange-400">{testMetadata.testStock ? "Saldo fictício de teste · " : ""}{testMetadata.marketEstimate?.status === "pending" ? "Preço pendente — revisar" : "Custo estimado — ver pesquisa"}</summary>
+                  {testMetadata.testStock && <p className="mt-2">Saldo fictício para testes. Ajuste após contagem real.</p>}
+                  {testMetadata.marketEstimate && <div className="mt-2 space-y-1">
+                    <p>Pesquisa: {testMetadata.marketEstimate.date}. {testMetadata.marketEstimate.method}</p><p>Precisão: {testMetadata.marketEstimate.confidence}</p>
+                    {testMetadata.marketEstimate.reference && <><p>Referência: {testMetadata.marketEstimate.reference?.label}</p>
+                    <p>R$ {testMetadata.marketEstimate.reference?.price} / {testMetadata.marketEstimate.reference?.quantity} {testMetadata.marketEstimate.reference?.unit} × fator {testMetadata.marketEstimate.factor} = R$ {testMetadata.marketEstimate.unitCost} por {material.unit}.</p>
+                    <a className="underline" href={testMetadata.marketEstimate.reference?.url} target="_blank" rel="noopener noreferrer">Consultar fonte</a></>}
+                  </div>}
+                </details>}
                 {Number(material.currentQuantity) <=
                   Number(material.minimumQuantity) && (
                   <p className="text-sm text-amber-500">
