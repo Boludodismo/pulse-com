@@ -1,434 +1,82 @@
-import { useId, useState, useRef, useEffect } from "react";
-import type { ArtistCardPresentationPublic } from "../../../shared/artistCardPresentation";
-import styles from "./ArtistEditorialCard.module.css";
+import {useId, useRef, useState, useEffect} from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
+import {ArrowUpRight, ChevronLeft, ChevronRight, Instagram, Link2, MessageCircle, X, Youtube} from 'lucide-react';
+import type {ArtistCardPresentationPublic, PublicMedia} from '../../../../shared/artistCardPresentation';
+import styles from './ArtistEditorialCard.module.css';
 
 export interface ArtistEditorialCardProps {
   name: string;
-  photo?: string;
+  photo?: string | null;
   headline: string;
   description: string;
-  links: Array<{ label: string; url: string }>;
-  images: Array<{ url: string; caption: string }>;
+  links: Array<{label: string; url: string}>;
+  images: Array<{url: string; caption: string}>;
   presentation?: ArtistCardPresentationPublic | null;
-  idPrefix?: string; // For avoiding focus trap conflicts in modals
+  idPrefix?: string;
 }
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase();
+const text = (value?: string | null) => value?.trim() || '';
+function safeLink(value: string) {
+  try {const u=new URL(value); return u.protocol==='https:'&&!u.username&&!u.password;} catch {return false;}
 }
-
-function LightboxDialog({
-  isOpen,
-  images,
-  initialIndex,
-  onClose,
-  idPrefix,
-}: {
-  isOpen: boolean;
-  images: Array<{ url: string; caption: string }>;
-  initialIndex: number;
-  onClose: () => void;
-  idPrefix: string;
-}) {
-  const [current, setCurrent] = useState(initialIndex);
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      dialogRef.current?.showModal();
-    } else {
-      dialogRef.current?.close();
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-      if (e.key === "Escape") {
-        onClose();
-      } else if (e.key === "ArrowRight") {
-        setCurrent((i) => (i + 1) % images.length);
-      } else if (e.key === "ArrowLeft") {
-        setCurrent((i) => (i - 1 + images.length) % images.length);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, images.length, onClose]);
-
-  const handleClose = () => {
-    dialogRef.current?.close();
-    onClose();
-  };
-
-  return (
-    <dialog
-      ref={dialogRef}
-      className={styles.lightboxDialog}
-      onClick={(e) => {
-        if (e.target === dialogRef.current) handleClose();
-      }}
-      onCancel={handleClose}
-      aria-labelledby={`${idPrefix}-lightbox-title`}
-    >
-      <div className={styles.lightboxContent}>
-        <button
-          ref={closeButtonRef}
-          className={styles.lightboxClose}
-          onClick={handleClose}
-          aria-label="Fechar"
-        >
-          ✕
-        </button>
-        <img
-          src={images[current].url}
-          alt={images[current].caption || "Trabalho do artista"}
-          className={styles.lightboxImage}
-          onError={(e) => {
-            (e.target as HTMLImageElement).src =
-              "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Crect fill='%23222' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23666' font-family='Helvetica' font-size='16'%3EImage unavailable%3C/text%3E%3C/svg%3E";
-          }}
-        />
-        {images[current].caption && (
-          <figcaption className={styles.lightboxCaption}>
-            {images[current].caption}
-          </figcaption>
-        )}
-        <div className={styles.lightboxControls}>
-          <button
-            onClick={() => setCurrent((i) => (i - 1 + images.length) % images.length)}
-            aria-label="Anterior"
-          >
-            ←
-          </button>
-          <span className={styles.lightboxCounter}>
-            {current + 1} / {images.length}
-          </span>
-          <button
-            onClick={() => setCurrent((i) => (i + 1) % images.length)}
-            aria-label="Próxima"
-          >
-            →
-          </button>
-        </div>
-      </div>
-    </dialog>
-  );
+function formatName(value: string) {
+  const words=value.trim().split(/\s+/); if(words.length<2)return value;
+  let at=1, distance=Infinity;
+  for(let i=1;i<words.length;i++){const d=Math.abs(words.slice(0,i).join(' ').length-words.slice(i).join(' ').length);if(d<distance){at=i;distance=d;}}
+  return words.slice(0,at).join(' ')+'\n'+words.slice(at).join(' ');
 }
-
-export default function ArtistEditorialCard(
-  props: ArtistEditorialCardProps
-) {
-  const {
-    name,
-    photo,
-    headline,
-    description,
-    links,
-    images,
-    presentation,
-    idPrefix: providedPrefix,
-  } = props;
-
-  const generatedPrefix = useId();
-  const idPrefix = providedPrefix || generatedPrefix;
-
-  const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [lightboxIndex, setLightboxIndex] = useState(0);
-
-  // Section visibility
-  const hasAbout = presentation?.about || photo || description;
-  const hasFormation = !!(
-    presentation?.specialties ||
-    presentation?.techniques ||
-    presentation?.education ||
-    presentation?.experience ||
-    presentation?.location
-  );
-  const hasWorks = images.length > 0;
-  const hasLinks = links.length > 0;
-
-  const openLightbox = (index: number) => {
-    setLightboxIndex(index);
-    setLightboxOpen(true);
-  };
-
-  return (
-    <article className={styles.artistCard} id={`${idPrefix}-card`}>
-      {/* HERO */}
-      <section className={styles.hero}>
-        <div className={styles.heroContent}>
-          <div className={styles.heroLeft}>
-            <div className={styles.monogram}>{initials(name)}</div>
-            <div className={styles.heroTitle}>{name}</div>
-            {headline && <div className={styles.heroHeadline}>{headline}</div>}
-            {presentation?.tagline && (
-              <div className={styles.heroTagline}>
-                <span className={styles.orangeBar} />
-                {presentation.tagline}
-              </div>
-            )}
-          </div>
-
-          <div className={styles.heroRight}>
-            {photo ? (
-              <img
-                src={photo}
-                alt={name}
-                className={styles.heroPhoto}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            ) : presentation?.cover ? (
-              <img
-                src={presentation.cover.url}
-                alt={presentation.cover.alt}
-                className={styles.heroPhoto}
-                style={{
-                  objectPosition: `${presentation.cover.x}% ${presentation.cover.y}%`,
-                }}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            ) : (
-              <div className={styles.heroPhotoPlaceholder} />
-            )}
-          </div>
-        </div>
-
-        {hasFormation || hasWorks || hasLinks ? (
-          <nav className={styles.heroNav}>
-            {hasAbout && (
-              <a href={`#${idPrefix}-about`} className={styles.navLink}>
-                SOBRE
-              </a>
-            )}
-            {hasFormation && (
-              <a href={`#${idPrefix}-formation`} className={styles.navLink}>
-                FORMAÇÃO
-              </a>
-            )}
-            {hasWorks && (
-              <a href={`#${idPrefix}-works`} className={styles.navLink}>
-                TRABALHOS
-              </a>
-            )}
-            {hasLinks && (
-              <a href={`#${idPrefix}-links`} className={styles.navLink}>
-                REDES
-              </a>
-            )}
-          </nav>
-        ) : null}
-      </section>
-
-      {/* SOBRE O ARTISTA */}
-      {hasAbout && (
-        <section
-          className={styles.section}
-          id={`${idPrefix}-about`}
-          key="about"
-        >
-          <div className={styles.sectionNumber}>01</div>
-          <h2 className={styles.sectionTitle}>Sobre o Artista</h2>
-
-          <div className={styles.aboutGrid}>
-            {presentation?.about && (
-              <figure className={styles.aboutPhoto}>
-                <img
-                  src={presentation.about.url}
-                  alt={presentation.about.alt}
-                  style={{
-                    objectPosition: `${presentation.about.x}% ${presentation.about.y}%`,
-                  }}
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              </figure>
-            )}
-
-            <div className={styles.aboutText}>
-              {presentation?.quote && (
-                <blockquote className={styles.quote}>
-                  {presentation.quote}
-                  <span className={styles.quoteBar} />
-                </blockquote>
-              )}
-              <p className={styles.bio}>{description}</p>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* FORMAÇÃO E ATUAÇÃO */}
-      {hasFormation && (
-        <section
-          className={styles.section}
-          id={`${idPrefix}-formation`}
-          key="formation"
-        >
-          <div className={styles.sectionNumber}>02</div>
-          <h2 className={styles.sectionTitle}>Formação e Atuação</h2>
-
-          <div className={styles.formationGrid}>
-            {presentation?.process && (
-              <figure className={styles.formationPhoto}>
-                <img
-                  src={presentation.process.url}
-                  alt={presentation.process.alt}
-                  style={{
-                    objectPosition: `${presentation.process.x}% ${presentation.process.y}%`,
-                  }}
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              </figure>
-            )}
-
-            <ul className={styles.formationList}>
-              {presentation?.specialties && (
-                <li className={styles.formationItem}>
-                  <span className={styles.formationLabel}>Especialidades</span>
-                  <p>{presentation.specialties}</p>
-                </li>
-              )}
-              {presentation?.techniques && (
-                <li className={styles.formationItem}>
-                  <span className={styles.formationLabel}>Técnicas</span>
-                  <p>{presentation.techniques}</p>
-                </li>
-              )}
-              {presentation?.education && (
-                <li className={styles.formationItem}>
-                  <span className={styles.formationLabel}>Formação</span>
-                  <p>{presentation.education}</p>
-                </li>
-              )}
-              {presentation?.experience && (
-                <li className={styles.formationItem}>
-                  <span className={styles.formationLabel}>Experiência</span>
-                  <p>{presentation.experience}</p>
-                </li>
-              )}
-              {presentation?.location && (
-                <li className={styles.formationItem}>
-                  <span className={styles.formationLabel}>Local de Atuação</span>
-                  <p>{presentation.location}</p>
-                </li>
-              )}
-            </ul>
-          </div>
-        </section>
-      )}
-
-      {/* TRABALHOS SELECIONADOS */}
-      {hasWorks && (
-        <section
-          className={styles.section}
-          id={`${idPrefix}-works`}
-          key="works"
-        >
-          <div className={styles.sectionNumber}>03</div>
-          <h2 className={styles.sectionTitle}>Trabalhos Selecionados</h2>
-
-          <div className={styles.worksStrip}>
-            {images.map((img, i) => (
-              <figure
-                key={i}
-                className={styles.workItem}
-                onClick={() => openLightbox(i)}
-              >
-                <img
-                  src={img.url}
-                  alt={img.caption || "Trabalho do artista"}
-                  className={styles.workImage}
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 400'%3E%3Crect fill='%23222' width='300' height='400'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23666' font-family='Helvetica' font-size='12'%3EImage unavailable%3C/text%3E%3C/svg%3E";
-                  }}
-                />
-                {img.caption && (
-                  <figcaption className={styles.workCaption}>
-                    {img.caption}
-                  </figcaption>
-                )}
-              </figure>
-            ))}
-          </div>
-
-          <LightboxDialog
-            isOpen={lightboxOpen}
-            images={images}
-            initialIndex={lightboxIndex}
-            onClose={() => setLightboxOpen(false)}
-            idPrefix={idPrefix}
-          />
-        </section>
-      )}
-
-      {/* REDES E LINKS */}
-      {hasLinks && (
-        <section
-          className={styles.section}
-          id={`${idPrefix}-links`}
-          key="links"
-        >
-          <div className={styles.sectionNumber}>04</div>
-          <h2 className={styles.sectionTitle}>Redes e Links</h2>
-
-          <ul className={styles.linksList}>
-            {links.map((link, i) => (
-              <li key={i} className={styles.linkItem}>
-                <a href={link.url} target="_blank" rel="noopener noreferrer">
-                  <span className={styles.linkIcon}>🔗</span>
-                  <span className={styles.linkLabel}>{link.label}</span>
-                  <span className={styles.linkArrow}>→</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* FOOTER */}
-      <footer className={styles.footer}>
-        <p className={styles.footerName}>{name}</p>
-        {hasFormation || hasWorks || hasLinks ? (
-          <nav className={styles.footerNav}>
-            {hasAbout && (
-              <a href={`#${idPrefix}-about`} className={styles.footerNavLink}>
-                Sobre
-              </a>
-            )}
-            {hasFormation && (
-              <a href={`#${idPrefix}-formation`} className={styles.footerNavLink}>
-                Formação
-              </a>
-            )}
-            {hasWorks && (
-              <a href={`#${idPrefix}-works`} className={styles.footerNavLink}>
-                Trabalhos
-              </a>
-            )}
-            {hasLinks && (
-              <a href={`#${idPrefix}-links`} className={styles.footerNavLink}>
-                Redes
-              </a>
-            )}
-          </nav>
-        ) : null}
-      </footer>
-    </article>
-  );
+function Monogram({name}:{name:string}) {
+  const words=name.split(/\s+/).filter(w=>w&&!['de','da','do','dos','das','e'].includes(w.toLowerCase()));
+  return <>{(words.length>1?[words[0],words.at(-1)!]:words).map(w=>w[0]).join('').toUpperCase()}</>;
 }
-
+function SocialIcon({url}:{url:string}) {
+  const host=new URL(url).hostname.replace(/^www\./,'');
+  if(host==='instagram.com')return <Instagram aria-hidden="true"/>;
+  if(host==='youtube.com'||host==='youtu.be')return <Youtube aria-hidden="true"/>;
+  if(host==='wa.me'||host==='api.whatsapp.com')return <MessageCircle aria-hidden="true"/>;
+  return <Link2 aria-hidden="true"/>;
+}
+function Photo({url,alt,className,x=50,y=50,priority=false}:{url:string;alt:string;className?:string;x?:number;y?:number;priority?:boolean}) {
+  const [failed,setFailed]=useState(false);
+  useEffect(()=>setFailed(false),[url]);
+  if(failed)return <div className={`${className||''} ${styles.imageMissing}`} role="img" aria-label={`${alt}. Imagem indisponível.`}><span>Imagem indisponível</span></div>;
+  return <img src={url} alt={alt} className={className} style={{objectPosition:`${x}% ${y}%`}} loading={priority?'eager':'lazy'} fetchPriority={priority?'high':'auto'} decoding="async" onError={()=>setFailed(true)}/>;
+}
+export default function ArtistEditorialCard({name,photo,headline,description,links,images,presentation:p,idPrefix:given}:ArtistEditorialCardProps) {
+  const auto=useId().replace(/[^a-zA-Z0-9_-]/g,''); const prefix=given||`artist-${auto}`;
+  const gallery=useRef<HTMLDivElement>(null);
+  const returnFocus=useRef<HTMLButtonElement|null>(null);
+  const [selected,setSelected]=useState<number|null>(null);
+  const works=images.filter(i=>text(i.url)).slice(0,12);
+  const socials=links.filter(l=>safeLink(l.url)).slice(0,8);
+  const cover:PublicMedia|null=p?.cover|| (photo?{url:photo,alt:`Retrato de ${name}`,x:50,y:50}:null);
+  const credentials=([
+    ['Especialidades',p?.specialties],['Técnicas',p?.techniques],['Formação',p?.education],['Experiência',p?.experience],['Local de atuação',p?.location]
+  ] as const).filter(([,value])=>text(value));
+  const sections=[
+    ...(text(description)||text(p?.quote)||p?.about?.url?[{id:'sobre',label:'Sobre',title:'Sobre o artista'}]:[]),
+    ...(credentials.length?[{id:'formacao',label:'Formação',title:'Formação e atuação'}]:[]),
+    ...(works.length?[{id:'trabalhos',label:'Trabalhos',title:'Trabalhos selecionados'}]:[]),
+    ...(socials.length?[{id:'redes',label:'Redes e links',title:'Redes e links'}]:[])
+  ];
+  const has=(id:string)=>sections.some(s=>s.id===id);
+  const heading=(id:string)=>{const i=sections.findIndex(s=>s.id===id),s=sections[i];return <div className={styles.sectionHeading}><span className={styles.sectionNumber} aria-hidden="true">{String(i+1).padStart(2,'0')} —</span><h2 id={`${prefix}-${id}-title`}>{s.title}</h2></div>;};
+  const nav=(label:string)=><nav className={styles.nav} aria-label={label}>{sections.map(s=><a key={s.id} href={`#${prefix}-${s.id}`}>{s.label}</a>)}</nav>;
+  useEffect(()=>{if(selected!==null&&selected>=works.length)setSelected(null);},[selected,works.length]);
+  const active=selected===null?null:works[selected];
+  const move=(direction:number)=>setSelected(i=>i===null||!works.length?null:(i+direction+works.length)%works.length);
+  const scroll=(direction:number)=>gallery.current?.scrollBy({left:gallery.current.clientWidth*.85*direction,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  return <article className={styles.card} id={`${prefix}-inicio`}>
+    <section className={`${styles.hero} ${cover?'':styles.noHeroPhoto}`} aria-label="Apresentação do artista">
+      {cover&&<Photo {...cover} alt={cover.alt||`Retrato de ${name}`} className={styles.heroPhoto} priority/>}
+      <div className={styles.heroShade}/>
+      <header className={`${styles.header} ${styles.wrap}`}><a href={`#${prefix}-inicio`} className={styles.monogram} aria-label="Início da apresentação"><Monogram name={name}/></a>{nav('Seções do cartão')}</header>
+      <div className={`${styles.heroInner} ${styles.wrap}`}><div><h1 className={name.length>27?styles.longName:undefined}>{formatName(name)}</h1>{text(headline)&&<p className={styles.eyebrow}>{headline}</p>}</div>{text(p?.tagline)&&<div className={styles.heroSide}><p>{p?.tagline}</p><div className={styles.accentRule}/></div>}</div>
+    </section>
+    {has('sobre')&&<section className={`${styles.section} ${styles.wrap}`} id={`${prefix}-sobre`} aria-labelledby={`${prefix}-sobre-title`}>{heading('sobre')}<div className={`${styles.aboutGrid} ${p?.about?'':styles.noPhoto}`}>{p?.about&&<Photo {...p.about} alt={p.about.alt||`Apresentação de ${name}`} className={`${styles.editorialPhoto} ${styles.aboutPhoto}`}/>}<div>{text(description)&&<p className={styles.bodyCopy}>{description}</p>}{text(p?.quote)&&<blockquote>{p?.quote}</blockquote>}</div></div></section>}
+    {has('formacao')&&<section className={`${styles.section} ${styles.wrap}`} id={`${prefix}-formacao`} aria-labelledby={`${prefix}-formacao-title`}>{heading('formacao')}<div className={`${styles.credentialsGrid} ${p?.process?'':styles.noPhoto}`}>{p?.process&&<Photo {...p.process} alt={p.process.alt||'Processo de trabalho do artista'} className={`${styles.editorialPhoto} ${styles.processPhoto}`}/>}<dl className={styles.credentials}>{credentials.map(([label,value],i)=><div key={label} className={styles.credential}><span className={styles.credentialIndex} aria-hidden="true">{String(i+1).padStart(2,'0')}</span><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div></section>}
+    {has('trabalhos')&&<section className={`${styles.section} ${styles.wrap}`} id={`${prefix}-trabalhos`} aria-labelledby={`${prefix}-trabalhos-title`}>{heading('trabalhos')}<div className={styles.gallery} ref={gallery}>{works.map((image,i)=><figure className={styles.work} key={`${image.url}-${i}`}><button type="button" onClick={e=>{returnFocus.current=e.currentTarget;setSelected(i);}} aria-label={`Abrir ${image.caption||`trabalho ${i+1}`}`}><Photo url={image.url} alt={image.caption||`Trabalho ${i+1}`} className={styles.workPhoto}/></button>{image.caption&&<figcaption>{image.caption}</figcaption>}</figure>)}</div><div className={styles.galleryFooter}><span>Toque na imagem para ver o trabalho completo.</span><div className={styles.galleryControls}><button type="button" onClick={()=>scroll(-1)} aria-label="Trabalhos anteriores"><ChevronLeft/></button><button type="button" onClick={()=>scroll(1)} aria-label="Próximos trabalhos"><ChevronRight/></button></div></div></section>}
+    {has('redes')&&<section className={`${styles.section} ${styles.wrap}`} id={`${prefix}-redes`} aria-labelledby={`${prefix}-redes-title`}>{heading('redes')}<nav className={styles.socialList} aria-label="Redes sociais do artista">{socials.map((link,i)=><a key={`${link.url}-${i}`} className={styles.socialLink} href={link.url} target="_blank" rel="noopener noreferrer"><span className={styles.socialIcon}><SocialIcon url={link.url}/></span><span className={styles.socialLabel}>{link.label||new URL(link.url).hostname}</span><span className={styles.socialAddress}>{link.url.replace(/^https:\/\/(www\.)?/,'').replace(/\/$/,'')}</span><ArrowUpRight className={styles.socialArrow} aria-hidden="true"/></a>)}</nav></section>}
+    <footer className={`${styles.footer} ${styles.wrap}`}><div><div className={styles.footerName}>{name}</div><div className={styles.footerLabel}>Cartão de apresentação do artista</div></div>{nav('Navegação do rodapé')}</footer>
+    <Dialog.Root open={selected!==null&&!!active} onOpenChange={open=>{if(!open)setSelected(null);}}><Dialog.Portal><Dialog.Overlay className={styles.lightboxOverlay}/>{active&&<Dialog.Content className={styles.lightbox} aria-describedby={active.caption?`${prefix}-image-description`:undefined} onCloseAutoFocus={e=>{e.preventDefault();returnFocus.current?.focus();}} onKeyDown={e=>{if(e.key==='ArrowRight'){e.preventDefault();move(1);}else if(e.key==='ArrowLeft'){e.preventDefault();move(-1);}}}><div className={styles.lightboxHeader}><Dialog.Title className={styles.lightboxTitle}>Trabalho {(selected??0)+1} de {works.length}</Dialog.Title><Dialog.Close className={styles.lightboxClose} aria-label="Fechar imagem"><X/></Dialog.Close></div><Photo key={active.url} url={active.url} alt={active.caption||'Trabalho do artista'} className={styles.lightboxImage} priority/><div className={styles.lightboxFooter}>{active.caption?<Dialog.Description id={`${prefix}-image-description`}>{active.caption}</Dialog.Description>:<span/>}<div className={styles.galleryControls}><button type="button" onClick={()=>move(-1)} aria-label="Imagem anterior"><ChevronLeft/></button><button type="button" onClick={()=>move(1)} aria-label="Próxima imagem"><ChevronRight/></button></div></div></Dialog.Content>}</Dialog.Portal></Dialog.Root>
+  </article>;
+}
