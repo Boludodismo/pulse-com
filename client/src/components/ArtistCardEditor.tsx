@@ -1,88 +1,65 @@
-import {normalizeCardLinks} from '../../../shared/studioRelations';
-import {parsePresentation,toPublicPresentation,type ArtistCardPresentationPublic} from '../../../shared/artistCardPresentation';
 import {useState,useEffect,useRef} from 'react';
+import {normalizeCardLinks} from '../../../shared/studioRelations';
+import {toPublicPresentation,type StoredMedia,type ArtistCardPresentationPatch} from '../../../shared/artistCardPresentation';
 import {trpc} from '@/lib/trpc';
 import {Button} from './ui/button';
 import {Input} from './ui/input';
 import {Textarea} from './ui/textarea';
-import {Dialog,DialogContent,DialogHeader,DialogTitle} from './ui/dialog';
+import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from './ui/dialog';
 import {toast} from 'sonner';
 import ArtistEditorialCard from './artist-card/ArtistEditorialCard';
 
-export default function ArtistCardEditor({artistId,name}:{artistId:number,name:string}){
- const [open,setOpen]=useState(false);
- const [previewOpen,setPreviewOpen]=useState(false);
- const utils=trpc.useUtils();
- const q=trpc.studioRelations.card.useQuery({artistId},{enabled:open});
- const [form,setForm]=useState({headline:'',description:'',published:false,links:[] as {label:string,url:string}[],presentation:{quote:'',tagline:'',specialties:'',techniques:'',education:'',experience:'',location:''}});
- const [caption,setCaption]=useState('');
- const [uploading,setUploading]=useState(false);
- const [mediaUploading,setMediaUploading]=useState<string|null>(null);
-
- const initialized=useRef(false);
- useEffect(()=>{if(!open){initialized.current=false;return;}if(q.isLoading||q.error||initialized.current)return;initialized.current=true;if(q.data)setForm({headline:q.data.headline,description:q.data.description,published:!!q.data.published,links:q.data.links,presentation:{quote:q.data.presentation?.quote||'',tagline:q.data.presentation?.tagline||'',specialties:q.data.presentation?.specialties||'',techniques:q.data.presentation?.techniques||'',education:q.data.presentation?.education||'',experience:q.data.presentation?.experience||'',location:q.data.presentation?.location||''}});else setForm({headline:'',description:'',published:false,links:[],presentation:{quote:'',tagline:'',specialties:'',techniques:'',education:'',experience:'',location:''}});},[open,q.isLoading,q.error,q.data]);
-
- const refresh=()=>utils.studioRelations.card.invalidate({artistId});
-const updateMediaFocal=trpc.studioRelations.updateMediaFocal.useMutation({onSuccess:refresh,onError:e=>toast.error(e.message)});
- const save=trpc.studioRelations.saveCard.useMutation({onSuccess:()=>{refresh();toast.success('Cartão salvo.');},onError:e=>toast.error(e.message)});
- const upload=trpc.studioRelations.uploadWork.useMutation({onSuccess:()=>{refresh();setCaption('');toast.success('Trabalho salvo no portfólio.');},onError:e=>toast.error(e.message)});
- const remove=trpc.studioRelations.removeWork.useMutation({onSuccess:refresh,onError:e=>toast.error(e.message)});
- const uploadMedia=trpc.studioRelations.uploadPresentationMedia.useMutation({onSuccess:()=>{refresh();toast.success('Mídia salva.');},onError:e=>toast.error(e.message)});
- const removeMedia=trpc.studioRelations.removePresentationMedia.useMutation({onSuccess:refresh,onError:e=>toast.error(e.message)});
-
- return <><Button size="sm" variant="outline" onClick={e=>{e.stopPropagation();setOpen(true);}}>Cartão virtual</Button><Dialog open={open} onOpenChange={setOpen}><DialogContent onClick={e=>e.stopPropagation()} className="max-h-[90dvh] overflow-y-auto max-w-4xl"><DialogHeader><DialogTitle>Cartão virtual · {name}</DialogTitle></DialogHeader><p className="text-sm text-muted-foreground">Somente nome, avatar, apresentação, redes e trabalhos deste cartão serão públicos. Quando estiver publicado, o envio poderá ser escolhido em cada agendamento.</p>{q.error?<p role="alert">Não foi possível carregar o cartão.</p>:q.isLoading?<p>Carregando…</p>:<><div className="grid gap-6 md:grid-cols-2"><div><form className="space-y-3" onSubmit={e=>{e.preventDefault();try{const links=normalizeCardLinks(form.links);setForm({...(form || {}), links});save.mutate({artistId,...form,links,presentation:form.presentation});}catch(error){toast.error((error as Error).message);}}}>
- <label className="block"><span className="text-sm font-medium">Título / especialidade</span><Input maxLength={160} value={form.headline} onChange={e=>setForm({...form,headline:e.target.value})}/></label>
- <label className="block"><span className="text-sm font-medium">Apresentação</span><Textarea value={form.description} maxLength={3000} onChange={e=>setForm({...form,description:e.target.value})}/></label>
- <div><span className="text-sm font-medium block mb-2">Apresentação Editorial (opcional)</span>
-  <label className="block mb-2"><span className="text-xs">Quote (180 caracteres)</span><Textarea maxLength={180} value={form.presentation.quote} onChange={e=>setForm({...form,presentation:{...form.presentation,quote:e.target.value}})}/></label>
-  <label className="block mb-2"><span className="text-xs">Tagline (180 caracteres)</span><Input maxLength={180} value={form.presentation.tagline} onChange={e=>setForm({...form,presentation:{...form.presentation,tagline:e.target.value}})}/></label>
-  <label className="block mb-2"><span className="text-xs">Especialidades (500 caracteres)</span><Textarea maxLength={500} rows={2} value={form.presentation.specialties} onChange={e=>setForm({...form,presentation:{...form.presentation,specialties:e.target.value}})}/></label>
-  <label className="block mb-2"><span className="text-xs">Técnicas (500 caracteres)</span><Textarea maxLength={500} rows={2} value={form.presentation.techniques} onChange={e=>setForm({...form,presentation:{...form.presentation,techniques:e.target.value}})}/></label>
-  <label className="block mb-2"><span className="text-xs">Formação (1200 caracteres)</span><Textarea maxLength={1200} rows={3} value={form.presentation.education} onChange={e=>setForm({...form,presentation:{...form.presentation,education:e.target.value}})}/></label>
-  <label className="block mb-2"><span className="text-xs">Experiência (700 caracteres)</span><Textarea maxLength={700} rows={3} value={form.presentation.experience} onChange={e=>setForm({...form,presentation:{...form.presentation,experience:e.target.value}})}/></label>
-  <label className="block"><span className="text-xs">Local de Atuação (200 caracteres)</span><Input maxLength={200} value={form.presentation.location} onChange={e=>setForm({...form,presentation:{...form.presentation,location:e.target.value}})}/></label>
- </div>
- <h3>Redes sociais e links</h3>{form.links.map((l,i)=><div className="grid gap-2 sm:grid-cols-[1fr_2fr_auto] rounded-lg border p-3" key={i}><label className="min-w-0 text-sm"><span>Nome da rede (opcional)</span><Input maxLength={40} aria-label={`Nome da rede ${i+1}`} placeholder="Preenchido a partir do link" value={l.label} onChange={e=>setForm({...(form || {}), links:form.links.map((x,j)=>j===i?{...x,label:e.target.value}:x)})}/></label><label className="min-w-0 text-sm"><span>Link completo</span><Input aria-label={`URL da rede ${i+1}`} placeholder="https://www.instagram.com/seuusuario" maxLength={500} type="text" inputMode="url" value={l.url} onChange={e=>setForm({...form,links:form.links.map((x,j)=>j===i?{...x,url:e.target.value}:x)})}/></label><Button type="button" variant="outline" onClick={()=>setForm({...form,links:form.links.filter((_,j)=>j!==i)})}>Remover</Button></div>)}<Button type="button" variant="outline" disabled={form.links.length>=8} onClick={()=>setForm({...form,links:[...form.links,{label:'',url:''}]})}>Adicionar rede social</Button>
- <label className="flex gap-2"><input type="checkbox" checked={form.published} onChange={e=>setForm({...form,published:e.target.checked})}/>Publicar cartão para disponibilizá-lo nos agendamentos</label>
- <div className="flex gap-2"><Button disabled={save.isPending||uploading||upload.isPending||mediaUploading}>Salvar cartão</Button>{q.data?.published===1&&<a className="underline break-all inline-flex items-center text-sm" target="_blank" rel="noreferrer" href={`/artista/${q.data.token}`}>Abrir cartão público →</a>}</div>
- </form></div>
-
- <div className="space-y-4">
- <div>
-  <h3 className="font-semibold mb-2">Portfólio · até 12 trabalhos</h3>
-  <p className="text-sm">Envie somente imagens autorizadas para divulgação. JPG, PNG ou WebP de até 5 MB.</p>
-  <p className="text-sm text-muted-foreground">Você já pode adicionar imagens. Elas são salvas ao enviar; use Salvar cartão para guardar os textos e publicar.</p>
-  <Input aria-label="Legenda do trabalho" placeholder="Legenda do trabalho" value={caption} maxLength={160} onChange={e=>setCaption(e.target.value)} className="mb-2"/>
-  <Input aria-label="Enviar imagem do portfólio" type="file" accept="image/jpeg,image/png,image/webp" disabled={save.isPending||uploading||upload.isPending||(q.data?.images.length||0)>=12} onChange={async e=>{const input=e.currentTarget;const file=input.files?.[0];if(!file)return;if(file.size>5*1024*1024){toast.error('Limite de 5 MB.');return;}setUploading(true);try{const imageBase64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=reject;r.readAsDataURL(file);});await upload.mutateAsync({artistId,caption,imageBase64,mimeType:file.type as any});}catch(error){if(!(error instanceof Error)||!('data' in error))toast.error('Não foi possível enviar a imagem. Tente novamente.');}finally{setUploading(false);input.value='';}}}/>
-  <div className="grid grid-cols-2 gap-3 mt-3">{q.data?.images.map(img=><figure key={img.key} className="border rounded"><img src={img.url} alt={img.caption||'Trabalho do artista'} className="rounded w-full aspect-square object-cover"/><figcaption className="text-xs p-2">{img.caption}</figcaption><Button size="sm" variant="outline" disabled={remove.isPending} onClick={()=>remove.mutate({artistId,key:img.key})} className="w-full">Retirar</Button></figure>)}</div>
- </div>
-
- <div>
-  <h3 className="font-semibold mb-2">Mídias Editoriais (opcional)</h3>
-  <p className="text-sm text-muted-foreground">Foto de apresentação (cover), sobre (about) e processo (process). Uma imagem por slot. Controles de enquadramento (x/y).</p>
-  {(['cover','about','process'] as const).map(slot=><div key={slot} className="border rounded p-3 mb-3">
-   <div className="flex justify-between items-center mb-2">
-    <span className="text-sm font-medium capitalize">{slot}</span>
-    {q.data?.presentation?.[slot]&&<Button size="sm" variant="outline" disabled={removeMedia.isPending} onClick={()=>removeMedia.mutate({artistId,slot})}>Remover</Button>}
-   </div>
-   {q.data?.presentation?.[slot]?(
-    <div className="space-y-2">
-     <img src={q.data.presentation[slot]!.url} alt={q.data.presentation[slot]!.alt} className="w-full aspect-square object-cover rounded border"/>
-     <label className="block text-sm"><span>Alt text</span><Input maxLength={200} defaultValue={q.data.presentation[slot]!.alt} onBlur={e=>updateMediaFocal.mutate({artistId,slot,expectedKey:q.data?.presentation?.[slot]?.key||'',alt:e.currentTarget.value,x:(q.data?.presentation?.[slot]?.x||50),y:(q.data?.presentation?.[slot]?.y||50)})}/>
-     </label>
-     <label className="block text-sm"><span>Focal X (0-100%)</span><Input type="range" min="0" max="100" defaultValue={q.data.presentation[slot]!.x} onBlur={e=>updateMediaFocal.mutate({artistId,slot,expectedKey:q.data?.presentation?.[slot]?.key||'',alt:q.data?.presentation?.[slot]?.alt||'',x:Number(e.currentTarget.value),y:(q.data?.presentation?.[slot]?.y||50)})} className="w-full"/>
-     </label>
-     <label className="block text-sm"><span>Focal Y (0-100%)</span><Input type="range" min="0" max="100" defaultValue={q.data.presentation[slot]!.y} onBlur={e=>updateMediaFocal.mutate({artistId,slot,expectedKey:q.data?.presentation?.[slot]?.key||'',alt:q.data?.presentation?.[slot]?.alt||'',x:(q.data?.presentation?.[slot]?.x||50),y:Number(e.currentTarget.value)})} className="w-full"/>
-     </label>
-    </div>
-   ):(
-    <Input aria-label={`Enviar imagem ${slot}`} type="file" accept="image/jpeg,image/png,image/webp" disabled={mediaUploading===slot} onChange={async e=>{const input=e.currentTarget;const file=input.files?.[0];if(!file)return;if(file.size>5*1024*1024){toast.error('Limite de 5 MB.');return;}setMediaUploading(slot);try{const imageBase64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=reject;r.readAsDataURL(file);});await uploadMedia.mutateAsync({artistId,slot,alt:`Imagem ${slot}`,x:50,y:50,imageBase64,mimeType:file.type as any});}catch(error){toast.error('Não foi possível enviar. Tente novamente.');}finally{setMediaUploading(null);input.value='';}}}/>
-   )}
-  </div>)}
- </div>
- </div></div>
-
- <Button variant="outline" onClick={()=>setPreviewOpen(true)} className="mt-4 w-full">Ver prévia editorial</Button>
- </>}</DialogContent></Dialog>{previewOpen&&q.data&&<Dialog open={previewOpen} onOpenChange={setPreviewOpen}><DialogContent className="max-w-full w-screen max-h-screen overflow-y-auto p-0"><ArtistEditorialCard name={q.data.artistName||name} photo={q.data.artistPhoto} headline={q.data.headline} description={q.data.description} links={q.data.links} images={q.data.images} presentation={toPublicPresentation(q.data.presentation)} idPrefix="preview"/></DialogContent></Dialog>}</>;
+type Slot='cover'|'about'|'process';
+type Mime='image/jpeg'|'image/png'|'image/webp';
+type Texts=Required<ArtistCardPresentationPatch>;
+const emptyTexts=():Texts=>({quote:'',tagline:'',specialties:'',techniques:'',education:'',experience:'',location:''});
+const fields=[['tagline','Frase da capa',180],['quote','Frase autoral',180],['specialties','Especialidades',500],['techniques','Técnicas',500],['education','Formação e aperfeiçoamentos',1200],['experience','Experiência profissional',700],['location','Local de atuação público',200]] as const;
+const slotNames:Record<Slot,string>={cover:'Capa',about:'Foto da biografia',process:'Foto do processo'};
+async function readImage(file:File):Promise<{imageBase64:string;mimeType:Mime}>{
+  if(!['image/jpeg','image/png','image/webp'].includes(file.type))throw new Error('Envie uma imagem JPG, PNG ou WebP.');
+  if(file.size>5*1024*1024)throw new Error('A imagem deve ter no máximo 5 MB.');
+  const imageBase64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));r.readAsDataURL(file);});
+  return {imageBase64,mimeType:file.type as Mime};
 }
-
+function MediaSlot({slot,media,busy,onUpload,onRemove,onFocal}:{slot:Slot;media?:StoredMedia|null;busy:boolean;onUpload:(slot:Slot,file:File)=>Promise<void>;onRemove:(slot:Slot,key:string)=>void;onFocal:(slot:Slot,key:string,draft:{alt:string;x:number;y:number})=>void}){
+  const [draft,setDraft]=useState({alt:media?.alt??'',x:media?.x??50,y:media?.y??50});
+  useEffect(()=>{setDraft({alt:media?.alt??'',x:media?.x??50,y:media?.y??50});},[media?.key]);
+  return <section className="space-y-3 rounded-lg border border-zinc-700 p-4" aria-label={slotNames[slot]}><h4 className="font-medium">{slotNames[slot]}</h4>{media&&<><img src={media.url} alt={draft.alt||slotNames[slot]} className="aspect-[4/3] w-full rounded object-cover" style={{objectPosition:`${draft.x}% ${draft.y}%`}}/><label className="block text-sm">Descrição da imagem<Input maxLength={200} value={draft.alt} disabled={busy} onChange={e=>setDraft({...draft,alt:e.target.value})}/></label><label className="block text-sm">Posição horizontal: {draft.x}%<input className="block w-full accent-orange-500" type="range" min={0} max={100} value={draft.x} disabled={busy} onChange={e=>setDraft({...draft,x:Number(e.target.value)})}/></label><label className="block text-sm">Posição vertical: {draft.y}%<input className="block w-full accent-orange-500" type="range" min={0} max={100} value={draft.y} disabled={busy} onChange={e=>setDraft({...draft,y:Number(e.target.value)})}/></label><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" disabled={busy} onClick={()=>onFocal(slot,media.key,draft)}>Salvar enquadramento</Button><Button type="button" variant="outline" size="sm" disabled={busy} onClick={()=>onRemove(slot,media.key)}>Remover foto</Button></div></>}<label className="block text-sm">{media?'Substituir foto':'Enviar foto'}<Input type="file" aria-label={`${media?'Substituir':'Enviar'} ${slotNames[slot]}`} accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={async e=>{const input=e.currentTarget,file=input.files?.[0];if(file)await onUpload(slot,file);input.value='';}}/></label></section>;
+}
+export default function ArtistCardEditor({artistId,name}:{artistId:number;name:string}){
+  const [open,setOpen]=useState(false),[previewOpen,setPreviewOpen]=useState(false),[uploading,setUploading]=useState(false),[caption,setCaption]=useState('');
+  const [form,setForm]=useState({headline:'',description:'',published:false,links:[] as {label:string;url:string}[],presentation:emptyTexts()});
+  const initialized=useRef(false);
+  const utils=trpc.useUtils();
+  const query=trpc.studioRelations.card.useQuery({artistId},{enabled:open});
+  useEffect(()=>{
+    if(!open){initialized.current=false;return;}
+    if(query.isLoading||query.error||initialized.current)return;
+    initialized.current=true;
+    const card=query.data;const presentation=emptyTexts();for(const [key] of fields)presentation[key]=card?.presentation?.[key]??'';
+    setForm({headline:card?.headline??'',description:card?.description??'',published:!!card?.published,links:card?.links??[],presentation});
+  },[open,query.isLoading,query.error,query.data]);
+  const refresh=()=>utils.studioRelations.card.invalidate({artistId});
+  const onError=(e:{message:string})=>toast.error(e.message);
+  const save=trpc.studioRelations.saveCard.useMutation({onSuccess:async()=>{await refresh();toast.success('Cartão salvo.');},onError});
+  const upload=trpc.studioRelations.uploadWork.useMutation({onSuccess:async()=>{await refresh();toast.success('Trabalho incluído.');},onError});
+  const remove=trpc.studioRelations.removeWork.useMutation({onSuccess:refresh,onError});
+  const reorder=trpc.studioRelations.reorderWorks.useMutation({onSuccess:refresh,onError});
+  const uploadMedia=trpc.studioRelations.uploadPresentationMedia.useMutation({onSuccess:async()=>{await refresh();toast.success('Foto salva.');},onError});
+  const focal=trpc.studioRelations.updateMediaFocal.useMutation({onSuccess:async()=>{await refresh();toast.success('Enquadramento salvo.');},onError});
+  const removeMedia=trpc.studioRelations.removePresentationMedia.useMutation({onSuccess:refresh,onError});
+  const busy=uploading||save.isPending||upload.isPending||remove.isPending||reorder.isPending||uploadMedia.isPending||focal.isPending||removeMedia.isPending;
+  const uploadSlot=async(slot:Slot,file:File)=>{setUploading(true);try{const data=await readImage(file);await uploadMedia.mutateAsync({artistId,slot,alt:slotNames[slot],x:50,y:50,...data});}catch(e){if(!(e instanceof Error)||!('data' in e))toast.error(e instanceof Error?e.message:'Não foi possível enviar a foto.');}finally{setUploading(false);}};
+  const move=(index:number,delta:number)=>{const expectedKeys=(query.data?.images??[]).map(i=>i.key);const keys=[...expectedKeys],to=index+delta;if(to<0||to>=keys.length)return;[keys[index],keys[to]]=[keys[to],keys[index]];reorder.mutate({artistId,keys,expectedKeys});};
+  let previewLinks:{label:string;url:string}[]=[];try{previewLinks=normalizeCardLinks(form.links);}catch{previewLinks=form.links.flatMap(l=>{try{return normalizeCardLinks([l]);}catch{return [];}});}
+  const previewPresentation=toPublicPresentation({...query.data?.presentation,version:1,...form.presentation});
+  return <><Button size="sm" variant="outline" onClick={e=>{e.stopPropagation();setOpen(true);}}>Cartão virtual</Button><Dialog open={open} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent onClick={e=>e.stopPropagation()} className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl"><DialogHeader><DialogTitle>Cartão virtual · {name}</DialogTitle><DialogDescription>Preencha o conteúdo. O sistema mantém o mesmo layout para todos os artistas.</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">Somente os dados escolhidos para este cartão serão públicos. O envio continua sendo escolhido em cada agendamento.</p>{query.error?<p role="alert">Não foi possível carregar o cartão. Feche e tente novamente.</p>:query.isLoading?<p role="status">Carregando…</p>:<>
+    <form onSubmit={e=>{e.preventDefault();try{const links=normalizeCardLinks(form.links);setForm(current=>({...current,links}));save.mutate({artistId,...form,links});}catch(error){toast.error((error as Error).message);}} className="space-y-5">
+      <fieldset disabled={busy} className="space-y-4"><legend className="mb-3 text-lg font-semibold">Apresentação e biografia</legend><label className="block">Título / identificação profissional<Input value={form.headline} maxLength={160} onChange={e=>setForm({...form,headline:e.target.value})}/><span className="text-xs text-muted-foreground">{form.headline.length}/160</span></label><label className="block">Biografia<Textarea rows={6} value={form.description} maxLength={3000} onChange={e=>setForm({...form,description:e.target.value})}/><span className="text-xs text-muted-foreground">{form.description.length}/3000</span></label><div className="grid gap-4 sm:grid-cols-2">{fields.map(([key,label,max])=><label key={key} className="block text-sm">{label}{key==='education'||key==='experience'||key==='specialties'||key==='techniques'?<Textarea rows={3} maxLength={max} value={form.presentation[key]} onChange={e=>setForm({...form,presentation:{...form.presentation,[key]:e.target.value}})}/>:<Input maxLength={max} value={form.presentation[key]} onChange={e=>setForm({...form,presentation:{...form.presentation,[key]:e.target.value}})}/>}<span className="text-xs text-muted-foreground">{form.presentation[key].length}/{max} · opcional</span></label>)}</div></fieldset>
+      <fieldset disabled={busy} className="space-y-3"><legend className="mb-3 text-lg font-semibold">Redes sociais e links</legend><p className="text-sm text-muted-foreground">Aparecem apenas os links informados. Use o endereço completo começando com https://.</p>{form.links.map((link,index)=><div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_2fr_auto]" key={index}><label className="min-w-0 text-sm">Nome da rede (opcional)<Input maxLength={40} value={link.label} onChange={e=>setForm({...form,links:form.links.map((l,i)=>i===index?{...l,label:e.target.value}:l)})}/></label><label className="min-w-0 text-sm">Link completo<Input inputMode="url" type="text" maxLength={500} value={link.url} placeholder="https://www.instagram.com/seuusuario" onChange={e=>setForm({...form,links:form.links.map((l,i)=>i===index?{...l,url:e.target.value}:l)})}/></label><Button type="button" variant="outline" onClick={()=>setForm({...form,links:form.links.filter((_,i)=>i!==index)})}>Remover link</Button></div>)}<Button type="button" variant="outline" disabled={form.links.length>=8} onClick={()=>setForm({...form,links:[...form.links,{label:'',url:''}]})}>Adicionar rede social</Button></fieldset>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={form.published} disabled={busy} onChange={e=>setForm({...form,published:e.target.checked})}/>Publicar cartão para disponibilizá-lo nos agendamentos</label><div className="flex flex-wrap items-center gap-3"><Button type="submit" disabled={busy}>{save.isPending?'Salvando…':'Salvar cartão'}</Button><Button type="button" variant="outline" disabled={busy} onClick={()=>setPreviewOpen(true)}>Ver prévia</Button>{query.data?.published===1&&<a className="break-all text-sm underline" href={`/artista/${query.data.token}`} target="_blank" rel="noopener noreferrer">Abrir cartão público</a>}</div>
+    </form>
+    <section className="mt-3 space-y-3 border-t pt-5"><h3 className="text-lg font-semibold">Fotografias da apresentação</h3><p className="text-sm text-muted-foreground">JPG, PNG ou WebP de até 5 MB. As fotos, remoções e enquadramentos são salvos imediatamente e atualizam um cartão já publicado. Textos e publicação só mudam ao usar “Salvar cartão”.</p><div className="grid gap-4 md:grid-cols-3">{(['cover','about','process'] as const).map(slot=><MediaSlot key={`${slot}-${query.data?.presentation?.[slot]?.key??'empty'}`} slot={slot} media={query.data?.presentation?.[slot]} busy={busy} onUpload={uploadSlot} onRemove={(slot,key)=>removeMedia.mutate({artistId,slot,expectedKey:key})} onFocal={(slot,key,draft)=>focal.mutate({artistId,slot,expectedKey:key,...draft})}/>)}</div></section>
+    <section className="space-y-3 border-t pt-5"><h3 className="text-lg font-semibold">Portfólio · até 12 trabalhos</h3><p className="text-sm text-muted-foreground">Envie somente imagens autorizadas para divulgação. As obras mantêm suas cores originais. A inclusão, ordem e remoção são salvas imediatamente.</p><label className="block text-sm">Legenda do próximo trabalho<Input maxLength={160} value={caption} disabled={busy} onChange={e=>setCaption(e.target.value)}/></label><Input type="file" aria-label="Enviar imagem do portfólio" accept="image/jpeg,image/png,image/webp" disabled={busy||(query.data?.images.length??0)>=12} onChange={async e=>{const input=e.currentTarget,file=input.files?.[0];if(!file)return;setUploading(true);try{const data=await readImage(file);await upload.mutateAsync({artistId,caption,...data});setCaption('');}catch(error){if(!(error instanceof Error)||!('data' in error))toast.error(error instanceof Error?error.message:'Não foi possível enviar a imagem.');}finally{setUploading(false);input.value='';}}}/><div className="grid grid-cols-2 gap-4 sm:grid-cols-3">{query.data?.images.map((image,index)=><figure key={image.key} className="min-w-0 rounded-lg border p-2"><img src={image.url} alt={image.caption||'Trabalho do artista'} className="aspect-[3/4] w-full rounded object-cover"/><figcaption className="my-2 break-words text-xs">{image.caption||`Trabalho ${index+1}`}</figcaption><div className="flex flex-wrap gap-1"><Button type="button" size="sm" variant="outline" aria-label={`Mover trabalho ${index+1} para antes`} disabled={busy||index===0} onClick={()=>move(index,-1)}>↑</Button><Button type="button" size="sm" variant="outline" aria-label={`Mover trabalho ${index+1} para depois`} disabled={busy||index===(query.data?.images.length??0)-1} onClick={()=>move(index,1)}>↓</Button><Button type="button" size="sm" variant="outline" disabled={busy} onClick={()=>remove.mutate({artistId,key:image.key})}>Retirar</Button></div></figure>)}</div></section>
+  </>}</DialogContent></Dialog><Dialog open={previewOpen} onOpenChange={setPreviewOpen}><DialogContent className="max-h-[94dvh] w-[calc(100vw-24px)] overflow-y-auto p-0 sm:max-w-[1200px]"><DialogHeader className="border-b bg-zinc-950 p-4 text-left"><DialogTitle>Prévia do cartão</DialogTitle><DialogDescription>Inclui os textos ainda não salvos e as fotografias já enviadas. Feche a prévia e salve o cartão para publicar alterações de texto.</DialogDescription></DialogHeader><ArtistEditorialCard name={query.data?.artistName||name} photo={query.data?.artistPhoto} headline={form.headline} description={form.description} links={previewLinks} images={query.data?.images??[]} presentation={previewPresentation} idPrefix={`preview-${artistId}`}/></DialogContent></Dialog></>;
+}
