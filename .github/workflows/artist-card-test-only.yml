@@ -1,0 +1,79 @@
+name: Artist card isolated validation
+on:
+  push:
+    branches: [feat/artist-card-editorial-test-2026-09-19]
+permissions:
+  contents: read
+concurrency:
+  group: artist-card-test-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      OUTBOUND_MESSAGING_DISABLED: 'true'
+      SCHEDULER_MODE: disabled
+      VITE_AUTH_MODE: local
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+          pnpm install --frozen-lockfile
+      - name: Unrelated modules unchanged
+        run: |
+          python3 - <<'PY'
+          import subprocess,pathlib
+          base='7928a2fe81263c0293d4a4a63330cadfb18764fe'
+          p='server/routers/studioRelations.ts'
+          before=subprocess.check_output(['git','show',base+':'+p]).decode()
+          after=pathlib.Path(p).read_text()
+          assert before[before.index(' procurement:'):]==after[after.index(' procurement:'):], 'Supplier procedures changed'
+          for p in ['client/src/App.tsx','client/src/pages/Artists.tsx','server/routers.ts','server/storage.ts','package.json','pnpm-lock.yaml']:
+            assert subprocess.check_output(['git','show',base+':'+p])==pathlib.Path(p).read_bytes(),p+' changed'
+          print('Protected module/source checks passed')
+          PY
+      - name: Type check against unchanged baseline
+        run: |
+          set +e
+          pnpm check > /tmp/card-types.txt 2>&1
+          CURRENT=$?
+          cat /tmp/card-types.txt
+          set -e
+          if [ "$CURRENT" != 0 ]; then
+            git worktree add --detach /tmp/artist-card-baseline 7928a2fe81263c0293d4a4a63330cadfb18764fe
+            ln -s "$GITHUB_WORKSPACE/node_modules" /tmp/artist-card-baseline/node_modules
+            (cd /tmp/artist-card-baseline; pnpm check > /tmp/baseline-types.txt 2>&1) || true
+            python3 - <<'PY'
+          import pathlib,re
+          def errors(p):
+            return set(re.sub(r'\(\d+,\d+\)', '(line)', x) for x in pathlib.Path(p).read_text().splitlines() if 'error TS' in x)
+          current=errors('/tmp/card-types.txt'); baseline=errors('/tmp/baseline-types.txt')
+          added=current-baseline
+          print('Baseline TS errors:', len(baseline), 'current:', len(current), 'new:', len(added))
+          for error in sorted(added): print(error)
+          if not current or not baseline: raise SystemExit('Type check did not return comparable diagnostics; inspect logs')
+          if added: raise SystemExit(1)
+          PY
+          fi
+      - name: Card regression tests
+        run: pnpm exec vitest run server/artistCardEditorial.test.ts server/messaging/outboundSafety.test.ts server/appointmentTime.test.ts
+      - name: Production build without deployment
+        run: pnpm build
+      - name: Preserve build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artist-card-validation
+          path: |
+            /tmp/card-types.txt
+            /tmp/baseline-types.txt
+          if-no-files-found: ignore
