@@ -65,9 +65,20 @@ jobs:
           PY
           fi
       - name: Card regression tests
-        run: pnpm exec vitest run server/artistCardEditorial.test.ts server/messaging/outboundSafety.test.ts server/appointmentTime.test.ts
+        run: pnpm exec vitest run --config vitest.artist-card.config.ts server/artistCardEditorial.test.ts server/messaging/outboundSafety.test.ts server/appointmentTime.test.ts
       - name: Production build without deployment
         run: pnpm build
+      - name: Isolated test service HTTP check
+        run: |
+          node --input-type=module <<'JS'
+          const base='https://cartao-artista-teste-staging-custos.up.railway.app';
+          for (const path of ['/api/health','/artists']) {
+            const response=await fetch(base+path,{signal:AbortSignal.timeout(20000)});
+            console.log('Test service',path,'HTTP',response.status,response.headers.get('content-type'));
+            if(!response.ok)throw new Error('Test service is not reachable');
+            if(path==='/api/health')console.log(await response.text());
+          }
+          JS
       - name: Preserve build evidence
         if: always()
         uses: actions/upload-artifact@v4
