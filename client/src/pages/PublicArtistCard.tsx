@@ -1,44 +1,13 @@
-import { useRoute } from "wouter";
-import { trpc } from "@/lib/trpc";
-import ArtistEditorialCard from "@/components/artist-card/ArtistEditorialCard";
-import { parsePresentation, toPublicPresentation } from "@/shared/artistCardPresentation";
+import {useRoute} from 'wouter';
+import {trpc} from '@/lib/trpc';
+import ArtistEditorialCard from '@/components/artist-card/ArtistEditorialCard';
 
-export default function PublicArtistCard() {
-  const [, params] = useRoute("/artista/:token");
-  const q = trpc.studioRelations.publicCard.useQuery({
-    token: params?.token || "",
-  });
-
-  if (q.isLoading)
-    return (
-      <main style={{ padding: "2rem", textAlign: "center" }}>
-        Carregando cartão…
-      </main>
-    );
-
-  if (!q.data)
-    return (
-      <main style={{ padding: "2rem", textAlign: "center" }}>
-        <h1>Cartão indisponível</h1>
-        <p>O artista pode ter pausado a publicação.</p>
-      </main>
-    );
-
-  const card = q.data;
-  const presentation = toPublicPresentation(
-    parsePresentation(card.presentationJson ?? undefined)
-  );
-
-  return (
-    <ArtistEditorialCard
-      name={card.name}
-      photo={card.photo ?? undefined}
-      headline={card.headline}
-      description={card.description}
-      links={card.links}
-      images={card.images}
-      presentation={presentation}
-    />
-  );
+export default function PublicArtistCard(){
+  const [,params]=useRoute('/artista/:token');
+  const token=params?.token||'';
+  const valid=/^[a-f0-9]{48}$/.test(token);
+  const q=trpc.studioRelations.publicCard.useQuery({token},{enabled:valid,retry:false});
+  if(valid&&q.isLoading)return <main className="min-h-screen bg-black p-8 text-zinc-200" role="status">Carregando cartão…</main>;
+  if(!valid||!q.data)return <main className="min-h-screen bg-black p-8 text-zinc-200"><h1 className="text-2xl">Cartão indisponível</h1><p>O artista pode ter pausado a publicação.</p></main>;
+  return <ArtistEditorialCard {...q.data}/>;
 }
-
