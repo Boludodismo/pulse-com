@@ -1,0 +1,33 @@
+name: Artist card production read-only verification
+on:
+  push:
+    branches: [feat/artist-card-editorial-test-2026-09-19]
+    paths: [.github/workflows/artist-card-production-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify real public deployment without credentials or writes
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          const BASE='https://crm.tatuei.com';
+          async function get(path){const r=await fetch(new URL(path,BASE),{signal:AbortSignal.timeout(20000)});return {response:r,text:await r.text()};}
+          const health=await get('/api/health');assert.equal(health.response.status,200);JSON.parse(health.text);console.log('PASS production health HTTP 200');
+          const page=await get('/artists');assert.equal(page.response.status,200);assert.match(page.response.headers.get('content-type')||'',/text\/html/);console.log('PASS artist editor route HTTP 200');
+          const scripts=Array.from(page.text.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/g),m=>m[1]).filter(u=>new URL(u,BASE).origin===BASE).slice(0,4);assert.ok(scripts.length);
+          const assets=[];for(const s of scripts){const a=await get(s);assert.equal(a.response.status,200);assets.push(a.text);}
+          const bundle=assets.join('\n');
+          for(const marker of ['Fotografias da apresentação','uploadPresentationMedia','updateMediaFocal','reorderWorks','Formação e atuação','Salvar enquadramento']){assert.ok(bundle.includes(marker),'Missing deployed marker: '+marker);console.log('PASS deployed editor/template marker: '+marker);}
+          const params=encodeURIComponent(JSON.stringify({json:{artistId:1}}));
+          const privateCard=await get('/api/trpc/studioRelations.card?input='+params);assert.equal(privateCard.response.status,401);console.log('PASS artist card editor rejects unauthenticated reads');
+          const invalid=await get('/api/trpc/studioRelations.publicCard?input='+encodeURIComponent(JSON.stringify({json:{token:'invalid'}})));assert.equal(invalid.response.status,400);console.log('PASS invalid public token rejected');
+          const book=await get('/estudos/cores/');assert.equal(book.response.status,200);console.log('PASS existing Cores reader route remains available');
+          console.log('COMPLETE: production HTTP, new bundled editor and unchanged public access boundaries verified. GET only; no credentials, messages, appointments or customer data used.');
+          JS
