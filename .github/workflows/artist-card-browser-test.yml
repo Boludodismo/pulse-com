@@ -1,0 +1,73 @@
+name: Artist card public browser validation
+on:
+  push:
+    branches: [feat/artist-card-editorial-test-2026-09-19]
+    paths: [.github/workflows/artist-card-browser-test.yml]
+permissions:
+  contents: read
+jobs:
+  public-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated browser test tools
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Verify real public card and save screenshots
+        run: |
+          mkdir -p /tmp/artist-card-browser
+          python - <<'PY'
+          import json,re
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright,expect
+          url='https://cartao-artista-teste-staging-custos.up.railway.app/artista/7c84699ea7c333297878a030f0c64b98f761aacaaa78e687'
+          results=[]
+          with sync_playwright() as p:
+            browser=p.chromium.launch()
+            for width in [1440,768,390]:
+              page=browser.new_page(viewport={'width':width,'height':900 if width>600 else 844},device_scale_factor=1)
+              errors=[]
+              page.on('pageerror',lambda error:errors.append(str(error)))
+              response=page.goto(url,wait_until='domcontentloaded',timeout=45000)
+              assert response.status==200
+              expect(page.locator('h1')).to_contain_text('Artista',timeout=25000)
+              expect(page.get_by_role('heading',name='Sobre o artista',exact=True)).to_be_visible()
+              expect(page.get_by_role('heading',name='Formação e atuação',exact=True)).to_be_visible()
+              expect(page.get_by_role('heading',name='Trabalhos selecionados',exact=True)).to_be_visible()
+              expect(page.get_by_role('heading',name='Redes e links',exact=True)).to_be_visible()
+              assert page.locator('form').count()==0
+              for image in page.locator('article img').all():
+                image.scroll_into_view_if_needed()
+                expect(image).to_be_visible()
+              page.wait_for_function('Array.from(document.querySelectorAll("article img")).every(i=>i.complete&&i.naturalWidth>0)',timeout=25000)
+              dimensions=page.evaluate('({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth})')
+              assert dimensions['scroll']<=dimensions['client']+1,dimensions
+              first=page.get_by_role('button',name='Abrir Trabalho demonstrativo 1',exact=True)
+              first.click()
+              expect(page.get_by_role('dialog',name='Trabalho 1 de 5')).to_be_visible()
+              page.keyboard.press('ArrowRight')
+              expect(page.get_by_role('dialog',name='Trabalho 2 de 5')).to_be_visible()
+              page.keyboard.press('Escape')
+              expect(page.get_by_role('dialog')).to_have_count(0)
+              expect(first).to_be_focused()
+              page.evaluate('window.scrollTo(0,0)')
+              page.wait_for_timeout(500)
+              page.screenshot(path=f'/tmp/artist-card-browser/card-{width}.png',full_page=True)
+              assert not errors,errors
+              results.append({'width':width,'http':200,'sections':4,'images':page.locator('article img').count(),'horizontalOverflow':False,'lightboxAndKeyboard':'passed','pageErrors':errors})
+              page.close()
+            browser.close()
+          Path('/tmp/artist-card-browser/results.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
+          print(json.dumps(results,indent=2))
+          PY
+      - name: Preserve browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artist-card-browser-evidence
+          path: /tmp/artist-card-browser
+          if-no-files-found: warn
