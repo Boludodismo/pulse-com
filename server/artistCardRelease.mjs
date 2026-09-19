@@ -38,7 +38,7 @@ export async function releaseCard(){
  assert.ok(process.env.JWT_SECRET.length>=32,'A strong existing encryption secret is required');
  if(production)assert.ok(['crm.tatuei.com','tatuei.com','www.tatuei.com'].includes(new URL(process.env.APP_BASE_URL).hostname));
  if(isolated){assert.equal(new URL(process.env.DATABASE_URL).pathname,'/artist_card_test_20260919');assert.equal(process.env.OUTBOUND_MESSAGING_DISABLED,'true');}
- const db=await mysql.createConnection({uri:process.env.DATABASE_URL,connectTimeout:15000});
+ const db=await mysql.createConnection(process.env.DATABASE_URL);
  let locked=false;
  const client=new S3Client({region:process.env.AWS_DEFAULT_REGION||'auto',endpoint:process.env.AWS_ENDPOINT_URL,forcePathStyle:process.env.AWS_S3_URL_STYLE==='path',credentials:{accessKeyId:process.env.AWS_ACCESS_KEY_ID,secretAccessKey:process.env.AWS_SECRET_ACCESS_KEY},maxAttempts:2});
  try{

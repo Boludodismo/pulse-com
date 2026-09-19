@@ -46,6 +46,7 @@ export default function ArtistEditorialCard({name,photo,headline,description,lin
   const gallery=useRef<HTMLDivElement>(null);
   const returnFocus=useRef<HTMLButtonElement|null>(null);
   const [selected,setSelected]=useState<number|null>(null);
+  const compactName=name.length>27||name.split(/\s+/).some(word=>word.length>10);
   const works=images.filter(i=>text(i.url)).slice(0,12);
   const socials=links.filter(l=>safeLink(l.url)).slice(0,8);
   const cover:PublicMedia|null=p?.cover|| (photo?{url:photo,alt:`Retrato de ${name}`,x:50,y:50}:null);
@@ -70,7 +71,7 @@ export default function ArtistEditorialCard({name,photo,headline,description,lin
       {cover&&<Photo {...cover} alt={cover.alt||`Retrato de ${name}`} className={styles.heroPhoto} priority/>}
       <div className={styles.heroShade}/>
       <header className={`${styles.header} ${styles.wrap}`}><a href={`#${prefix}-inicio`} className={styles.monogram} aria-label="Início da apresentação"><Monogram name={name}/></a>{nav('Seções do cartão')}</header>
-      <div className={`${styles.heroInner} ${styles.wrap}`}><div><h1 className={name.length>27?styles.longName:undefined}>{formatName(name)}</h1>{text(headline)&&<p className={styles.eyebrow}>{headline}</p>}</div>{text(p?.tagline)&&<div className={styles.heroSide}><p>{p?.tagline}</p><div className={styles.accentRule}/></div>}</div>
+      <div className={`${styles.heroInner} ${styles.wrap}`}><div><h1 className={compactName?styles.longName:undefined}>{formatName(name)}</h1>{text(headline)&&<p className={styles.eyebrow}>{headline}</p>}</div>{text(p?.tagline)&&<div className={styles.heroSide}><p>{p?.tagline}</p><div className={styles.accentRule}/></div>}</div>
     </section>
     {has('sobre')&&<section className={`${styles.section} ${styles.wrap}`} id={`${prefix}-sobre`} aria-labelledby={`${prefix}-sobre-title`}>{heading('sobre')}<div className={`${styles.aboutGrid} ${p?.about?'':styles.noPhoto}`}>{p?.about&&<Photo {...p.about} alt={p.about.alt||`Apresentação de ${name}`} className={`${styles.editorialPhoto} ${styles.aboutPhoto}`}/>}<div>{text(description)&&<p className={styles.bodyCopy}>{description}</p>}{text(p?.quote)&&<blockquote>{p?.quote}</blockquote>}</div></div></section>}
     {has('formacao')&&<section className={`${styles.section} ${styles.wrap}`} id={`${prefix}-formacao`} aria-labelledby={`${prefix}-formacao-title`}>{heading('formacao')}<div className={`${styles.credentialsGrid} ${p?.process?'':styles.noPhoto}`}>{p?.process&&<Photo {...p.process} alt={p.process.alt||'Processo de trabalho do artista'} className={`${styles.editorialPhoto} ${styles.processPhoto}`}/>}<dl className={styles.credentials}>{credentials.map(([label,value],i)=><div key={label} className={styles.credential}><span className={styles.credentialIndex} aria-hidden="true">{String(i+1).padStart(2,'0')}</span><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div></section>}
