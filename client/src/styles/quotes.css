@@ -110,30 +110,33 @@
   margin-top: 8%;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  width: 88%;
-  max-width: 88%;
+  gap: 0.28rem;
+  width: 31%;
+  max-width: 31%;
   position: relative;
   z-index: 8;
+  overflow-wrap: anywhere;
 }
 
 .quote-client-block strong {
-  font-size: 5cqw;
+  font-size: 3.7cqw;
+  line-height: 1.13;
   font-weight: 500;
-  margin-bottom: 0.15rem;
+  margin-bottom: 0.18rem;
 }
 
 .quote-client-block span {
-  font-size: 2.65cqw;
+  font-size: 2.05cqw;
+  line-height: 1.35;
   color: #e5e5e5;
 }
 
 .quote-cover-art {
   position: absolute;
-  left: 24%;
+  left: 40%;
   right: 6.2%;
-  top: 42%;
-  bottom: 10.8%;
+  top: 31%;
+  bottom: 11.5%;
   z-index: 3;
 }
 
@@ -211,7 +214,7 @@
   position: absolute;
   left: 6.2%;
   bottom: 15.5%;
-  width: 22%;
+  width: 25%;
   z-index: 8;
   display: flex;
   flex-direction: column;
