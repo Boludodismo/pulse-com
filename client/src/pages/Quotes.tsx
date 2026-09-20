@@ -19,8 +19,24 @@ const STATUS_LABELS: Record<string, string> = {
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function addDaysIso(days: number) { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); }
-function brlValue(cents: number) { return cents ? (cents / 100).toFixed(2) : ""; }
-function toCents(value: string) { const n = Number(value.replace(",", ".")); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : 0; }
+function brlValue(cents: number) {
+  if (!cents) return "";
+  const whole = Math.trunc(cents / 100);
+  const decimals = Math.abs(cents % 100);
+  return decimals ? whole + "," + String(decimals).padStart(2, "0") : String(whole);
+}
+function toCents(value: string) {
+  const raw = value.trim().replace(/\s/g, "").replace(/[^\d,.-]/g, "");
+  if (!raw) return 0;
+  let normalized = raw;
+  if (raw.includes(",")) {
+    normalized = raw.replace(/\./g, "").replace(",", ".");
+  } else if ((raw.match(/\./g) || []).length > 1) {
+    normalized = raw.replace(/\./g, "");
+  }
+  const n = Number(normalized);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : 0;
+}
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -396,8 +412,32 @@ export default function Quotes() {
             <h2 className="font-semibold">5. Investimento</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2 sm:col-span-2"><Label>Descrição</Label><Input value={editor.pricing.mainLabel} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, mainLabel: e.target.value } }))} /></div>
-              <div className="space-y-2"><Label>Valor total (R$)</Label><Input type="number" min="0" step="0.01" value={brlValue(editor.pricing.totalAmount)} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, totalAmount: toCents(e.target.value) } }))} /></div>
-              <div className="space-y-2"><Label>Sinal (R$)</Label><Input type="number" min="0" step="0.01" value={brlValue(editor.pricing.depositAmount)} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, depositAmount: toCents(e.target.value) } }))} /></div>
+              <div className="space-y-2">
+                <Label>Valor total</Label>
+                <div className="money-input-wrap">
+                  <span className="money-input-prefix">R$</span>
+                  <input
+                    className="money-input-field"
+                    inputMode="decimal"
+                    value={brlValue(editor.pricing.totalAmount)}
+                    placeholder="1800"
+                    onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, totalAmount: toCents(e.target.value) } }))}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Sinal</Label>
+                <div className="money-input-wrap">
+                  <span className="money-input-prefix">R$</span>
+                  <input
+                    className="money-input-field"
+                    inputMode="decimal"
+                    value={brlValue(editor.pricing.depositAmount)}
+                    placeholder="500"
+                    onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, depositAmount: toCents(e.target.value) } }))}
+                  />
+                </div>
+              </div>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showDeposit} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, showDeposit: e.target.checked } }))} />Mostrar sinal e saldo</label>
               <div className="space-y-2"><Label>Parcelamento</Label><Input value={editor.pricing.installmentText} placeholder="até 3x no cartão" onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, installmentText: e.target.value } }))} /></div>
             </div>
