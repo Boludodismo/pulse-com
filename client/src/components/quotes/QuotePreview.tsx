@@ -102,13 +102,11 @@ function MediaImage({
 function Footer({
   page,
   identity,
-  quoteNumber,
   createdDate,
   logoUrl,
 }: {
   page: number;
   identity: QuotePreviewIdentity;
-  quoteNumber: string;
   createdDate: string;
   logoUrl: string | null;
 }) {
@@ -122,7 +120,7 @@ function Footer({
       <div className="quote-footer-copy">
         <strong>{identity.artist.name || "Artista"}</strong>
         <span>Cliente: {identity.client.name || "—"}</span>
-        <small>{quoteNumber || "Rascunho"} · {formatDate(createdDate)}</small>
+        <small>{formatDate(createdDate)}</small>
       </div>
       <div className="quote-footer-page">{String(page).padStart(2, "0")} / 03</div>
     </footer>
@@ -130,7 +128,7 @@ function Footer({
 }
 
 function CoverPage(props: Props) {
-  const { editor, identity, quoteNumber, createdDate, validUntil } = props;
+  const { editor, identity, createdDate, validUntil } = props;
   const cover = editor.media.coverSource === "suggested"
     ? editor.media.suggestedArtwork
     : editor.media.clientReference;
@@ -153,7 +151,6 @@ function CoverPage(props: Props) {
           <strong>Cliente: {identity.client.name || "Nome do cliente"}</strong>
           <span>Criado em: {formatDate(createdDate)}</span>
           <span>Válido até: {formatDate(validUntil)}</span>
-          <span>Nº: {quoteNumber || "RASCUNHO"}</span>
         </div>
       </div>
 
@@ -193,7 +190,6 @@ function CoverPage(props: Props) {
       <Footer
         page={1}
         identity={identity}
-        quoteNumber={quoteNumber}
         createdDate={createdDate}
         logoUrl={logoUrl}
       />
@@ -202,7 +198,7 @@ function CoverPage(props: Props) {
 }
 
 function ArtistPage(props: Props) {
-  const { editor, identity, quoteNumber, createdDate } = props;
+  const { editor, identity, createdDate } = props;
   const logoUrl = activeLogo(editor, identity);
   const specialties = (identity.artist.specialty || editor.project.style || "")
     .split(/[,;\n]/)
@@ -254,7 +250,6 @@ function ArtistPage(props: Props) {
       <Footer
         page={2}
         identity={identity}
-        quoteNumber={quoteNumber}
         createdDate={createdDate}
         logoUrl={logoUrl}
       />
@@ -266,9 +261,9 @@ function SummaryPage(props: Props) {
   const { editor, identity, quoteNumber, createdDate } = props;
   const logoUrl = activeLogo(editor, identity);
   const balance = Math.max(0, editor.pricing.totalAmount - editor.pricing.depositAmount);
-  const contactPhone = identity.artist.phone || identity.studio.phone;
-  const contactInstagram = identity.artist.instagram || identity.studio.instagram;
-  const contactEmail = identity.artist.email || identity.studio.email;
+  const contactPhone = identity.studio.phone;
+  const contactInstagram = identity.studio.instagram;
+  const contactEmail = identity.studio.email;
 
   return (
     <section className="quote-page quote-summary-page" data-quote-page="3">
@@ -350,13 +345,15 @@ function SummaryPage(props: Props) {
           {contactPhone && <span>WhatsApp: {contactPhone}</span>}
           {contactInstagram && <span>Instagram: @{contactInstagram.replace(/^@/, "")}</span>}
           {contactEmail && <span>E-mail: {contactEmail}</span>}
+          {!contactPhone && !contactInstagram && !contactEmail && (
+            <span>Contato do estúdio não informado.</span>
+          )}
         </div>
       </div>
 
       <Footer
         page={3}
         identity={identity}
-        quoteNumber={quoteNumber}
         createdDate={createdDate}
         logoUrl={logoUrl}
       />
