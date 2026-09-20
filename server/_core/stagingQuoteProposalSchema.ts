@@ -1,16 +1,21 @@
 import mysql, { type RowDataPacket } from "mysql2/promise";
 
 const STAGING_ENVIRONMENT_ID = "92e8281a-668a-43ed-b2ba-cac84082a91c";
-const STAGING_SERVICE_ID = "7527417a-b872-42bf-b828-e0987b805196";
+const PRODUCTION_ENVIRONMENT_ID = "9890a3b6-7cb6-4330-abfe-d7665bbcf900";
+const QUOTES_SERVICE_ID = "7527417a-b872-42bf-b828-e0987b805196";
 
 /**
- * Additive schema preparation for the isolated quotes staging preview.
- * Production is intentionally excluded until the feature is approved.
+ * Additive schema preparation for quotes in the controlled CRM service.
+ * Runs only in the known staging/production environments after explicit release approval.
+ * Existing CRM rows are preserved: tables/columns/indexes are created only when absent.
  */
 export async function ensureStagingQuoteProposalSchema() {
+  const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
+  const allowedEnvironment =
+    environmentId === STAGING_ENVIRONMENT_ID || environmentId === PRODUCTION_ENVIRONMENT_ID;
   if (
-    process.env.RAILWAY_ENVIRONMENT_ID !== STAGING_ENVIRONMENT_ID
-    || process.env.RAILWAY_SERVICE_ID !== STAGING_SERVICE_ID
+    !allowedEnvironment
+    || process.env.RAILWAY_SERVICE_ID !== QUOTES_SERVICE_ID
     || process.env.RUN_DB_MIGRATIONS !== "true"
   ) return;
   if (!process.env.DATABASE_URL) throw new Error("Database required for quote staging schema.");
@@ -118,7 +123,7 @@ export async function ensureStagingQuoteProposalSchema() {
       );
     }
 
-    console.log("[Quotes] Staging proposal schema ready; existing CRM data preserved.");
+    console.log("[Quotes] Proposal schema ready; existing CRM data preserved.");
   } finally {
     await connection.query("SELECT RELEASE_LOCK('podcrm_quote_proposal_schema_v1')").catch(() => {});
     await connection.end();
