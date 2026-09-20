@@ -34,7 +34,7 @@ type Props = {
   className?: string;
 };
 
-const GLASS_POLYGON = "polygon(43% 2%, 91% 10%, 75% 95%, 40% 82%, 10% 30%)";
+const GLASS_POLYGON = "polygon(80% 9%, 66% 49%, 53% 88%, 33% 56%, 24% 30%)";
 
 function formatCurrency(cents: number) {
   return new Intl.NumberFormat("pt-BR", {
@@ -91,22 +91,13 @@ function Footer({
   createdDate: string;
   logoUrl: string | null;
 }) {
-  const initials = identity.artist.name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase() || "A";
   return (
-    <footer className="quote-doc-footer">
-      <div className="quote-footer-brand">
-        {logoUrl ? (
+    <footer className={"quote-doc-footer" + (logoUrl ? "" : " quote-doc-footer-no-logo")}>
+      {logoUrl && (
+        <div className="quote-footer-brand">
           <img src={logoUrl} alt="" />
-        ) : (
-          <span className="quote-footer-monogram">{initials}</span>
-        )}
-      </div>
+        </div>
+      )}
       <div className="quote-footer-copy">
         <strong>{identity.artist.name || "Artista"}</strong>
         <span>Cliente: {identity.client.name || "—"}</span>
@@ -146,7 +137,13 @@ function CoverPage(props: Props) {
       </div>
 
       <div className="quote-cover-art" aria-label="Imagem da capa">
-        <div className="quote-orange-aura" />
+        <img
+          className="quote-cover-reference-base"
+          src="/quote-cover-reference.jpg"
+          alt=""
+          aria-hidden="true"
+        />
+        <div className="quote-cover-reference-text-mask" aria-hidden="true" />
         <div className="quote-glass-border" style={{ clipPath: GLASS_POLYGON }}>
           <div className="quote-glass-inner" style={{ clipPath: GLASS_POLYGON }}>
             {cover ? (
@@ -170,14 +167,6 @@ function CoverPage(props: Props) {
               />
             )}
           </div>
-        </div>
-        <div className="quote-glove-hand" aria-hidden="true">
-          <span className="quote-glove-palm" />
-          <span className="quote-glove-finger quote-glove-finger-1" />
-          <span className="quote-glove-finger quote-glove-finger-2" />
-          <span className="quote-glove-finger quote-glove-finger-3" />
-          <span className="quote-glove-finger quote-glove-finger-4" />
-          <span className="quote-glove-thumb" />
         </div>
       </div>
 
