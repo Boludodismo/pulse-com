@@ -114,6 +114,52 @@ function MediaAdjuster(props: {
   </div>;
 }
 
+
+function MoneyInput(props: {
+  valueCents: number;
+  placeholder?: string;
+  onCommit: (valueCents: number) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [rawValue, setRawValue] = useState(() => brlValue(props.valueCents));
+
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) {
+      setRawValue(brlValue(props.valueCents));
+    }
+  }, [props.valueCents]);
+
+  const commit = () => {
+    const cents = toCents(rawValue);
+    props.onCommit(cents);
+    setRawValue(brlValue(cents));
+  };
+
+  return (
+    <div className="money-input-wrap">
+      <span className="money-input-prefix">R$</span>
+      <input
+        ref={inputRef}
+        className="money-input-field"
+        inputMode="decimal"
+        value={rawValue}
+        placeholder={props.placeholder}
+        onChange={(event) => {
+          const next = event.target.value.replace(/[^\d,.-]/g, "");
+          setRawValue(next);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            inputRef.current?.blur();
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 export default function Quotes() {
   const { user } = useAuth();
   const isMobile = useIsMobile();
@@ -329,6 +375,80 @@ export default function Quotes() {
     }
   }
 
+
+  function showPreview() {
+    setMobileTab("preview");
+    window.setTimeout(() => {
+      document.querySelector(".quote-preview-stage")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 0);
+  }
+
+  function renderActionButtons(location: "top" | "bottom") {
+    return (
+      <div className="quote-editor-actions">
+        {location === "top" && quoteStatus === "draft" && quoteId && (
+          <Button variant="outline" onClick={removeDraft}>
+            <Trash2 className="mr-2 h-4 w-4" />
+            Excluir
+          </Button>
+        )}
+
+        {quoteStatus === "draft" && (
+          <Button variant="outline" onClick={() => void saveDraft()} disabled={saving}>
+            <Save className="mr-2 h-4 w-4" />
+            Salvar
+          </Button>
+        )}
+
+        <Button variant="secondary" onClick={showPreview}>
+          <Eye className="mr-2 h-4 w-4" />
+          Visualizar
+        </Button>
+
+        {quoteStatus === "draft" && (
+          <Button onClick={() => void finalizeQuote()} disabled={saving || finalizeMutation.isPending}>
+            <CheckCircle2 className="mr-2 h-4 w-4" />
+            Finalizar e criar link
+          </Button>
+        )}
+
+        {quoteStatus !== "draft" && !publicToken && (
+          <Button onClick={() => void ensureProposalLink()} disabled={ensurePublicLinkMutation.isPending}>
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Criar link
+          </Button>
+        )}
+
+        {publicToken && (
+          <Button variant="outline" onClick={() => void copyProposalLink()}>
+            <Copy className="mr-2 h-4 w-4" />
+            Copiar link
+          </Button>
+        )}
+
+        {publicToken && (
+          <Button onClick={() => void shareProposalLink()}>
+            <Share2 className="mr-2 h-4 w-4" />
+            Compartilhar
+          </Button>
+        )}
+
+        {publicToken && (
+          <Button
+            variant="secondary"
+            onClick={() => window.open(proposalUrl, "_blank", "noopener,noreferrer")}
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Abrir proposta
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   if (mode === "list") return <div className="space-y-5">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div><h1 className="text-2xl font-bold">Orçamentos</h1><p className="mt-1 text-sm text-muted-foreground">Propostas verticais, com identidade do artista e link individual para o cliente.</p></div>
@@ -355,21 +475,14 @@ export default function Quotes() {
         <div className="flex items-center gap-3"><Button variant="outline" size="icon" onClick={() => setMode("list")}><ArrowLeft className="h-4 w-4" /></Button>
           <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-bold">Editor de orçamento</h1><span className={"rounded-full border px-2 py-1 text-[11px] " + statusClass(quoteStatus)}>{STATUS_LABELS[quoteStatus] || quoteStatus}</span></div><p className="mt-1 text-sm text-muted-foreground">{quoteNumber} · vertical 9:16 · smartphone + link</p></div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {quoteStatus === "draft" && quoteId && <Button variant="outline" onClick={removeDraft}><Trash2 className="mr-2 h-4 w-4" />Excluir</Button>}
-          {quoteStatus === "draft" && <Button variant="outline" onClick={() => void saveDraft()} disabled={saving}><Save className="mr-2 h-4 w-4" />Salvar</Button>}
-          {quoteStatus === "draft" && <Button onClick={() => void finalizeQuote()} disabled={saving || finalizeMutation.isPending}><CheckCircle2 className="mr-2 h-4 w-4" />Finalizar e criar link</Button>}
-          {quoteStatus !== "draft" && !publicToken && <Button onClick={() => void ensureProposalLink()} disabled={ensurePublicLinkMutation.isPending}><ExternalLink className="mr-2 h-4 w-4" />Criar link</Button>}
-          {publicToken && <Button variant="outline" onClick={() => void copyProposalLink()}><Copy className="mr-2 h-4 w-4" />Copiar link</Button>}
-          {publicToken && <Button onClick={() => void shareProposalLink()}><Share2 className="mr-2 h-4 w-4" />Compartilhar</Button>}
-          {publicToken && <Button variant="secondary" onClick={() => window.open(proposalUrl, "_blank", "noopener,noreferrer")}><ExternalLink className="mr-2 h-4 w-4" />Abrir proposta</Button>}
-        </div>
+        {renderActionButtons("top")}
       </div>
       {locked && <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">Proposta finalizada: conteúdo bloqueado para preservar exatamente a versão compartilhada com o cliente.</div>}
       {isMobile && <div className="grid grid-cols-2 rounded-lg border bg-card p-1"><button type="button" onClick={() => setMobileTab("edit")} className={"rounded-md px-3 py-2 text-sm " + (mobileTab === "edit" ? "bg-primary text-primary-foreground" : "")}>Editar</button><button type="button" onClick={() => setMobileTab("preview")} className={"rounded-md px-3 py-2 text-sm " + (mobileTab === "preview" ? "bg-primary text-primary-foreground" : "")}>Visualizar</button></div>}
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
-        {editorVisible && <fieldset disabled={locked} className="min-w-0 space-y-5 disabled:opacity-80">
+        {editorVisible && <div className="min-w-0 space-y-5">
+          <fieldset disabled={locked} className="min-w-0 space-y-5 disabled:opacity-80">
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <h2 className="font-semibold">1. Cliente e identificação</h2>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -400,7 +513,7 @@ export default function Quotes() {
               <MediaAdjuster label="Referência do cliente" media={editor.media.clientReference} uploading={uploadingSlot === "clientReference"} onUpload={(f) => void uploadMedia("clientReference", f)} onChange={(p) => updateMedia("clientReference", p)} />
               <MediaAdjuster label="Arte sugerida" media={editor.media.suggestedArtwork} uploading={uploadingSlot === "suggestedArtwork"} onUpload={(f) => void uploadMedia("suggestedArtwork", f)} onChange={(p) => updateMedia("suggestedArtwork", p)} />
             </div>
-            <div className="space-y-2"><Label>Imagem dentro do vidro na capa</Label><div className="grid grid-cols-2 gap-2">
+            <div className="space-y-2"><Label>Imagem principal da capa</Label><div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "reference" } }))} className={"rounded-lg border p-3 text-sm " + (editor.media.coverSource === "reference" ? "border-primary bg-primary/10" : "border-border")}>Referência</button>
               <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "suggested" } }))} className={"rounded-lg border p-3 text-sm " + (editor.media.coverSource === "suggested" ? "border-primary bg-primary/10" : "border-border")}>Arte sugerida</button>
             </div></div>
@@ -414,29 +527,19 @@ export default function Quotes() {
               <div className="space-y-2 sm:col-span-2"><Label>Descrição</Label><Input value={editor.pricing.mainLabel} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, mainLabel: e.target.value } }))} /></div>
               <div className="space-y-2">
                 <Label>Valor total</Label>
-                <div className="money-input-wrap">
-                  <span className="money-input-prefix">R$</span>
-                  <input
-                    className="money-input-field"
-                    inputMode="decimal"
-                    value={brlValue(editor.pricing.totalAmount)}
-                    placeholder="1800"
-                    onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, totalAmount: toCents(e.target.value) } }))}
-                  />
-                </div>
+                <MoneyInput
+                  valueCents={editor.pricing.totalAmount}
+                  placeholder="1800"
+                  onCommit={(totalAmount) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, totalAmount } }))}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Sinal</Label>
-                <div className="money-input-wrap">
-                  <span className="money-input-prefix">R$</span>
-                  <input
-                    className="money-input-field"
-                    inputMode="decimal"
-                    value={brlValue(editor.pricing.depositAmount)}
-                    placeholder="500"
-                    onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, depositAmount: toCents(e.target.value) } }))}
-                  />
-                </div>
+                <MoneyInput
+                  valueCents={editor.pricing.depositAmount}
+                  placeholder="500"
+                  onCommit={(depositAmount) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, depositAmount } }))}
+                />
               </div>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showDeposit} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, showDeposit: e.target.checked } }))} />Mostrar sinal e saldo</label>
               <div className="space-y-2"><Label>Parcelamento</Label><Input value={editor.pricing.installmentText} placeholder="até 3x no cartão" onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, installmentText: e.target.value } }))} /></div>
@@ -455,7 +558,13 @@ export default function Quotes() {
             <div className="space-y-2"><Label>Opacidade da marca d’água · {editor.watermarkOpacity}%</Label><input className="w-full accent-orange-500" type="range" min={20} max={100} value={editor.watermarkOpacity} onChange={(e) => setEditor((v) => ({ ...v, watermarkOpacity: Number(e.target.value) }))} /></div>
             <Button type="button" variant="outline" onClick={() => void saveBranding()}><Save className="mr-2 h-4 w-4" />Salvar identidade como padrão</Button>
           </section>
-        </fieldset>}
+          </fieldset>
+
+          <section className="quote-editor-bottom-actions">
+            <div className="quote-editor-bottom-actions-title">Ações da proposta</div>
+            {renderActionButtons("bottom")}
+          </section>
+        </div>}
 
         {previewVisible && <aside className="min-w-0 lg:sticky lg:top-20"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Eye className="h-4 w-4 text-primary" />Pré-visualização da proposta</div><div className="quote-preview-stage"><QuotePreview editor={editor} identity={identity} quoteNumber={quoteNumber} createdDate={createdDate} validUntil={validUntil} /></div></aside>}
       </div>
