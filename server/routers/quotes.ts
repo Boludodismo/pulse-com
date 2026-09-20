@@ -6,6 +6,7 @@ import { publicProcedure, router, tenantProcedure } from "../_core/trpc";
 import * as dbHelpers from "../db";
 import { storagePut } from "../storage";
 import { artistQuoteBranding, quotePresets, quoteProposals } from "../../drizzle/quoteProposalSchema";
+import { artistCards } from "../../drizzle/studioRelationsSchema";
 import {
   QUOTE_PRESET_CATEGORIES,
   parseQuotePayload,
@@ -352,6 +353,15 @@ export const quotesRouter = router({
       .input(z.object({ token: publicTokenSchema }))
       .query(async ({ input }) => {
         const { row, payload, expired } = await publicQuoteByToken(input.token);
+        const db = await connection();
+        const card = (await db.select({ token: artistCards.token })
+          .from(artistCards)
+          .where(and(
+            eq(artistCards.studioId, row.studioId),
+            eq(artistCards.artistId, payload.artist.id),
+            eq(artistCards.published, 1),
+          ))
+          .limit(1))[0] ?? null;
         return {
           status: row.status,
           createdDate: row.createdDate,
@@ -360,6 +370,7 @@ export const quotesRouter = router({
           viewedAt: row.viewedAt,
           acceptedAt: row.acceptedAt,
           expired,
+          artistCardPath: card ? `/artista/${card.token}` : null,
           payload,
         };
       }),
