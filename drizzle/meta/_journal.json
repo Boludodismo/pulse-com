@@ -428,6 +428,13 @@
       "when": 1789862400000,
       "tag": "0060_quote_proposals",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "5",
+      "when": 1789866000000,
+      "tag": "0061_quote_public_links",
+      "breakpoints": true
     }
   ]
 }
