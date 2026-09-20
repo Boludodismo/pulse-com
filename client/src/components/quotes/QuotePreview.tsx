@@ -135,7 +135,7 @@ function CoverPage(props: Props) {
       </div>
 
       <div className="quote-cover-copy">
-        <h1>ORÇAMENTO</h1>
+        <h1>Orçamento</h1>
         <p className="quote-kicker">ARTE QUE PERMANECE</p>
         <div className="quote-client-block">
           <strong>Cliente: {identity.client.name || "Nome do cliente"}</strong>
@@ -171,8 +171,14 @@ function CoverPage(props: Props) {
             )}
           </div>
         </div>
-        <div className="quote-glove quote-glove-main" />
-        <div className="quote-glove quote-glove-side" />
+        <div className="quote-glove-hand" aria-hidden="true">
+          <span className="quote-glove-palm" />
+          <span className="quote-glove-finger quote-glove-finger-1" />
+          <span className="quote-glove-finger quote-glove-finger-2" />
+          <span className="quote-glove-finger quote-glove-finger-3" />
+          <span className="quote-glove-finger quote-glove-finger-4" />
+          <span className="quote-glove-thumb" />
+        </div>
       </div>
 
       <div className="quote-cover-manifesto">
@@ -273,33 +279,30 @@ function SummaryPage(props: Props) {
       <h2>RESUMO DO PROJETO</h2>
       <div className="quote-accent-line" />
 
-      <div className="quote-summary-images">
-        <div>
+      <div className="quote-project-overview">
+        <div className="quote-project-image">
           <h4>REFERÊNCIA DO CLIENTE</h4>
           <MediaImage media={editor.media.clientReference} />
         </div>
-        <div>
+        <div className="quote-project-image">
           <h4 className="orange">ARTE SUGERIDA</h4>
           <MediaImage media={editor.media.suggestedArtwork} />
         </div>
-      </div>
-
-      <div className="quote-summary-grid">
         <div className="quote-concept">
           <h3>CONCEITO</h3>
           <p>{editor.project.concept || "Descreva o conceito artístico do projeto."}</p>
         </div>
+      </div>
 
-        <div className="quote-details">
-          <h3>DETALHES DO PROJETO</h3>
-          <ul>
-            {editor.project.style && <li><b>Estilo:</b> {editor.project.style}</li>}
-            {editor.project.bodyRegion && <li><b>Região:</b> {editor.project.bodyRegion}</li>}
-            {editor.project.sizeText && <li><b>Tamanho:</b> {editor.project.sizeText}</li>}
-            {editor.project.durationText && <li><b>Tempo estimado:</b> {editor.project.durationText}</li>}
-            <li><b>Sessões:</b> {editor.project.sessions}</li>
-          </ul>
-        </div>
+      <div className="quote-details">
+        <h3>DETALHES DO PROJETO</h3>
+        <ul>
+          {editor.project.style && <li><b>Estilo:</b> {editor.project.style}</li>}
+          {editor.project.bodyRegion && <li><b>Região:</b> {editor.project.bodyRegion}</li>}
+          {editor.project.sizeText && <li><b>Tamanho:</b> {editor.project.sizeText}</li>}
+          {editor.project.durationText && <li><b>Tempo estimado:</b> {editor.project.durationText}</li>}
+          <li><b>Sessões:</b> {editor.project.sessions}</li>
+        </ul>
       </div>
 
       <div className="quote-investment">
