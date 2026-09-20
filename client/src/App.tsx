@@ -5,6 +5,7 @@ import ArtistInventory from './components/ArtistInventory';
 import AcceptArtistInvitation from './pages/AcceptArtistInvitation';
 import IntelligentInbox from './pages/IntelligentInbox';
 import PublicArtistCard from './pages/PublicArtistCard';
+import PublicProposal from "./pages/PublicProposal";
 import CustomerFeedback from "./pages/CustomerFeedback";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -59,6 +60,7 @@ function Router() {
       <Route path="/historicos-anteriores" component={() => <DashboardLayout><LegacyArchive/></DashboardLayout>} />
       <Route path="/intelligent-inbox" component={() => <DashboardLayout><IntelligentInbox/></DashboardLayout>} />
       <Route path="/artista/:token" component={PublicArtistCard} />
+      <Route path="/proposta/:token" component={PublicProposal} />
       <Route path="/feedback/:token" component={CustomerFeedback} />
       <Route path="/" component={() => (
         <DashboardLayout>
