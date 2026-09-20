@@ -421,6 +421,13 @@
       "when": 1789028500000,
       "tag": "0059_artist_card_presentation",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "5",
+      "when": 1789862400000,
+      "tag": "0060_quote_proposals",
+      "breakpoints": true
     }
   ]
 }
