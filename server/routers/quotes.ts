@@ -278,6 +278,23 @@ export const quotesRouter = router({
       return { ok: true, status: "finalized" as const, publicToken, publicPath: `/proposta/${publicToken}` };
     }),
 
+  ensurePublicLink: tenantProcedure
+    .input(z.object({ id: idSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const current = await accessibleQuote(ctx, input.id);
+      if (current.status === "draft") {
+        throw new TRPCError({ code: "CONFLICT", message: "Finalize a proposta antes de gerar o link." });
+      }
+      const publicToken = current.publicToken || randomBytes(24).toString("hex");
+      if (!current.publicToken) {
+        const db = await connection();
+        await db.update(quoteProposals)
+          .set({ publicToken })
+          .where(and(eq(quoteProposals.id, current.id), eq(quoteProposals.studioId, ctx.studioId)));
+      }
+      return { publicToken, publicPath: `/proposta/${publicToken}` };
+    }),
+
   setStatus: tenantProcedure
     .input(z.object({
       id: idSchema,
