@@ -112,7 +112,7 @@ export default function PublicProposal() {
             studio: payload.studio,
             personalLogoUrl: payload.branding.personalLogoUrl,
           }}
-          quoteNumber={query.data.quoteNumber}
+          quoteNumber=""
           createdDate={String(query.data.createdDate)}
           validUntil={String(query.data.validUntil)}
         />
