@@ -401,6 +401,41 @@
   background: linear-gradient(90deg, #050505 0%, rgba(5,5,5,0.86) 9%, transparent 42%), linear-gradient(0deg, #050505 0%, transparent 28%);
 }
 
+.quote-artist-card-link {
+  position: absolute;
+  left: 6.2%;
+  bottom: 26.5%;
+  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  max-width: 40%;
+  border: 1px solid rgba(249, 115, 22, 0.78);
+  border-radius: 999px;
+  padding: 2.2% 4%;
+  color: #fff;
+  background: rgba(8, 8, 8, 0.72);
+  text-decoration: none;
+  font-size: 2.15cqw;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.24);
+}
+
+.quote-artist-card-link span {
+  color: #f97316;
+  font-size: 1.15em;
+  line-height: 1;
+}
+
+.quote-artist-card-link:hover,
+.quote-artist-card-link:focus-visible {
+  background: rgba(249, 115, 22, 0.12);
+  outline: none;
+}
+
 .quote-artist-page blockquote {
   position: absolute;
   left: 6.2%;
