@@ -34,13 +34,13 @@ type Props = {
   className?: string;
 };
 
-const GLASS_POLYGON = "polygon(80% 9%, 66% 49%, 53% 88%, 33% 56%, 24% 30%)";
-
 function formatCurrency(cents: number) {
+  const hasCents = Math.abs(cents % 100) > 0;
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: hasCents ? 2 : 0,
   }).format((cents || 0) / 100);
 }
 
@@ -137,26 +137,20 @@ function CoverPage(props: Props) {
       </div>
 
       <div className="quote-cover-art" aria-label="Imagem da capa">
-        <img
-          className="quote-cover-reference-base"
-          src="/quote-cover-reference.jpg"
-          alt=""
-          aria-hidden="true"
-        />
-        <div className="quote-cover-reference-text-mask" aria-hidden="true" />
-        <div className="quote-glass-border" style={{ clipPath: GLASS_POLYGON }}>
-          <div className="quote-glass-inner" style={{ clipPath: GLASS_POLYGON }}>
+        <div className="quote-cover-frame">
+          <div className="quote-cover-frame-inner">
             {cover ? (
               <img
+                className="quote-cover-image"
                 src={cover.url}
-                alt={cover.alt || "Referência visual"}
+                alt={cover.alt || "Imagem principal da proposta"}
                 style={{
                   objectPosition: `${cover.x}% ${cover.y}%`,
                   transform: `scale(${cover.zoom})`,
                 }}
               />
             ) : (
-              <div className="quote-glass-empty">REFERÊNCIA / ARTE</div>
+              <div className="quote-glass-empty">IMAGEM DA CAPA</div>
             )}
             {logoUrl && (
               <img
