@@ -1,0 +1,686 @@
+.quote-preview-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(249, 115, 22, 0.08), transparent 35%),
+    #101010;
+  border: 1px solid #282828;
+  border-radius: 1rem;
+  padding: 1rem;
+  max-height: calc(100dvh - 9rem);
+  overflow-y: auto;
+}
+
+.quote-document {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.quote-page {
+  position: relative;
+  width: min(100%, 390px);
+  aspect-ratio: 9 / 16;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 75% 25%, rgba(249, 115, 22, 0.06), transparent 24%),
+    linear-gradient(145deg, #080808, #030303 68%, #090909);
+  color: #fff;
+  border: 1px solid #2b2b2b;
+  box-shadow: 0 20px 55px rgba(0, 0, 0, 0.4);
+  font-family: Inter, Montserrat, Arial, sans-serif;
+  container-type: inline-size;
+}
+
+.quote-page * {
+  box-sizing: border-box;
+}
+
+.quote-topline {
+  position: absolute;
+  top: 3.6%;
+  left: 6.2%;
+  right: 6.2%;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(249, 115, 22, 0.65);
+  padding-bottom: 2.2%;
+  z-index: 5;
+}
+
+.quote-topline > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.quote-topline b {
+  font-size: 2.25cqw;
+  letter-spacing: 0.28em;
+  font-weight: 700;
+}
+
+.quote-topline span,
+.quote-topline-tag {
+  color: #bdbdbd;
+  font-size: 1.75cqw;
+  letter-spacing: 0.25em;
+}
+
+.quote-topline-tag {
+  max-width: 40%;
+  text-align: right;
+  line-height: 1.5;
+}
+
+.quote-cover-copy {
+  position: absolute;
+  z-index: 6;
+  left: 6.2%;
+  right: 6.2%;
+  top: 11%;
+}
+
+.quote-cover-copy h1 {
+  margin: 0;
+  font-family: "Brush Script MT", "Segoe Script", cursive;
+  font-size: 15.5cqw;
+  font-weight: 700;
+  line-height: 0.9;
+  letter-spacing: -0.045em;
+  color: #f97316;
+  transform: rotate(-2deg);
+  text-shadow: 0 2px 18px rgba(249, 115, 22, 0.18);
+}
+
+.quote-kicker {
+  margin: 2.8% 0 0 28%;
+  color: #d0d0d0;
+  font-size: 2.15cqw;
+  letter-spacing: 0.42em;
+}
+
+.quote-client-block {
+  margin-top: 8%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 57%;
+  position: relative;
+  z-index: 8;
+}
+
+.quote-client-block strong {
+  font-size: 5cqw;
+  font-weight: 500;
+  margin-bottom: 0.15rem;
+}
+
+.quote-client-block span {
+  font-size: 2.65cqw;
+  color: #e5e5e5;
+}
+
+.quote-cover-art {
+  position: absolute;
+  left: 20%;
+  right: 3%;
+  top: 28%;
+  bottom: 9.5%;
+  z-index: 2;
+}
+
+.quote-orange-aura {
+  position: absolute;
+  inset: 7% 6% 12% 9%;
+  background: radial-gradient(circle, rgba(249, 115, 22, 0.38), rgba(249, 115, 22, 0.02) 58%, transparent 70%);
+  filter: blur(12px);
+}
+
+.quote-glass-border {
+  position: absolute;
+  inset: 1% 6% 3% 7%;
+  background: linear-gradient(135deg, #f97316, #cfcfcf 16%, #3f3f3f 35%, #f97316 72%, #999);
+  filter: drop-shadow(0 0 10px rgba(249, 115, 22, 0.35));
+}
+
+.quote-glass-inner {
+  position: absolute;
+  inset: 1.2%;
+  background: #181818;
+  overflow: hidden !important;
+}
+
+.quote-glass-inner > img:not(.quote-watermark) {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(0.12) contrast(1.06);
+  transform-origin: center;
+}
+
+.quote-glass-empty {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(125deg, rgba(255,255,255,0.06), transparent 35%),
+    #151515;
+  color: #777;
+  font-size: 3cqw;
+  letter-spacing: 0.2em;
+  text-align: center;
+  padding: 20%;
+}
+
+.quote-watermark {
+  position: absolute;
+  right: 12%;
+  bottom: 10%;
+  width: 22%;
+  max-height: 12%;
+  object-fit: contain;
+  z-index: 7;
+  filter: drop-shadow(0 1px 4px rgba(0,0,0,0.7));
+}
+
+.quote-glove {
+  position: absolute;
+  z-index: 6;
+  background:
+    radial-gradient(circle at 40% 30%, #292929 0, #111 38%, #030303 73%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 8px 25px rgba(0,0,0,0.65);
+  filter: contrast(1.1);
+}
+
+.quote-glove-main {
+  width: 38%;
+  height: 35%;
+  left: 10%;
+  bottom: -6%;
+  border-radius: 52% 48% 22% 18%;
+  transform: rotate(-8deg);
+}
+
+.quote-glove-side {
+  width: 20%;
+  height: 28%;
+  right: 4%;
+  bottom: 3%;
+  border-radius: 50% 48% 28% 32%;
+  transform: rotate(16deg);
+}
+
+.quote-cover-manifesto {
+  position: absolute;
+  left: 6.2%;
+  bottom: 14.5%;
+  width: 25%;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-top: 0.55rem;
+  border-top: 2px solid #f97316;
+}
+
+.quote-cover-manifesto span {
+  color: #aaa;
+  font-size: 1.8cqw;
+  letter-spacing: 0.18em;
+}
+
+.quote-cover-manifesto b {
+  font-size: 2.1cqw;
+  line-height: 1.5;
+  letter-spacing: 0.12em;
+}
+
+.quote-doc-footer {
+  position: absolute;
+  z-index: 20;
+  left: 4.7%;
+  right: 4.7%;
+  bottom: 2.1%;
+  height: 6.2%;
+  display: grid;
+  grid-template-columns: 12% 1fr auto;
+  align-items: center;
+  border-top: 1px solid rgba(255,255,255,0.55);
+  padding-top: 1.5%;
+}
+
+.quote-footer-brand {
+  height: 78%;
+  display: flex;
+  align-items: center;
+}
+
+.quote-footer-brand img {
+  max-width: 88%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.quote-footer-monogram {
+  font-family: "Brush Script MT", "Segoe Script", cursive;
+  font-size: 6.5cqw;
+  font-weight: 700;
+  color: white;
+}
+
+.quote-footer-copy {
+  min-width: 0;
+  border-left: 1px solid #555;
+  padding-left: 5%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0 0.55rem;
+  font-size: 1.8cqw;
+}
+
+.quote-footer-copy strong,
+.quote-footer-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote-footer-copy small {
+  grid-column: 1 / -1;
+  color: #aaa;
+  font-size: 1.55cqw;
+  margin-top: 0.15rem;
+}
+
+.quote-footer-page {
+  font-size: 2.7cqw;
+  font-weight: 700;
+  padding-left: 0.65rem;
+  white-space: nowrap;
+}
+
+.quote-accent-line {
+  width: 12%;
+  height: 0.45%;
+  min-height: 2px;
+  background: #f97316;
+}
+
+.quote-artist-copy {
+  position: absolute;
+  z-index: 8;
+  left: 6.2%;
+  top: 12%;
+  width: 49%;
+}
+
+.quote-artist-copy h2,
+.quote-summary-page > h2 {
+  margin: 0;
+  font-size: 8.5cqw;
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+}
+
+.quote-artist-copy .quote-accent-line {
+  margin: 7% 0 7%;
+}
+
+.quote-artist-copy p {
+  margin: 0;
+  font-size: 3cqw;
+  line-height: 1.52;
+  color: #e2e2e2;
+}
+
+.quote-artist-copy h3,
+.quote-summary-page h3 {
+  color: #f97316;
+  font-size: 3.5cqw;
+  margin: 10% 0 4%;
+}
+
+.quote-artist-copy ul,
+.quote-details ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quote-artist-copy li {
+  font-size: 2.8cqw;
+  line-height: 1.55;
+  padding-left: 6%;
+  position: relative;
+}
+
+.quote-artist-copy li::before,
+.quote-details li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.65em;
+  width: 1.2cqw;
+  height: 1.2cqw;
+  border-radius: 999px;
+  background: #f97316;
+}
+
+.quote-artist-photo {
+  position: absolute;
+  right: 0;
+  top: 8%;
+  bottom: 7.7%;
+  width: 55%;
+  overflow: hidden !important;
+}
+
+.quote-artist-photo > img,
+.quote-portrait-placeholder {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.quote-portrait-placeholder {
+  display: grid;
+  place-items: center;
+  color: #777;
+  font-size: 2.4cqw;
+  letter-spacing: 0.2em;
+  background: linear-gradient(145deg, #202020, #080808);
+}
+
+.quote-photo-gradient {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #050505 0%, rgba(5,5,5,0.86) 9%, transparent 42%), linear-gradient(0deg, #050505 0%, transparent 28%);
+}
+
+.quote-artist-page blockquote {
+  position: absolute;
+  left: 6.2%;
+  bottom: 12.5%;
+  z-index: 9;
+  width: 48%;
+  margin: 0;
+}
+
+.quote-artist-page blockquote > span {
+  color: #f97316;
+  font-family: Georgia, serif;
+  font-size: 9cqw;
+  line-height: 0.4;
+}
+
+.quote-artist-page blockquote p {
+  margin: 2% 0 0 8%;
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 3cqw;
+  line-height: 1.4;
+}
+
+.quote-summary-page > h2 {
+  position: absolute;
+  left: 6.2%;
+  top: 12%;
+  z-index: 5;
+  font-size: 7.8cqw;
+}
+
+.quote-summary-page > .quote-accent-line {
+  position: absolute;
+  left: 6.2%;
+  top: 19.5%;
+}
+
+.quote-summary-images {
+  position: absolute;
+  top: 22%;
+  left: 6.2%;
+  right: 6.2%;
+  height: 29%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3.5%;
+}
+
+.quote-summary-images > div {
+  min-width: 0;
+}
+
+.quote-summary-images h4 {
+  margin: 0 0 4%;
+  font-size: 2.45cqw;
+  letter-spacing: 0.02em;
+}
+
+.quote-summary-images h4.orange {
+  color: #f97316;
+}
+
+.quote-media-frame,
+.quote-media-placeholder {
+  height: 87%;
+  border: 1px solid #505050;
+  overflow: hidden !important;
+  background: #101010;
+}
+
+.quote-media-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: center;
+}
+
+.quote-media-placeholder {
+  display: grid;
+  place-items: center;
+  color: #696969;
+  font-size: 2.2cqw;
+  letter-spacing: 0.08em;
+}
+
+.quote-summary-grid {
+  position: absolute;
+  left: 6.2%;
+  right: 6.2%;
+  top: 52.5%;
+  display: grid;
+  grid-template-columns: 0.92fr 1.08fr;
+  gap: 6%;
+}
+
+.quote-summary-grid h3,
+.quote-investment h3,
+.quote-summary-bottom h3 {
+  margin: 0 0 3%;
+  color: #f97316;
+  font-size: 3.1cqw;
+}
+
+.quote-summary-grid p {
+  margin: 0;
+  color: #d8d8d8;
+  font-size: 2.25cqw;
+  line-height: 1.45;
+}
+
+.quote-details li {
+  position: relative;
+  padding-left: 6%;
+  font-size: 2.2cqw;
+  line-height: 1.48;
+}
+
+.quote-investment {
+  position: absolute;
+  top: 68.8%;
+  left: 6.2%;
+  right: 6.2%;
+}
+
+.quote-money-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 2.35cqw;
+  line-height: 1.48;
+}
+
+.quote-installments {
+  font-size: 2cqw;
+  color: #bdbdbd;
+  margin-top: 1.4%;
+}
+
+.quote-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.7rem;
+  border-top: 1px solid #f97316;
+  margin-top: 2%;
+  padding-top: 2%;
+  color: #f97316;
+}
+
+.quote-total span {
+  font-size: 2.75cqw;
+  font-weight: 800;
+}
+
+.quote-total strong {
+  font-size: 5.7cqw;
+  line-height: 1;
+}
+
+.quote-summary-bottom {
+  position: absolute;
+  left: 6.2%;
+  right: 6.2%;
+  bottom: 10.7%;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 6%;
+  border-top: 1px solid #252525;
+  padding-top: 2%;
+}
+
+.quote-summary-bottom p,
+.quote-contact span {
+  margin: 0;
+  color: #bfbfbf;
+  font-size: 1.8cqw;
+  line-height: 1.42;
+}
+
+.quote-contact {
+  border-left: 1px solid rgba(249, 115, 22, 0.65);
+  padding-left: 7%;
+  display: flex;
+  flex-direction: column;
+}
+
+.quote-contact h3 {
+  margin-bottom: 5%;
+}
+
+.quote-print-root {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .quote-preview-stage {
+    max-height: none;
+    padding: 0.65rem;
+  }
+
+  .quote-page {
+    width: min(100%, 430px);
+  }
+}
+
+@page quote-proposal {
+  size: 108mm 192mm;
+  margin: 0;
+}
+
+@media print {
+  body.quote-print-mode {
+    background: #000 !important;
+  }
+
+  body.quote-print-mode [data-sidebar="sidebar"],
+  body.quote-print-mode [data-slot="sidebar"],
+  body.quote-print-mode [data-slot="sidebar-inset"] > div:first-child,
+  body.quote-print-mode .quote-screen-only {
+    display: none !important;
+  }
+
+  body.quote-print-mode [data-slot="sidebar-inset"],
+  body.quote-print-mode .group\/sidebar-wrapper,
+  body.quote-print-mode main {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  body.quote-print-mode .quote-print-root {
+    display: block !important;
+    position: static !important;
+    width: 108mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.quote-print-mode .quote-print-root .quote-document {
+    display: block !important;
+    width: 108mm !important;
+    gap: 0 !important;
+  }
+
+  body.quote-print-mode .quote-print-root .quote-page {
+    page: quote-proposal;
+    width: 108mm !important;
+    height: 192mm !important;
+    max-width: none !important;
+    aspect-ratio: auto !important;
+    margin: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    break-after: page;
+    page-break-after: always;
+    overflow: hidden !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.quote-print-mode .quote-print-root .quote-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  body.quote-print-mode .quote-print-root .quote-glass-inner,
+  body.quote-print-mode .quote-print-root .quote-artist-photo,
+  body.quote-print-mode .quote-print-root .quote-media-frame,
+  body.quote-print-mode .quote-print-root .quote-media-placeholder {
+    overflow: hidden !important;
+  }
+}
