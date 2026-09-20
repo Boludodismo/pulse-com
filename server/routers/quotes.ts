@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { z } from "zod";
-import { router, tenantProcedure } from "../_core/trpc";
+import { publicProcedure, router, tenantProcedure } from "../_core/trpc";
 import * as dbHelpers from "../db";
 import { storagePut } from "../storage";
 import { artistQuoteBranding, quotePresets, quoteProposals } from "../../drizzle/quoteProposalSchema";
@@ -18,6 +18,7 @@ const idSchema = z.number().int().positive();
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida.");
 const quoteStatusSchema = z.enum(["draft", "finalized", "sent", "approved", "rejected", "expired", "cancelled"]);
 const logoSourceSchema = z.enum(["personal", "studio", "none"]);
+const publicTokenSchema = z.string().regex(/^[a-f0-9]{48}$/, "Link inválido.");
 
 async function connection() {
   const db = await dbHelpers.getDb();
@@ -31,6 +32,16 @@ function sqlDate(date: string, endOfDay = false) {
 
 function today() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function nowSql() {
+  return new Date().toISOString().slice(0, 19).replace("T", " ");
+}
+
+function proposalExpired(validUntil: string | Date) {
+  const raw = validUntil instanceof Date ? validUntil.toISOString() : String(validUntil);
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(" ", "T") : raw;
+  return Date.parse(normalized) < Date.now();
 }
 
 function imageExtension(mimeType: string) {
@@ -126,6 +137,21 @@ async function buildStoredPayload(input: {
       personalLogoKey: branding?.personalLogoKey ?? null,
     },
   });
+}
+
+async function publicQuoteByToken(token: string) {
+  const db = await connection();
+  const row = (await db.select().from(quoteProposals)
+    .where(eq(quoteProposals.publicToken, token))
+    .limit(1))[0];
+  if (!row || row.status === "draft" || row.status === "cancelled") {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Proposta não encontrada ou indisponível." });
+  }
+  const payload = parseQuotePayload(row.payload);
+  if (!payload) {
+    throw new TRPCError({ code: "CONFLICT", message: "Esta proposta precisa ser atualizada pelo estúdio." });
+  }
+  return { row, payload, expired: proposalExpired(row.validUntil) };
 }
 
 async function accessibleQuote(ctx: { studioId: number; artistId: number | null }, id: number) {
@@ -243,11 +269,13 @@ export const quotesRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Adicione a imagem que será usada na capa antes de finalizar." });
       }
       const db = await connection();
+      const publicToken = current.publicToken || randomBytes(24).toString("hex");
       await db.update(quoteProposals).set({
         status: "finalized",
-        finalizedAt: new Date().toISOString().slice(0, 19).replace("T", " "),
+        publicToken,
+        finalizedAt: nowSql(),
       }).where(and(eq(quoteProposals.id, current.id), eq(quoteProposals.studioId, ctx.studioId)));
-      return { ok: true, status: "finalized" as const };
+      return { ok: true, status: "finalized" as const, publicToken, publicPath: `/proposta/${publicToken}` };
     }),
 
   setStatus: tenantProcedure
@@ -301,6 +329,52 @@ export const quotesRouter = router({
         zoom: 1,
       };
     }),
+
+  public: router({
+    get: publicProcedure
+      .input(z.object({ token: publicTokenSchema }))
+      .query(async ({ input }) => {
+        const { row, payload, expired } = await publicQuoteByToken(input.token);
+        return {
+          quoteNumber: row.quoteNumber,
+          status: row.status,
+          createdDate: row.createdDate,
+          validUntil: row.validUntil,
+          totalAmount: row.totalAmount,
+          viewedAt: row.viewedAt,
+          acceptedAt: row.acceptedAt,
+          expired,
+          payload,
+        };
+      }),
+
+    markViewed: publicProcedure
+      .input(z.object({ token: publicTokenSchema }))
+      .mutation(async ({ input }) => {
+        const { row } = await publicQuoteByToken(input.token);
+        if (!row.viewedAt) {
+          const db = await connection();
+          await db.update(quoteProposals)
+            .set({ viewedAt: nowSql() })
+            .where(eq(quoteProposals.id, row.id));
+        }
+        return { ok: true };
+      }),
+
+    accept: publicProcedure
+      .input(z.object({ token: publicTokenSchema }))
+      .mutation(async ({ input }) => {
+        const { row, expired } = await publicQuoteByToken(input.token);
+        if (expired) throw new TRPCError({ code: "BAD_REQUEST", message: "Esta proposta está vencida. Fale com o estúdio para receber uma nova versão." });
+        if (row.status === "rejected") throw new TRPCError({ code: "CONFLICT", message: "Esta proposta já foi recusada." });
+        const acceptedAt = row.acceptedAt || nowSql();
+        const db = await connection();
+        await db.update(quoteProposals)
+          .set({ status: "approved", acceptedAt, viewedAt: row.viewedAt || acceptedAt })
+          .where(eq(quoteProposals.id, row.id));
+        return { ok: true, acceptedAt };
+      }),
+  }),
 
   presets: router({
     list: tenantProcedure
