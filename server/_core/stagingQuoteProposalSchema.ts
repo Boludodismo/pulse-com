@@ -81,6 +81,26 @@ export async function ensureStagingQuoteProposalSchema() {
       ")"
     );
 
+    const ensureQuoteColumn = async (name: string, definition: string) => {
+      const [columns] = await connection.query<RowDataPacket[]>(
+        "SHOW COLUMNS FROM quote_proposals LIKE ?",
+        [name],
+      );
+      if (!columns.length) await connection.query("ALTER TABLE quote_proposals ADD COLUMN " + definition);
+    };
+    await ensureQuoteColumn("public_token", "public_token varchar(64) NULL AFTER payload");
+    await ensureQuoteColumn("viewed_at", "viewed_at datetime NULL AFTER public_token");
+    await ensureQuoteColumn("accepted_at", "accepted_at datetime NULL AFTER viewed_at");
+
+    const [tokenIndexes] = await connection.query<RowDataPacket[]>(
+      "SHOW INDEX FROM quote_proposals WHERE Key_name='quote_proposals_public_token_unique'",
+    );
+    if (!tokenIndexes.length) {
+      await connection.query(
+        "ALTER TABLE quote_proposals ADD UNIQUE KEY quote_proposals_public_token_unique (public_token)",
+      );
+    }
+
     const [moduleColumn] = await connection.query<RowDataPacket[]>(
       "SHOW COLUMNS FROM user_module_permissions LIKE 'module'",
     );
