@@ -13,12 +13,13 @@ export async function ensureStagingQuoteProposalSchema() {
   const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
   const allowedEnvironment =
     environmentId === STAGING_ENVIRONMENT_ID || environmentId === PRODUCTION_ENVIRONMENT_ID;
+  const isStaging = environmentId === STAGING_ENVIRONMENT_ID;
   if (
     !allowedEnvironment
     || process.env.RAILWAY_SERVICE_ID !== QUOTES_SERVICE_ID
-    || process.env.RUN_DB_MIGRATIONS !== "true"
+    || (isStaging && process.env.RUN_DB_MIGRATIONS !== "true")
   ) return;
-  if (!process.env.DATABASE_URL) throw new Error("Database required for quote staging schema.");
+  if (!process.env.DATABASE_URL) throw new Error("Database required for quote proposal schema.");
 
   const connection = await mysql.createConnection(process.env.DATABASE_URL);
   try {
