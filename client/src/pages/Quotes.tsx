@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, Eye, FileText, Image as ImageIcon, Plus, Printer, Save, Search, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Copy, ExternalLink, Eye, FileText, Image as ImageIcon, Plus, Save, Search, Share2, Trash2, Upload } from "lucide-react";
 import { DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload } from "@shared/quoteProposal";
 import QuotePreview, { type QuotePreviewIdentity } from "@/components/quotes/QuotePreview";
 import "@/styles/quotes.css";
@@ -109,6 +109,7 @@ export default function Quotes() {
   const [quoteId, setQuoteId] = useState<number | null>(null);
   const [quoteNumber, setQuoteNumber] = useState("RASCUNHO");
   const [quoteStatus, setQuoteStatus] = useState("draft");
+  const [publicToken, setPublicToken] = useState<string | null>(null);
   const [createdDate, setCreatedDate] = useState(isoToday());
   const [validUntil, setValidUntil] = useState(addDaysIso(15));
   const [clientId, setClientId] = useState(0);
@@ -129,6 +130,7 @@ export default function Quotes() {
   const createMutation = trpc.quotes.create.useMutation();
   const updateMutation = trpc.quotes.update.useMutation();
   const finalizeMutation = trpc.quotes.finalize.useMutation();
+  const ensurePublicLinkMutation = trpc.quotes.ensurePublicLink.useMutation();
   const deleteMutation = trpc.quotes.deleteDraft.useMutation();
   const uploadMediaMutation = trpc.quotes.uploadMedia.useMutation();
   const savePresetMutation = trpc.quotes.presets.create.useMutation();
@@ -189,14 +191,14 @@ export default function Quotes() {
 
   function resetEditor() {
     const preferred = user?.artistId && artists.some((a) => a.id === user.artistId) ? user.artistId : (artists[0]?.id || 0);
-    setQuoteId(null); setQuoteNumber("RASCUNHO"); setQuoteStatus("draft"); setCreatedDate(isoToday()); setValidUntil(addDaysIso(15));
+    setQuoteId(null); setQuoteNumber("RASCUNHO"); setQuoteStatus("draft"); setPublicToken(null); setCreatedDate(isoToday()); setValidUntil(addDaysIso(15));
     setClientId(0); setArtistId(preferred); setEditor(buildEmptyQuoteEditorData()); setSnapshot(null); setClientFilter(""); setMobileTab("edit");
     brandingAppliedRef.current = null; setMode("editor");
   }
 
   function loadQuote(row: NonNullable<typeof quotesQuery.data>[number]) {
     if (!row.parsedPayload) { toast.error("Não foi possível ler este orçamento."); return; }
-    setQuoteId(row.id); setQuoteNumber(row.quoteNumber); setQuoteStatus(row.status); setCreatedDate(row.createdDate.slice(0, 10));
+    setQuoteId(row.id); setQuoteNumber(row.quoteNumber); setQuoteStatus(row.status); setPublicToken(row.publicToken || null); setCreatedDate(row.createdDate.slice(0, 10));
     setValidUntil(row.validUntil.slice(0, 10)); setClientId(row.clientId); setArtistId(row.artistId); setEditor(row.parsedPayload.editor);
     setSnapshot(row.parsedPayload); setMobileTab("edit"); setMode("editor");
   }
@@ -217,7 +219,7 @@ export default function Quotes() {
 
   async function finalizeQuote() {
     const id = await saveDraft(); if (!id) return;
-    try { await finalizeMutation.mutateAsync({ id }); setQuoteStatus("finalized"); await utils.quotes.list.invalidate(); toast.success("Orçamento finalizado e bloqueado para preservar o histórico."); }
+    try { const result = await finalizeMutation.mutateAsync({ id }); setQuoteStatus("finalized"); setPublicToken(result.publicToken); await utils.quotes.list.invalidate(); toast.success("Proposta finalizada. O link individual já está pronto para envio."); }
     catch (e) { toast.error(e instanceof Error ? e.message : "Não foi possível finalizar."); }
   }
 
@@ -268,16 +270,52 @@ export default function Quotes() {
     catch (e) { toast.error(e instanceof Error ? e.message : "Não foi possível salvar a identidade."); }
   }
 
-  function printQuote() {
-    document.body.classList.add("quote-print-mode");
-    const cleanup = () => document.body.classList.remove("quote-print-mode");
-    window.addEventListener("afterprint", cleanup, { once: true });
-    requestAnimationFrame(() => { try { window.print(); } catch { cleanup(); } });
+  const proposalUrl = publicToken && typeof window !== "undefined"
+    ? window.location.origin + "/proposta/" + publicToken
+    : "";
+
+  async function ensureProposalLink() {
+    if (!quoteId) return;
+    try {
+      const result = await ensurePublicLinkMutation.mutateAsync({ id: quoteId });
+      setPublicToken(result.publicToken);
+      await utils.quotes.list.invalidate();
+      toast.success("Link da proposta criado.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível criar o link.");
+    }
+  }
+
+  async function copyProposalLink() {
+    if (!proposalUrl) return;
+    try {
+      await navigator.clipboard.writeText(proposalUrl);
+      toast.success("Link copiado.");
+    } catch {
+      toast.error("Não foi possível copiar o link automaticamente.");
+    }
+  }
+
+  async function shareProposalLink() {
+    if (!proposalUrl) return;
+    const title = "Proposta " + quoteNumber;
+    const text = "Olá! Segue sua proposta personalizada.";
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text, url: proposalUrl });
+      } else {
+        await navigator.clipboard.writeText(proposalUrl);
+        toast.success("Link copiado para você compartilhar.");
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
+      toast.error("Não foi possível compartilhar o link.");
+    }
   }
 
   if (mode === "list") return <div className="space-y-5">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div><h1 className="text-2xl font-bold">Orçamentos</h1><p className="mt-1 text-sm text-muted-foreground">Propostas verticais, com identidade do artista e prontas para PDF.</p></div>
+      <div><h1 className="text-2xl font-bold">Orçamentos</h1><p className="mt-1 text-sm text-muted-foreground">Propostas verticais, com identidade do artista e link individual para o cliente.</p></div>
       <Button onClick={resetEditor}><Plus className="mr-2 h-4 w-4" />Novo orçamento</Button>
     </div>
     <div className="relative max-w-xl"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -299,16 +337,19 @@ export default function Quotes() {
     <div className="quote-screen-only space-y-4">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex items-center gap-3"><Button variant="outline" size="icon" onClick={() => setMode("list")}><ArrowLeft className="h-4 w-4" /></Button>
-          <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-bold">Editor de orçamento</h1><span className={"rounded-full border px-2 py-1 text-[11px] " + statusClass(quoteStatus)}>{STATUS_LABELS[quoteStatus] || quoteStatus}</span></div><p className="mt-1 text-sm text-muted-foreground">{quoteNumber} · vertical 9:16 · smartphone + PDF</p></div>
+          <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-bold">Editor de orçamento</h1><span className={"rounded-full border px-2 py-1 text-[11px] " + statusClass(quoteStatus)}>{STATUS_LABELS[quoteStatus] || quoteStatus}</span></div><p className="mt-1 text-sm text-muted-foreground">{quoteNumber} · vertical 9:16 · smartphone + link</p></div>
         </div>
         <div className="flex flex-wrap gap-2">
           {quoteStatus === "draft" && quoteId && <Button variant="outline" onClick={removeDraft}><Trash2 className="mr-2 h-4 w-4" />Excluir</Button>}
           {quoteStatus === "draft" && <Button variant="outline" onClick={() => void saveDraft()} disabled={saving}><Save className="mr-2 h-4 w-4" />Salvar</Button>}
-          {quoteStatus === "draft" && <Button onClick={() => void finalizeQuote()} disabled={saving || finalizeMutation.isPending}><CheckCircle2 className="mr-2 h-4 w-4" />Finalizar</Button>}
-          <Button variant={quoteStatus === "draft" ? "secondary" : "default"} onClick={printQuote}><Printer className="mr-2 h-4 w-4" />Gerar PDF</Button>
+          {quoteStatus === "draft" && <Button onClick={() => void finalizeQuote()} disabled={saving || finalizeMutation.isPending}><CheckCircle2 className="mr-2 h-4 w-4" />Finalizar e criar link</Button>}
+          {quoteStatus !== "draft" && !publicToken && <Button onClick={() => void ensureProposalLink()} disabled={ensurePublicLinkMutation.isPending}><ExternalLink className="mr-2 h-4 w-4" />Criar link</Button>}
+          {publicToken && <Button variant="outline" onClick={() => void copyProposalLink()}><Copy className="mr-2 h-4 w-4" />Copiar link</Button>}
+          {publicToken && <Button onClick={() => void shareProposalLink()}><Share2 className="mr-2 h-4 w-4" />Compartilhar</Button>}
+          {publicToken && <Button variant="secondary" onClick={() => window.open(proposalUrl, "_blank", "noopener,noreferrer")}><ExternalLink className="mr-2 h-4 w-4" />Abrir proposta</Button>}
         </div>
       </div>
-      {locked && <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">Orçamento finalizado: conteúdo bloqueado para preservar a versão enviada.</div>}
+      {locked && <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">Proposta finalizada: conteúdo bloqueado para preservar exatamente a versão compartilhada com o cliente.</div>}
       {isMobile && <div className="grid grid-cols-2 rounded-lg border bg-card p-1"><button type="button" onClick={() => setMobileTab("edit")} className={"rounded-md px-3 py-2 text-sm " + (mobileTab === "edit" ? "bg-primary text-primary-foreground" : "")}>Editar</button><button type="button" onClick={() => setMobileTab("preview")} className={"rounded-md px-3 py-2 text-sm " + (mobileTab === "preview" ? "bg-primary text-primary-foreground" : "")}>Visualizar</button></div>}
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
@@ -376,10 +417,9 @@ export default function Quotes() {
           </section>
         </fieldset>}
 
-        {previewVisible && <aside className="min-w-0 lg:sticky lg:top-20"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Eye className="h-4 w-4 text-primary" />Pré-visualização fiel ao PDF</div><div className="quote-preview-stage"><QuotePreview editor={editor} identity={identity} quoteNumber={quoteNumber} createdDate={createdDate} validUntil={validUntil} /></div></aside>}
+        {previewVisible && <aside className="min-w-0 lg:sticky lg:top-20"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Eye className="h-4 w-4 text-primary" />Pré-visualização da proposta</div><div className="quote-preview-stage"><QuotePreview editor={editor} identity={identity} quoteNumber={quoteNumber} createdDate={createdDate} validUntil={validUntil} /></div></aside>}
       </div>
     </div>
 
-    <div className="quote-print-root" aria-hidden="true"><QuotePreview editor={editor} identity={identity} quoteNumber={quoteNumber} createdDate={createdDate} validUntil={validUntil} /></div>
   </>;
 }
