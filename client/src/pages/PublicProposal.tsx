@@ -6,12 +6,12 @@ import { trpc } from "@/lib/trpc";
 import QuotePreview from "@/components/quotes/QuotePreview";
 import "@/styles/quotes.css";
 
-function whatsappLink(phone?: string | null, clientName?: string, quoteNumber?: string) {
+function whatsappLink(phone?: string | null, clientName?: string) {
   const digits = (phone || "").replace(/\D/g, "");
   if (!digits) return null;
   const normalized = digits.startsWith("55") ? digits : "55" + digits;
   const message = encodeURIComponent(
-    "Olá! Estou falando sobre a proposta " + (quoteNumber || "") + (clientName ? " para " + clientName : "") + ".",
+    "Olá! Estou falando sobre minha proposta" + (clientName ? " para " + clientName : "") + ".",
   );
   return "https://wa.me/" + normalized + "?text=" + message;
 }
@@ -40,9 +40,8 @@ export default function PublicProposal() {
     const payload = query.data?.payload;
     if (!payload) return null;
     return whatsappLink(
-      payload.artist.phone || payload.studio.phone,
+      payload.studio.phone,
       payload.client.name,
-      query.data?.quoteNumber,
     );
   }, [query.data]);
 
@@ -80,7 +79,6 @@ export default function PublicProposal() {
           <strong>{payload.artist.name}</strong>
         </div>
         <div className="proposal-public-meta">
-          <span>{query.data.quoteNumber}</span>
           <span>{query.data.expired ? "Prazo encerrado" : "Válida até " + validUntilLabel}</span>
         </div>
       </header>
@@ -100,7 +98,7 @@ export default function PublicProposal() {
           <Clock3 className="h-5 w-5" />
           <div>
             <strong>Validade encerrada</strong>
-            <span>Entre em contato com o artista para receber uma proposta atualizada.</span>
+            <span>Entre em contato com o estúdio para receber uma proposta atualizada.</span>
           </div>
         </div>
       )}
