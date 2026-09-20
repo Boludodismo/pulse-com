@@ -15,6 +15,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
 import Clients from "./pages/Clients";
+import Quotes from "./pages/Quotes";
 import NewClient from "./pages/NewClient";
 import ClientProfile from "./pages/ClientProfile";
 import Schedule from "./pages/Schedule";
@@ -65,6 +66,11 @@ function Router() {
         </DashboardLayout>
       )} />
       
+      <Route path="/quotes" component={() => (
+        <DashboardLayout>
+          <Quotes />
+        </DashboardLayout>
+      )} />
       <Route path="/clients" component={() => (
         <DashboardLayout>
           <Clients />
