@@ -25,6 +25,7 @@ export function invitedRoutePermission(path: string): SaasModule | 'self' | null
   if (self.has(path)) return 'self';
   if (path==='messaging.getReminderIndicators' || path==='procedures.listLinkedAppointmentIds' || path==='appointments.reminders.list') return 'appointments';
   if (path.startsWith('intelligentInbox.')) return 'intelligent_inbox';
+  if (path.startsWith('quotes.')) return 'quotes';
   if (path.startsWith('pod.catalog.') || path.startsWith('pod.inventory.')) return 'stock';
   if (path.startsWith('pod.planning.')) return 'appointments';
   if (path.startsWith('pod.session.') || path.startsWith('procedures.')) return 'pod';

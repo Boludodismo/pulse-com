@@ -7,6 +7,7 @@ import { ensureAppointmentCardSchema } from "./appointmentCardSchema";
 import { ensureContactImportSchema } from "../contactImport/schema";
 import {ensureStagingArtistInvitationSchema} from './stagingArtistInvitationSchema';
 import {ensureStagingIntelligentInboxSchema} from './stagingIntelligentInboxSchema';
+import { ensureStagingQuoteProposalSchema } from "./stagingQuoteProposalSchema";
 import { ensureStagingMessagingSchema } from "./stagingMessagingSchema";
 import { ensureStagingInventorySchema } from "./stagingInventorySchema";
 import "dotenv/config";
@@ -36,6 +37,7 @@ async function startServer() {
   await ensureStagingMessagingSchema();
   await ensureStagingIntelligentInboxSchema();
   await ensureStagingArtistInvitationSchema();
+  await ensureStagingQuoteProposalSchema();
   await ensureStudioSettingsScope();
   await ensureLegacyStockScope();
   await ensureAppointmentCardSchema();

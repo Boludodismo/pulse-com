@@ -8,6 +8,7 @@ import {artistInvitationsRouter} from './routers/artistInvitations';
 import {intelligentInboxRouter} from './routers/intelligentInbox';
 import {studioRelationsRouter} from './routers/studioRelations';
 import { customerCareRouter } from "./routers/customerCare";
+import { quotesRouter } from "./routers/quotes";
 import { contactImportRouter } from "./routers/contactImport";
 import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
 import { assertOwnArtist, isInventoryManager } from "./inventoryAccess";
@@ -65,6 +66,7 @@ export const appRouter = router({
   artistInvitations: artistInvitationsRouter,
   intelligentInbox: intelligentInboxRouter,
   customerCare: customerCareRouter,
+  quotes: quotesRouter,
   studioRelations: studioRelationsRouter,
   system: systemRouter,
   
