@@ -353,7 +353,6 @@ export const quotesRouter = router({
       .query(async ({ input }) => {
         const { row, payload, expired } = await publicQuoteByToken(input.token);
         return {
-          quoteNumber: row.quoteNumber,
           status: row.status,
           createdDate: row.createdDate,
           validUntil: row.validUntil,
