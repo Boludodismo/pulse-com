@@ -111,7 +111,8 @@
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  width: 57%;
+  width: 88%;
+  max-width: 88%;
   position: relative;
   z-index: 8;
 }
@@ -129,10 +130,10 @@
 
 .quote-cover-art {
   position: absolute;
-  left: 33%;
+  left: 24%;
   right: 6.2%;
-  top: 31%;
-  bottom: 11.2%;
+  top: 42%;
+  bottom: 10.8%;
   z-index: 3;
 }
 
@@ -474,16 +475,31 @@
 
 .quote-media-frame,
 .quote-media-placeholder {
+  position: relative;
   border: 1px solid #505050;
   overflow: hidden !important;
   background: #101010;
 }
 
-.quote-media-frame img {
+.quote-media-main {
   width: 100%;
   height: 100%;
   object-fit: cover;
   transform-origin: center;
+}
+
+.quote-project-watermark {
+  position: absolute;
+  right: 4%;
+  bottom: 4%;
+  width: 20%;
+  height: auto;
+  max-height: 14%;
+  object-fit: contain;
+  z-index: 5;
+  transform: none !important;
+  filter: drop-shadow(0 1px 4px rgba(0,0,0,0.72));
+  pointer-events: none;
 }
 
 .quote-media-placeholder {
