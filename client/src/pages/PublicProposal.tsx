@@ -115,6 +115,7 @@ export default function PublicProposal() {
           quoteNumber=""
           createdDate={String(query.data.createdDate)}
           validUntil={String(query.data.validUntil)}
+          artistCardUrl={query.data.artistCardPath}
         />
       </section>
 
