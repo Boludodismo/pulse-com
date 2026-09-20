@@ -52,11 +52,23 @@ function formatDate(value: string) {
 
 function activeLogo(editor: QuoteEditorData, identity: QuotePreviewIdentity) {
   if (editor.logoSource === "none") return null;
-  if (editor.logoSource === "personal") return identity.personalLogoUrl ?? null;
-  return identity.studio.logoUrl ?? null;
+  if (editor.logoSource === "personal") {
+    return identity.personalLogoUrl ?? identity.studio.logoUrl ?? null;
+  }
+  return identity.studio.logoUrl ?? identity.personalLogoUrl ?? null;
 }
 
-function MediaImage({ media, className = "" }: { media: QuoteMedia | null; className?: string }) {
+function MediaImage({
+  media,
+  className = "",
+  watermarkUrl,
+  watermarkOpacity = 70,
+}: {
+  media: QuoteMedia | null;
+  className?: string;
+  watermarkUrl?: string | null;
+  watermarkOpacity?: number;
+}) {
   if (!media) {
     return (
       <div className={`quote-media-placeholder ${className}`}>
@@ -67,6 +79,7 @@ function MediaImage({ media, className = "" }: { media: QuoteMedia | null; class
   return (
     <div className={`quote-media-frame ${className}`}>
       <img
+        className="quote-media-main"
         src={media.url}
         alt={media.alt || "Imagem do projeto"}
         style={{
@@ -74,6 +87,14 @@ function MediaImage({ media, className = "" }: { media: QuoteMedia | null; class
           transform: `scale(${media.zoom})`,
         }}
       />
+      {watermarkUrl && (
+        <img
+          className="quote-project-watermark"
+          src={watermarkUrl}
+          alt=""
+          style={{ opacity: watermarkOpacity / 100 }}
+        />
+      )}
     </div>
   );
 }
@@ -269,7 +290,11 @@ function SummaryPage(props: Props) {
         </div>
         <div className="quote-project-image">
           <h4 className="orange">ARTE SUGERIDA</h4>
-          <MediaImage media={editor.media.suggestedArtwork} />
+          <MediaImage
+            media={editor.media.suggestedArtwork}
+            watermarkUrl={logoUrl}
+            watermarkOpacity={editor.watermarkOpacity}
+          />
         </div>
         <div className="quote-concept">
           <h3>CONCEITO</h3>
