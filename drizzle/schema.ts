@@ -1,5 +1,6 @@
 import {INBOX_MODULES} from '../shared/intelligentInbox';
 export { careRules, careEvents, careSessions, careTags } from "./customerCareSchema";
+export { quoteProposals, quotePresets, artistQuoteBranding } from "./quoteProposalSchema";
 import { mysqlTable, mysqlSchema, AnyMySqlColumn, index, uniqueIndex, json, int, bigint, varchar, mysqlEnum, timestamp, datetime, text, tinyint, decimal } from "drizzle-orm/mysql-core"
 import { sql } from "drizzle-orm"
 
@@ -306,7 +307,7 @@ export const userModulePermissions = mysqlTable("user_module_permissions", {
 	id: int().autoincrement().notNull(),
 	userId: int().notNull(),
 	studioId: int().notNull(),
-	module: mysqlEnum(['clients','appointments','stock','finance','anamnesis','pod','reports',...INBOX_MODULES]).notNull(),
+	module: mysqlEnum(['clients','appointments','stock','finance','anamnesis','pod','reports','quotes',...INBOX_MODULES]).notNull(),
 	canRead: tinyint().default(0).notNull(),
 	canWrite: tinyint().default(0).notNull(),
 	createdAt: timestamp({ mode: 'string' }).default('CURRENT_TIMESTAMP').notNull(),
