@@ -31,6 +31,7 @@ type Props = {
   quoteNumber: string;
   createdDate: string;
   validUntil: string;
+  artistCardUrl?: string | null;
   className?: string;
 };
 
@@ -241,6 +242,18 @@ function ArtistPage(props: Props) {
         )}
         <div className="quote-photo-gradient" />
       </div>
+
+      {props.artistCardUrl && (
+        <a
+          className="quote-artist-card-link"
+          href={props.artistCardUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Ver perfil completo do artista
+          <span aria-hidden="true">→</span>
+        </a>
+      )}
 
       <blockquote>
         <span>“</span>
