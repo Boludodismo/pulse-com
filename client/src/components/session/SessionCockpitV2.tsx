@@ -404,7 +404,7 @@ async function uploadReference(file:File){
   }
 }
 
-async function finalPhoto(file:File){if(file.size>16*1024*1024)return toast.error("Foto acima de 16 MB.");const b64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(r.error);r.onload=()=>resolve(String(r.result).split(",")[1]||"");r.readAsDataURL(file)});try{await uploadImage.mutateAsync({procedureId,imageBase64:b64,mimeType:file.type||"image/jpeg",imageType:"final"});await utils.pod.session.get.invalidate({procedureId});toast.success("Foto final arquivada na sessão de teste.")}catch(e:any){toast.error(e.message)}}
+async function finalPhoto(file:File){if(file.size>16*1024*1024)return toast.error("Foto acima de 16 MB.");const b64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(r.error);r.onload=()=>resolve(String(r.result).split(",")[1]||"");r.readAsDataURL(file)});try{await uploadImage.mutateAsync({procedureId,imageBase64:b64,mimeType:file.type||"image/jpeg",imageType:"final"});await utils.pod.session.get.invalidate({procedureId});toast.success("Foto final arquivada na sessão.")}catch(e:any){toast.error(e.message)}}
 if(session.isLoading||!proc)return <div className="cockpit-lab" style={{display:"grid",placeItems:"center"}}>Abrindo sessão…</div>;
 
 const panel=(o:number,s:number,side:"left"|"right")=>({"--panel-alpha":o,transform:"scale("+s+")",transformOrigin:side==="left"?"left top":"right top"} as CSSProperties);
