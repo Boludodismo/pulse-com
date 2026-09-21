@@ -158,18 +158,6 @@ export async function ensureSessionCockpitSchema() {
       KEY procedure_visual_layers_order_idx(studioId,procedureId,sortOrder,id)
     ) ENGINE=InnoDB`);
 
-    const [consumptionRecipeColumn] = await connection.query<RowDataPacket[]>(
-      "SHOW COLUMNS FROM procedure_inventory_consumptions LIKE 'recipeId'"
-    );
-    if (!consumptionRecipeColumn.length) {
-      await connection.query(
-        "ALTER TABLE procedure_inventory_consumptions ADD COLUMN recipeId INT NULL AFTER plannedMaterialId"
-      );
-      await connection.query(
-        "ALTER TABLE procedure_inventory_consumptions ADD KEY procedure_inventory_consumptions_recipe_idx (studioId,recipeId,status)"
-      );
-    }
-
     const [sampleLabColumns] = await connection.query<RowDataPacket[]>(
       "SHOW COLUMNS FROM procedure_color_samples LIKE 'labL'"
     );
