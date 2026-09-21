@@ -83,7 +83,7 @@ const [sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null
 const [cup,setCup]=useState<Cup>("M"),[ings,setIngs]=useState<Ingredient[]>([]);
 const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoStack]=useState<StockAction[]>([]),[flash,setFlash]=useState<string|null>(null);
 const [charged,setCharged]=useState(""),[payment,setPayment]=useState<"pix"|"dinheiro"|"credito"|"debito"|"transferencia">("pix");
-const finalInput=useRef<HTMLInputElement>(null);
+const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null);
 const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pts=useRef(new Map<number,{x:number;y:number}>());
 const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null);
 
@@ -154,6 +154,32 @@ async function toggleTimer(){
   try{if(run){await pauseMutation.mutateAsync({procedureId});setRun(false)}else{await resumeMutation.mutateAsync({procedureId});setRun(true)}await utils.pod.session.get.invalidate({procedureId})}catch(e:any){toast.error(e.message)}
 }
 async function saveNotes(){try{await updateProcedure.mutateAsync({id:procedureId,notes:note});setSheet(null);toast.success("Notas salvas na sessão.")}catch(e:any){toast.error(e.message)}}
+async function uploadReference(file:File){
+  if(file.size>16*1024*1024)return toast.error("Imagem acima de 16 MB.");
+  if(!file.type.startsWith("image/"))return toast.error("Selecione um arquivo de imagem.");
+  const b64=await new Promise<string>((resolve,reject)=>{
+    const r=new FileReader();
+    r.onerror=()=>reject(r.error);
+    r.onload=()=>resolve(String(r.result).split(",")[1]||"");
+    r.readAsDataURL(file);
+  });
+  try{
+    await uploadImage.mutateAsync({
+      procedureId,
+      imageBase64:b64,
+      mimeType:file.type||"image/jpeg",
+      imageType:"reference",
+      description:"Referência principal da sessão",
+    });
+    await utils.pod.session.get.invalidate({procedureId});
+    setRefOn(true);
+    setView(V0);
+    toast.success("Referência principal atualizada.");
+  }catch(e:any){
+    toast.error(e.message||"Não foi possível enviar a referência.");
+  }
+}
+
 async function finalPhoto(file:File){if(file.size>16*1024*1024)return toast.error("Foto acima de 16 MB.");const b64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(r.error);r.onload=()=>resolve(String(r.result).split(",")[1]||"");r.readAsDataURL(file)});try{await uploadImage.mutateAsync({procedureId,imageBase64:b64,mimeType:file.type||"image/jpeg",imageType:"final"});await utils.pod.session.get.invalidate({procedureId});toast.success("Foto final arquivada na sessão de teste.")}catch(e:any){toast.error(e.message)}}
 async function finishLive(){const value=Number(charged.replace(",", "."));if(!Number.isFinite(value)||value<0)return toast.error("Informe o valor recebido.");try{await finalize.mutateAsync({procedureId,chargedAmount:value,paymentMethod:payment,notes:note||undefined});setRun(false);setSheet(null);await utils.pod.session.get.invalidate({procedureId});toast.success("Sessão finalizada; financeiro e estoque de staging atualizados.")}catch(e:any){toast.error(e.message)}}
 
@@ -178,7 +204,7 @@ if(session.isLoading||!proc)return <div className="cockpit-lab" style={{display:
 
 const panel=(o:number,s:number,side:"left"|"right")=>({"--panel-alpha":o,transform:"scale("+s+")",transformOrigin:side==="left"?"left top":"right top"} as CSSProperties);
 const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP,pct=Math.round(ml/CUP[cup]*100);
-const refSrc=String(proc.referenceImageUrl||"/quote-cover-reference.jpg");
+const refSrc=proc.referenceImageUrl?String(proc.referenceImageUrl):null;
 
 return <div className="cockpit-lab">
 <header className="cockpit-top">
@@ -192,7 +218,12 @@ return <div className="cockpit-lab">
 <div className="cockpit-anamnese">Sessão #{procedureId} · banco de teste</div>
 <div className="cockpit-view-quick"><button onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button></div>
 <div className="cockpit-transform" style={{transform:"translate("+view.x+"px,"+view.y+"px) rotate("+view.rotation+"deg) scale("+view.scale+")"}}>
-{refOn?<img ref={image} src={refSrc} className="cockpit-reference" style={{opacity:refOp}} alt="Referência"/>:<div className="cockpit-empty">Referência oculta</div>}
+{refOn&&refSrc?<img ref={image} src={refSrc} className="cockpit-reference" style={{opacity:refOp}} alt="Referência"/>:refOn?<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
+  <div>
+    <div style={{marginBottom:10}}>Nenhuma referência anexada</div>
+    <button className="dock-add" style={{padding:"0 16px"}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();referenceInput.current?.click()}}><Plus size={16}/> Adicionar referência</button>
+  </div>
+</div>:<div className="cockpit-empty">Referência oculta</div>}
 {markOn&&samples.map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex,opacity:markOp}}/>)}
 </div>{sampler&&<div className="cockpit-empty" style={{pointerEvents:"none",color:"#fecdd3"}}><Pipette size={28}/><br/>Toque em um ponto da referência</div>}
 </main>
@@ -207,15 +238,17 @@ return <div className="cockpit-lab">
 <aside className={"cockpit-dock right "+(rmin?"minimized ":"")+(rex?"expanded":"")} style={panel(rop,rscale,"right")}>
 <header><button onClick={()=>setRmin(v=>!v)}><Minus size={16}/></button><strong>Camadas</strong><button onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
 <div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={rscale} onChange={e=>setRscale(+e.target.value)}/><output>{Math.round(rscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={rop} onChange={e=>setRop(+e.target.value)}/><output>{Math.round(rop*100)}</output></label></div>
-<div className="dock-body"><div className="layer-card"><img className="layer-thumb" src={refSrc}/><div><strong>Ref. Principal</strong><input type="range" min="0" max="1" step=".05" value={refOp} onChange={e=>setRefOp(+e.target.value)}/></div><button className="layer-eye" onClick={()=>setRefOn(v=>!v)}>{refOn?<Eye size={16}/>:<EyeOff size={16}/>}</button></div>
+<div className="dock-body"><div className="layer-card">{refSrc?<img className="layer-thumb" src={refSrc}/>:<div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Plus size={16}/></div>}<div><strong>Ref. Principal</strong><input type="range" min="0" max="1" step=".05" value={refOp} onChange={e=>setRefOp(+e.target.value)}/></div><button className="layer-eye" onClick={()=>setRefOn(v=>!v)}>{refOn?<Eye size={16}/>:<EyeOff size={16}/>}</button></div>
 <div className="layer-card"><div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Pipette size={17}/></div><div><strong>Amostras</strong><input type="range" min="0" max="1" step=".05" value={markOp} onChange={e=>setMarkOp(+e.target.value)}/></div><button className="layer-eye" onClick={()=>setMarkOn(v=>!v)}>{markOn?<Eye size={16}/>:<EyeOff size={16}/>}</button></div>
-<div className="layer-card"><div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Layers3 size={17}/></div><div><strong>Linework</strong><small style={{fontSize:8,color:"#71717a"}}>próxima etapa</small></div><button className="layer-eye" disabled><EyeOff size={16}/></button></div></div>
+<div className="layer-card"><div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Layers3 size={17}/></div><div><strong>Linework</strong><small style={{fontSize:8,color:"#71717a"}}>próxima etapa</small></div><button className="layer-eye" disabled><EyeOff size={16}/></button></div>
+<button className="dock-add" onClick={()=>referenceInput.current?.click()}><Plus size={16}/>{rex&&(refSrc?" Trocar referência":" Adicionar referência")}</button></div>
 </aside>
 
 <div className="cockpit-palette"><button className="palette-add" onClick={()=>setMode(x=>x==="tonal"?"color":"tonal")}><Palette size={13}/> {mode==="tonal"?"Escala tonal":"Cores"}</button>
 {mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):<>{samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}<button className="palette-add" onClick={()=>setSampler(true)}><Pipette size={13}/> Amostrar</button></>}</div>
 
 {flash&&<div className="cockpit-toast"><Check size={17} color="#10b981"/><span>{flash}</span><button onClick={()=>void undoStock()}>DESFAZER (5s)</button></div>}
+<input ref={referenceInput} type="file" accept="image/jpeg,image/png,image/webp" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void uploadReference(f);e.currentTarget.value=""}}/>
 <input ref={finalInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void finalPhoto(f);e.currentTarget.value=""}}/>
 <footer className="cockpit-bottom"><button onClick={()=>void toggleTimer()}>{run?<Pause size={18}/>:<Play size={18}/>}<span className="button-label">{run?"PAUSAR":"RETOMAR"}</span></button><button onClick={()=>setSheet("materials")}><Package size={18}/><span className="button-label">ESTOQUE</span></button><button onClick={()=>finalInput.current?.click()}><Camera size={18}/><span className="button-label">FOTO</span></button><button className="finish" onClick={()=>{if(!charged&&proc.chargedAmount)setCharged(String(Number(proc.chargedAmount)/100));setSheet("finish")}}><Square size={17}/><span className="button-label">CONCLUIR</span></button></footer>
 
