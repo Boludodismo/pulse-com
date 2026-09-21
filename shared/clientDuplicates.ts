@@ -103,3 +103,62 @@ export function duplicatePairs(clients: DuplicateClient[]) {
     (a, b) => b.reasons.length - a.reasons.length || a.a - b.a || a.b - b.b
   );
 }
+
+export function validCpf(value?: string | null) {
+  if (value && /[^\d.\-\s]/.test(value)) return false;
+  const digits = (value || "").replace(/\D/g, "");
+  if (!/^\d{11}$/.test(digits) || /^(\d)\1{10}$/.test(digits)) return false;
+  for (let length = 9; length <= 10; length++) {
+    let sum = 0;
+    for (let i = 0; i < length; i++)
+      sum += Number(digits[i]) * (length + 1 - i);
+    const digit = (sum * 10) % 11;
+    if ((digit === 10 ? 0 : digit) !== Number(digits[length])) return false;
+  }
+  return true;
+}
+export function automaticMatch(a: DuplicateClient, b: DuplicateClient) {
+  const { reasons, conflicts } = duplicateReasons(a, b);
+  if (!reasons.includes("Mesmo nome completo") || conflicts.length)
+    return false;
+  if (a.email && b.email && identityText(a.email) !== identityText(b.email))
+    return false;
+  const cpf =
+    (a.docType || "cpf") === "cpf" &&
+    (b.docType || "cpf") === "cpf" &&
+    validCpf(a.docNumber) &&
+    reasons.includes("Mesmo documento");
+  const corroborated =
+    reasons.includes("Mesmo telefone") &&
+    reasons.includes("Mesmo e-mail") &&
+    !!a.birthDate &&
+    !!b.birthDate &&
+    a.birthDate.slice(0, 10) === b.birthDate.slice(0, 10);
+  return cpf || corroborated;
+}
+export type AutomaticPair = { targetId: number; sourceId: number };
+export function automaticPairs(
+  clients: (DuplicateClient & Record<string, any>)[]
+): AutomaticPair[] {
+  const score = (c: Record<string, any>) =>
+    Object.keys(mergeFields).filter(
+      k => c[k] != null && String(c[k]).trim() !== ""
+    ).length;
+  const sorted = [...clients].sort(
+    (a, b) => score(b) - score(a) || a.id - b.id
+  );
+  const groups: (typeof clients)[] = [];
+  for (const client of sorted) {
+    // Every member must agree with every other member, including missing-data bridges.
+    const group = groups.find(g =>
+      g.every(member => automaticMatch(member, client))
+    );
+    if (group) group.push(client);
+    else groups.push([client]);
+  }
+  return groups.flatMap(group =>
+    group
+      .slice(1)
+      .map(source => ({ targetId: group[0].id, sourceId: source.id }))
+  );
+}

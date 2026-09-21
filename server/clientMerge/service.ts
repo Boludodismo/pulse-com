@@ -318,9 +318,10 @@ export async function confirmMerge(
   studioId: number,
   actorId: number,
   input: MergeInput,
-  expectedHash: string
+  expectedHash: string,
+  manageTransaction = true
 ) {
-  await c.beginTransaction();
+  if (manageTransaction) await c.beginTransaction();
   try {
     // The studio lock serializes double clicks and two managers merging overlapping pairs.
     await rows(c, "SELECT id FROM studios WHERE id=? FOR UPDATE", [studioId]);
@@ -330,7 +331,7 @@ export async function confirmMerge(
       [studioId, expectedHash]
     );
     if (previous.length) {
-      await c.commit();
+      if (manageTransaction) await c.commit();
       return {
         ...JSON.parse(previous[0].result_json),
         auditId: previous[0].id,
@@ -446,10 +447,10 @@ export async function confirmMerge(
         JSON.stringify(result),
       ]
     );
-    await c.commit();
+    if (manageTransaction) await c.commit();
     return { ...result, auditId: audit.insertId, repeated: false };
   } catch (error) {
-    await c.rollback();
+    if (manageTransaction) await c.rollback();
     throw error;
   }
 }

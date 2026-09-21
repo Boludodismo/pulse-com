@@ -4,7 +4,15 @@ import {
   duplicatePairs,
   duplicateReasons,
   mergeFields,
+  automaticPairs,
+  automaticMatch,
+  validCpf,
 } from "../shared/clientDuplicates";
+import {
+  loadBatch,
+  confirmBatch,
+  validateBatchPairs,
+} from "./clientMerge/batch";
 import {
   loadMerge,
   confirmMerge,
@@ -46,6 +54,7 @@ class MemoryConnection {
   data: Record<string, RecordRow[]> = {
     clients: [client(1), client(2)],
     client_merge_audits: [],
+    client_merge_batches: [],
     integration_jobs: [],
     integration_contacts: [contact(1), contact(2)],
     appointments: [
@@ -146,6 +155,12 @@ class MemoryConnection {
       throw new Error("Injected constraint failure");
     const out = (rows: any) => [clone(rows), []];
     if (sql.startsWith("SELECT id FROM studios")) return out([{ id: p[0] }]);
+    if (sql.includes("SELECT id,result_json FROM client_merge_batches"))
+      return out(
+        this.data.client_merge_batches.filter(
+          r => r.studio_id === p[0] && r.preview_hash === p[1]
+        )
+      );
     if (sql.startsWith("SELECT id,result_json"))
       return out(
         this.data.client_merge_audits.filter(
@@ -275,6 +290,18 @@ class MemoryConnection {
         Object.fromEntries(keys.map((k, i) => [k, p[i]]))
       );
       return out({});
+    }
+    if (sql.startsWith("INSERT INTO client_merge_batches")) {
+      const id = this.data.client_merge_batches.length + 1;
+      this.data.client_merge_batches.push({
+        id,
+        studio_id: p[0],
+        actor_id: p[1],
+        preview_hash: p[2],
+        plan_json: p[3],
+        result_json: p[4],
+      });
+      return out({ insertId: id });
     }
     if (sql.startsWith("INSERT INTO client_merge_audits")) {
       const id = this.data.client_merge_audits.length + 1;
@@ -557,5 +584,120 @@ describe("transactional client merge", () => {
         (r: any) => r.table === "integration_contacts"
       ).rows[1].opted_out_at
     ).toBe("2026-09-20");
+  });
+});
+
+describe("automatic selection and batch confirmation", () => {
+  const strong = (id: number) => ({
+    ...client(id),
+    docNumber: "529.982.247-25",
+    birthDate: "1980-01-01",
+  });
+  const setup = () => {
+    const c = new MemoryConnection();
+    c.data.clients = [strong(1), strong(2), strong(3)];
+    return c;
+  };
+  const selected = [
+    { targetId: 1, sourceId: 2 },
+    { targetId: 1, sourceId: 3 },
+  ];
+  async function batchPreview(c: MemoryConnection) {
+    await c.beginTransaction();
+    const p = await loadBatch(c.asConnection(), 7, selected);
+    await c.rollback();
+    return p;
+  }
+  it("selects one complete principal and never treats phone or name alone as identity", () => {
+    expect(validCpf("529.982.247-25")).toBe(true);
+    expect(validCpf("11111111111")).toBe(false);
+    expect(validCpf("52998224724")).toBe(false);
+    expect(
+      automaticPairs([
+        { ...strong(2), email: "m@example.com" },
+        strong(1),
+        strong(3),
+      ])
+    ).toEqual([
+      { targetId: 2, sourceId: 1 },
+      { targetId: 2, sourceId: 3 },
+    ]);
+    expect(automaticMatch(client(1), client(2))).toBe(false);
+    expect(
+      automaticMatch(strong(1), { ...strong(2), birthDate: "1981-01-01" })
+    ).toBe(false);
+  });
+  it("does not chain groups through missing data or allow duplicate origins and cycles", () => {
+    const a = { ...strong(1), email: "one@example.com" },
+      b = strong(2),
+      d = { ...strong(3), email: "other@example.com" };
+    const planned = automaticPairs([a, b, d]);
+    expect(planned).toHaveLength(1);
+    expect(() =>
+      validateBatchPairs([
+        { targetId: 1, sourceId: 2 },
+        { targetId: 3, sourceId: 2 },
+      ])
+    ).toThrow();
+    expect(() =>
+      validateBatchPairs([
+        { targetId: 1, sourceId: 2 },
+        { targetId: 2, sourceId: 3 },
+      ])
+    ).toThrow();
+  });
+  it("merges three copies into one in one transaction and keeps a retriable batch audit", async () => {
+    const c = setup(),
+      p = await batchPreview(c);
+    expect(c.data.clients.every(r => !r.isArchived)).toBe(true);
+    expect(p.plans.every(p => !p.preview.consent.keep)).toBe(true);
+    const result = await confirmBatch(
+      c.asConnection(),
+      7,
+      99,
+      selected,
+      p.hash
+    );
+    expect(result.count).toBe(2);
+    expect(c.commits).toBe(1);
+    expect(c.data.clients[0].appointmentCount).toBe(6);
+    expect(c.data.clients.filter(r => r.isArchived).map(r => r.id)).toEqual([
+      2, 3,
+    ]);
+    expect(c.data.client_merge_audits).toHaveLength(2);
+    expect(c.data.integration_contacts[0].has_whatsapp_opt_in).toBe(0);
+    const saved = clone(c.data);
+    expect(
+      (await confirmBatch(c.asConnection(), 7, 99, selected, p.hash)).repeated
+    ).toBe(true);
+    expect(c.data).toEqual(saved);
+  });
+  it("rolls back every pair when the final batch audit fails", async () => {
+    const c = setup(),
+      p = await batchPreview(c),
+      before = clone(c.data);
+    c.failOn = "INSERT INTO client_merge_batches";
+    await expect(
+      confirmBatch(c.asConnection(), 7, 99, selected, p.hash)
+    ).rejects.toThrow();
+    expect(c.data).toEqual(before);
+    expect(c.commits).toBe(0);
+  });
+  it("rejects changed data and insufficient identity before any batch mutation", async () => {
+    const c = setup(),
+      p = await batchPreview(c);
+    c.data.clients[2].phone = "3898864916";
+    const before = clone(c.data);
+    await expect(
+      confirmBatch(c.asConnection(), 7, 99, selected, p.hash)
+    ).rejects.toThrow("mudaram");
+    expect(c.data).toEqual(before);
+    const d = setup();
+    d.data.clients[2].docNumber = "11144477735";
+    const bad = await batchPreview(d);
+    expect(bad.plans.some(p => p.preview.blockers.length)).toBe(true);
+    await expect(
+      confirmBatch(d.asConnection(), 7, 99, selected, bad.hash)
+    ).rejects.toThrow("pendências");
   });
 });

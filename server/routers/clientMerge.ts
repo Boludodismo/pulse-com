@@ -8,10 +8,26 @@ import {
   confirmMerge,
 } from "../clientMerge/service";
 import { ensureClientMergeSchema } from "../clientMerge/schema";
-import { duplicatePairs, mergeFields } from "../../shared/clientDuplicates";
+import {
+  duplicatePairs,
+  mergeFields,
+  automaticPairs,
+} from "../../shared/clientDuplicates";
+import { loadBatch, batchView, confirmBatch } from "../clientMerge/batch";
 
 const scopeInput = z.object({
   studioId: z.number().int().positive().optional(),
+});
+const batchInput = scopeInput.extend({
+  pairs: z
+    .array(
+      z.object({
+        targetId: z.number().int().positive(),
+        sourceId: z.number().int().positive(),
+      })
+    )
+    .min(1)
+    .max(30),
 });
 const pairInput = scopeInput.extend({
   targetId: z.number().int().positive(),
@@ -38,6 +54,83 @@ async function connect() {
   });
 }
 export const clientMergeRouter = router({
+  automatic: protectedProcedure
+    .input(scopeInput.optional())
+    .query(async ({ ctx, input }) => {
+      const studioId = scope(ctx, input),
+        c = await connect();
+      try {
+        await c.beginTransaction();
+        const clients = await rows(
+          c,
+          "SELECT * FROM clients WHERE studioId=? AND isArchived=0 ORDER BY id",
+          [studioId]
+        );
+        const active = await rows(
+          c,
+          "SELECT DISTINCT clientId FROM technical_procedures WHERE studioId=? AND status IN ('em_andamento','pausado')",
+          [studioId]
+        );
+        const activeIds = new Set(active.map(r => Number(r.clientId)));
+        const suggestions = automaticPairs(
+          clients.filter(c => !activeIds.has(Number(c.id))) as any
+        );
+        const view = suggestions.length
+          ? batchView(await loadBatch(c, studioId, suggestions.slice(0, 30)))
+          : { hash: "", items: [], count: 0 };
+        await c.rollback();
+        return {
+          ...view,
+          total: suggestions.length,
+          activeClients: activeIds.size,
+        };
+      } catch (error) {
+        await c.rollback();
+        throw error;
+      } finally {
+        await c.end();
+      }
+    }),
+  previewBatch: protectedProcedure
+    .input(batchInput)
+    .query(async ({ ctx, input }) => {
+      const studioId = scope(ctx, input),
+        c = await connect();
+      try {
+        await c.beginTransaction();
+        const result = batchView(await loadBatch(c, studioId, input.pairs));
+        await c.rollback();
+        return result;
+      } catch (error) {
+        await c.rollback();
+        throw error;
+      } finally {
+        await c.end();
+      }
+    }),
+  confirmBatch: protectedProcedure
+    .input(
+      batchInput.extend({
+        hash: z.string().regex(/^[a-f0-9]{64}$/),
+        reviewed: z.literal(true),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const studioId = scope(ctx, input),
+        c = await connect();
+      try {
+        await ensureClientMergeSchema(c);
+        return await confirmBatch(
+          c,
+          studioId,
+          ctx.user.id,
+          input.pairs,
+          input.hash
+        );
+      } finally {
+        await c.end();
+      }
+    }),
   candidates: protectedProcedure
     .input(scopeInput.optional())
     .query(async ({ ctx, input }) => {

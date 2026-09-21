@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import AutomaticClientMerge from '@/components/AutomaticClientMerge';
 import {
   mergeFields,
   identityText,
@@ -177,6 +178,7 @@ export default function ClientDuplicates() {
               </p>
             </CardContent>
           </Card>
+          <AutomaticClientMerge key={scope.studioId??'active'} scope={scope} onCompare={pick}/>
           <div className="flex flex-col gap-3 sm:flex-row">
             <Input
               aria-label="Buscar possíveis duplicados"

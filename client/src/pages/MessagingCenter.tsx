@@ -100,6 +100,7 @@ function maskPhone(phone?: string | null) {
 
 const AVAILABLE_VARS = [
   { key: "{nome_cliente}", desc: "Nome do cliente" },
+  { key: "{primeiro_nome}", desc: "Primeiro nome real do cliente" },
   { key: "{nome_artista}", desc: "Nome do artista" },
   { key: "{nome_tatuador}", desc: "Nome do artista" },
   { key: "{nome_estudio}", desc: "Nome do estúdio" },
