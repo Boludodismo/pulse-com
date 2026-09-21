@@ -112,3 +112,9 @@
   .focus-samples{max-width:46vw}.focus-samples button{width:26px;height:26px}
   .focus-sampler-button{width:32px;height:28px}
 }
+
+.focus-entry-button{position:absolute;z-index:36;top:10px;right:92px;height:40px;border:1px solid #f43f5e66;background:#18181be8;color:#fecdd3;border-radius:11px;padding:0 10px;display:flex;align-items:center;gap:6px;font-size:9px;font-weight:800;letter-spacing:.04em;box-shadow:0 8px 22px #0008;backdrop-filter:blur(12px)}
+.focus-entry-button:active{transform:scale(.97)}
+.cockpit-lab.focus-mode .focus-entry-button{display:none}
+@media(max-width:620px){.cockpit-view-quick{right:92px}.focus-entry-button{top:54px;right:82px;height:38px;padding:0 9px}.focus-entry-button span{display:none}}
+@media(max-width:410px){.cockpit-view-quick{right:80px}.focus-entry-button{right:72px}}
