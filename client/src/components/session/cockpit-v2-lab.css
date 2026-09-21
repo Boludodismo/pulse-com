@@ -86,3 +86,29 @@
 .dock-add.secondary{border-color:#ffffff22;background:#ffffff06;color:#d4d4d8}
 .layer-name-label{display:block;margin:10px 0 5px;font-size:9px;color:#a1a1aa}
 @media(max-width:620px){.layer-card-dynamic{grid-template-columns:34px minmax(0,1fr) 34px}.layer-row-actions button{width:22px}}
+
+.cockpit-lab.focus-mode{background:#000}
+.cockpit-lab.focus-mode .cockpit-top,.cockpit-lab.focus-mode .cockpit-bottom{display:none}
+.cockpit-lab.focus-mode .cockpit-stage{inset:0}
+.cockpit-lab.focus-mode .cockpit-anamnese,.cockpit-lab.focus-mode .cockpit-view-quick,.cockpit-lab.focus-mode>.cockpit-palette{display:none}
+.cockpit-lab.focus-mode .cockpit-dock{top:max(10px,env(safe-area-inset-top));bottom:56px}
+.cockpit-lab.focus-mode .cockpit-toast{bottom:58px}
+.cockpit-lab.focus-mode .cockpit-sheet{bottom:calc(52px + env(safe-area-inset-bottom));max-height:78dvh}
+.cockpit-lab.clean-mode .cockpit-dock{opacity:0;pointer-events:none;visibility:hidden}
+.focus-toolbar{position:absolute;z-index:38;top:max(8px,env(safe-area-inset-top));right:max(8px,env(safe-area-inset-right));display:flex;gap:6px}
+.focus-toolbar button{height:42px;border:1px solid #ffffff20;background:#09090bb8;backdrop-filter:blur(14px);border-radius:11px;padding:0 10px;display:flex;align-items:center;gap:6px;color:#e4e4e7;font-size:9px;font-weight:700;box-shadow:0 8px 24px #0008}
+.focus-toolbar button.active{border-color:#10b98166;background:#10b98118;color:#a7f3d0}
+.focus-palette-strip{position:absolute;z-index:24;left:50%;bottom:max(7px,env(safe-area-inset-bottom));transform:translateX(-50%);height:40px;max-width:calc(100vw - 24px);display:flex;align-items:center;gap:6px;padding:5px 7px;border:1px solid #ffffff16;border-radius:12px;background:#09090ba8;backdrop-filter:blur(15px);box-shadow:0 10px 30px #0009}
+.focus-tonal-gradient{width:118px;height:28px;border-radius:8px;border:1px solid #ffffff30;background:linear-gradient(90deg,#050505 0%,#333 22%,#737373 45%,#b8b8b8 70%,#fff 100%);flex:0 0 auto}
+.focus-samples{display:flex;align-items:center;gap:4px;overflow-x:auto;max-width:min(44vw,360px);scrollbar-width:none}.focus-samples::-webkit-scrollbar{display:none}.focus-samples button{position:relative;width:28px;height:28px;flex:0 0 auto;border:1px solid #ffffff48;border-radius:7px;padding:0}.focus-samples button span{position:absolute;left:2px;right:2px;bottom:1px;border-radius:4px;background:#0009;color:#fff;font:7px "JetBrains Mono",monospace}
+.focus-sampler-button{width:34px;height:30px;border:1px solid #f43f5e55;border-radius:8px;background:#f43f5e12;display:grid;place-items:center;color:#fecdd3;flex:0 0 auto}.focus-sampler-button.active{border-color:#10b98188;background:#10b98118;color:#a7f3d0}
+.cockpit-lab.sampling-mode .cockpit-stage{cursor:crosshair}
+.cockpit-lab.sampling-mode .cockpit-transform{pointer-events:none}
+@media(max-width:620px){
+  .cockpit-lab.focus-mode .cockpit-dock{top:max(8px,env(safe-area-inset-top));bottom:54px}
+  .focus-toolbar button{width:42px;padding:0;justify-content:center}.focus-toolbar button span{display:none}
+  .focus-palette-strip{height:38px;max-width:calc(100vw - 16px);padding:4px 6px}
+  .focus-tonal-gradient{width:90px;height:26px}
+  .focus-samples{max-width:46vw}.focus-samples button{width:26px;height:26px}
+  .focus-sampler-button{width:32px;height:28px}
+}
