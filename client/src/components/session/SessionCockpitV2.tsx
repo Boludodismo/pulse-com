@@ -284,7 +284,7 @@ function down(e:RP<HTMLDivElement>){
     multiTouch.current=true;
     samplerPointerActive.current=false;
     samplePointerId.current=null;
-    const[a,b]=[...pts.current.values()];
+    const[a,b]=Array.from(pts.current.values());
     base.current={v:vr.current,d:Math.hypot(b.x-a.x,b.y-a.y),a:Math.atan2(b.y-a.y,b.x-a.x),m:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}};
     start.current=vr.current;
     return;
@@ -300,7 +300,7 @@ function move(e:RP<HTMLDivElement>){
   if(!pts.current.has(e.pointerId))return;
   e.preventDefault();e.stopPropagation();
   pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  const p=[...pts.current.values()];
+  const p=Array.from(pts.current.values());
 
   if(sampler&&interactionMode.current==="sample"){
     if(p.length===1&&e.pointerId===samplePointerId.current){
