@@ -1,3 +1,4 @@
+import { ensureSessionCockpitLabSchema } from "./sessionCockpitLabSchema";
 import { ensureAppointmentKitSchema } from "./appointmentKitSchema";
 import { ensureInventoryWorkflowSchema } from "./inventoryWorkflowSchema";
 import {ensureInventoryTraceSchema} from "./inventoryTraceSchema";
@@ -33,6 +34,7 @@ async function startServer() {
   // Keep schema synchronized on controlled standalone deployments.
   // Disabled by default so existing Manus/production behavior is unchanged.
   await runStartupMigrations();
+  await ensureSessionCockpitLabSchema();
   await ensureStagingInventorySchema();
   await ensureStagingMessagingSchema();
   await ensureStagingIntelligentInboxSchema();
