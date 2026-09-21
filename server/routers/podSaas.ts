@@ -994,14 +994,16 @@ export const podSaasRouter = router({
             input.procedureId,
             ctx,
           );
-          const previous = (await tx.select({ sortOrder: procedureVisualLayers.sortOrder })
-            .from(procedureVisualLayers)
-            .where(and(
-              eq(procedureVisualLayers.studioId, ctx.studioId),
-              eq(procedureVisualLayers.procedureId, procedure.id),
-            ))
-            .orderBy(desc(procedureVisualLayers.sortOrder))
-            .limit(1))[0];
+          const existingLayers = await tx.select({
+            layerKey: procedureVisualLayers.layerKey,
+            sortOrder: procedureVisualLayers.sortOrder,
+          }).from(procedureVisualLayers).where(and(
+            eq(procedureVisualLayers.studioId, ctx.studioId),
+            eq(procedureVisualLayers.procedureId, procedure.id),
+          ));
+          const previousExtraOrder = existingLayers
+            .filter(layer => layer.layerKey !== "reference" && layer.layerKey !== "samples")
+            .reduce((max, layer) => Math.max(max, Number(layer.sortOrder ?? 0)), 0);
           const layerKey = "layer-" + randomUUID();
           const inserted = await tx.insert(procedureVisualLayers).values({
             studioId: ctx.studioId,
@@ -1015,7 +1017,7 @@ export const podSaasRouter = router({
             imageKey: input.imageKey,
             opacity: input.opacity,
             isVisible: 1,
-            sortOrder: Math.min(850, Math.max(10, Number(previous?.sortOrder ?? 0) + 10)),
+            sortOrder: Math.min(850, Math.max(10, previousExtraOrder + 10)),
             createdByUserId: ctx.user.id,
           });
           const id = insertId(inserted);
