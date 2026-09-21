@@ -147,6 +147,12 @@ function vred(){setVredo(r=>{const n=r[0];if(!n)return r;setVu(h=>[...h,vr.curre
 async function refreshAll(){await Promise.all([utils.pod.session.get.invalidate({procedureId}),utils.pod.inventory.list.invalidate(),utils.pod.session.listInkRecipes.invalidate({procedureId}),utils.pod.session.listColorSamples.invalidate({procedureId})])}
 function pushAction(a:StockAction){setUndoStack(x=>[...x,a]);setRedoStack([]);setFlash(a.label);setTimeout(()=>setFlash(f=>f===a.label?null:f),5000)}
 
+useEffect(()=>{
+  const sync=()=>{if(!document.fullscreenElement&&focusMode)setFocusMode(false)};
+  document.addEventListener("fullscreenchange",sync);
+  return()=>document.removeEventListener("fullscreenchange",sync);
+},[focusMode]);
+
 async function enterFocusMode(){
   setSheet(null);
   setFocusMode(true);
@@ -422,7 +428,7 @@ return <div ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode "
 
 <main ref={stage} className="cockpit-stage" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
 <div className="cockpit-anamnese">Sessão #{procedureId} · banco de teste</div>
-<div className="cockpit-view-quick"><button onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button><button onClick={()=>void enterFocusMode()} title="Modo foco"><Maximize2 size={15}/></button></div>
+<div className="cockpit-view-quick"><button onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button></div><button className="focus-entry-button" onClick={()=>void enterFocusMode()} title="Abrir modo foco"><Maximize2 size={16}/><span>FOCO</span></button>
 <div className="cockpit-transform" style={{transform:"translate("+view.x+"px,"+view.y+"px) rotate("+view.rotation+"deg) scale("+view.scale+")"}}>
 {orderedLayers.map((layer:any)=>{
   if(!layerVisible(layer))return null;
