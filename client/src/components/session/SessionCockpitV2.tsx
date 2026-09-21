@@ -349,9 +349,9 @@ function up(e:RP<HTMLDivElement>){
     samplerPointerActive.current=false;
   }
 }
-function wheel(e:RW<HTMLDivElement>){e.preventDefault();if(sampler||interactionMode.current==="sample")return;vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
+function wheel(e:RW<HTMLDivElement>){e.preventDefault();if(interactionMode.current==="sample")return;if(sampler&&!e.ctrlKey)return;vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
 useEffect(()=>{const el=stage.current as any;if(!el)return;let st:View|null=null;
-      const a=(e:any)=>{e.preventDefault();if(sampler&&interactionMode.current==="sample")return;if(pts.current.size<2)return;interactionMode.current="transform";st={...vr.current}};
+      const a=(e:any)=>{e.preventDefault();if(sampler&&interactionMode.current==="sample")return;if(pts.current.size===1)return;interactionMode.current="transform";st={...vr.current}};
       const b=(e:any)=>{e.preventDefault();if(!st||interactionMode.current!=="transform")return;setView({...st,scale:Math.max(.2,Math.min(5,st.scale*(e.scale||1))),rotation:st.rotation+(e.rotation||0)})};
       const end=(e:any)=>{e.preventDefault();if(st){setVu(h=>[...h,st!]);setVredo([])}st=null;if(pts.current.size===0)interactionMode.current="idle"};
       el.addEventListener("gesturestart",a,{passive:false});el.addEventListener("gesturechange",b,{passive:false});el.addEventListener("gestureend",end,{passive:false});
