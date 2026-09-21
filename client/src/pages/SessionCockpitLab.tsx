@@ -43,7 +43,7 @@ const [lmin,setLmin]=useState(false),[rmin,setRmin]=useState(false),[lex,setLex]
 const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=useState(1),[rscale,setRscale]=useState(1);
 const [refOn,setRefOn]=useState(true),[refOp,setRefOp]=useState(1),[markOn,setMarkOn]=useState(true),[markOp,setMarkOp]=useState(1);
 const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[samples,setSamples]=useState<Sample[]>([]),[sample,setSample]=useState<Sample|null>(null);
-const [active,setActive]=useState(["3rl","7rl","navy","orange","diluent","vaseline"]),[uses,setUses]=useState<Use[]>([]),[ured,setUred]=useState<Use[]>([]);
+const [active,setActive]=useState(["3rl","7rl","navy","orange","diluent","vaseline"]),[uses,setUses]=useState<Use[]>([]),[redoUses,setRedoUses]=useState<Use[]>([]);
 const [recipes,setRecipes]=useState<Recipe[]>([]),[sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null>(null),[search,setSearch]=useState(""),[note,setNote]=useState("");
 const [cup,setCup]=useState<Cup>("M"),[ings,setIngs]=useState<Ingredient[]>([]),[flash,setFlash]=useState<Use|null>(null);
 const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pts=useRef(new Map<number,{x:number;y:number}>());
@@ -57,9 +57,9 @@ const found=useMemo(()=>{const q=search.toLowerCase();return STOCK.filter(m=>!ac
 function vset(n:View){setVu(h=>[...h,vr.current].slice(-30));setVredo([]);setView(n)}
 function vundo(){setVu(h=>{const p=h[h.length-1];if(!p)return h;setVredo(r=>[vr.current,...r]);setView(p);return h.slice(0,-1)})}
 function vred(){setVredo(r=>{const n=r[0];if(!n)return r;setVu(h=>[...h,vr.current]);setView(n);return r.slice(1)})}
-function addUse(materialId:string,label:string,amount:number,unit:string,recipeId?:string){const u={id:id("u"),materialId,label,amount,unit,recipeId};setUses(x=>[...x,u]);setUred([]);setFlash(u);setTimeout(()=>setFlash(f=>f?.id===u.id?null:f),5000)}
-function uundo(){setUses(x=>{const u=x[x.length-1];if(!u)return x;setUred(r=>[u,...r]);setFlash(null);return x.slice(0,-1)})}
-function ured(){setUred(r=>{const u=r[0];if(!u)return r;setUses(x=>[...x,u]);return r.slice(1)})}
+function addUse(materialId:string,label:string,amount:number,unit:string,recipeId?:string){const u={id:id("u"),materialId,label,amount,unit,recipeId};setUses(x=>[...x,u]);setRedoUses([]);setFlash(u);setTimeout(()=>setFlash(f=>f?.id===u.id?null:f),5000)}
+function uundo(){setUses(x=>{const u=x[x.length-1];if(!u)return x;setRedoUses(r=>[u,...r]);setFlash(null);return x.slice(0,-1)})}
+function redoUse(){setRedoUses(r=>{const u=r[0];if(!u)return r;setUses(x=>[...x,u]);return r.slice(1)})}
 function useMat(m:Material){if(m.kind==="cartridge")return addUse(m.id,m.name,1,"un");if(m.kind==="protection")return addUse(m.id,m.name,1,"par");if(m.kind==="ointment")return addUse(m.id,m.name,10,"g");setInk(m);setSheet("ink")}
 function setIng(mid:string,n:number){setIngs(a=>n<=0?a.filter(x=>x.materialId!==mid):a.some(x=>x.materialId===mid)?a.map(x=>x.materialId===mid?{...x,drops:n}:x):[...a,{materialId:mid,drops:n}])}
 function recipe(seed?:Material){setCup("M");setIngs(seed?[{materialId:seed.id,drops:1}]:[]);setSheet("recipe")}
@@ -98,7 +98,7 @@ return <div className="cockpit-lab">
 <header><button onClick={()=>setLmin(v=>!v)}><Minus size={16}/></button><strong>Materiais</strong><button onClick={()=>setLex(v=>!v)}>{lex?<ChevronLeft size={16}/>:<ChevronRight size={16}/>}</button></header>
 <div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={lscale} onChange={e=>setLscale(+e.target.value)}/><output>{Math.round(lscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={lop} onChange={e=>setLop(+e.target.value)}/><output>{Math.round(lop*100)}</output></label></div>
 <div className="dock-body">{mats.map(m=><button key={m.id} className={"material-card "+(totals[m.id]?"active":"")} onClick={()=>useMat(m)}><span className="material-glyph" style={m.color?{background:m.color,color:m.id==="white"?"#18181b":"white"}:undefined}>{m.kind==="ink"||m.kind==="diluent"?<Droplets size={17}/>:m.short}</span>{lex&&<span className="material-meta"><b>{m.name}</b><small>{m.kind==="ink"||m.kind==="diluent"?"gotas / mistura":m.kind==="ointment"?"+10 g":"+1"}</small></span>}{!!totals[m.id]&&<span className="material-count">OK {totals[m.id]} {m.unit}</span>}</button>)}<button className="dock-add" onClick={()=>setSheet("materials")}><Plus size={18}/>{lex&&" Adicionar"}</button></div>
-<div className="dock-undo"><button onClick={uundo} disabled={!uses.length}><Undo2 size={16}/></button><button onClick={ured} disabled={!ured.length}><Redo2 size={16}/></button></div>
+<div className="dock-undo"><button onClick={uundo} disabled={!uses.length}><Undo2 size={16}/></button><button onClick={redoUse} disabled={!redoUses.length}><Redo2 size={16}/></button></div>
 </aside>
 
 <aside className={"cockpit-dock right "+(rmin?"minimized ":"")+(rex?"expanded":"")} style={panel(rop,rscale,"right")}>
