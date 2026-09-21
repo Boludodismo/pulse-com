@@ -147,6 +147,21 @@ function vred(){setVredo(r=>{const n=r[0];if(!n)return r;setVu(h=>[...h,vr.curre
 async function refreshAll(){await Promise.all([utils.pod.session.get.invalidate({procedureId}),utils.pod.inventory.list.invalidate(),utils.pod.session.listInkRecipes.invalidate({procedureId}),utils.pod.session.listColorSamples.invalidate({procedureId})])}
 function pushAction(a:StockAction){setUndoStack(x=>[...x,a]);setRedoStack([]);setFlash(a.label);setTimeout(()=>setFlash(f=>f===a.label?null:f),5000)}
 
+async function enterFocusMode(){
+  setSheet(null);
+  setFocusMode(true);
+  setCleanMode(false);
+  const node=cockpitRoot.current as any;
+  try{
+    if(node?.requestFullscreen&&!document.fullscreenElement)await node.requestFullscreen();
+  }catch{}
+}
+async function exitFocusMode(){
+  setFocusMode(false);
+  setCleanMode(false);
+  try{if(document.fullscreenElement)await document.exitFullscreen()}catch{}
+}
+
 async function persistLayer(layerKey:string,patch:{name?:string;opacity?:number;isVisible?:boolean;sortOrder?:number}){
   try{
     await updateVisualLayerMutation.mutateAsync({procedureId,layerKey,...patch});
@@ -393,17 +408,21 @@ const orderedLayers=(visualLayers.length?visualLayers:[
 const layerVisible=(layer:any)=>layer.layerKey==="reference"?refOn:layer.layerKey==="samples"?markOn:(layerLocal[String(layer.layerKey)]?.isVisible??Boolean(layer.isVisible));
 const layerOpacity=(layer:any)=>layer.layerKey==="reference"?Math.round(refOp*100):layer.layerKey==="samples"?Math.round(markOp*100):(layerLocal[String(layer.layerKey)]?.opacity??Number(layer.opacity??100));
 
-return <div className="cockpit-lab">
+return <div ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
 <header className="cockpit-top">
 <button className="cockpit-icon" onClick={()=>history.back()}><ArrowLeft size={18}/></button><button className="cockpit-icon minor-nav" onClick={()=>location.assign("/")}><Home size={18}/></button>
 <button className="cockpit-icon" onClick={vundo} disabled={!vu.length} title="Desfazer imagem"><Undo2 size={18}/></button><button className="cockpit-icon" onClick={vred} disabled={!vredo.length} title="Refazer imagem"><Redo2 size={18}/></button>
 <div className="cockpit-client"><strong>{client.data?.name||"Cliente"} <span style={{fontSize:9,color:"#10b981"}}>· LIVE STAGING</span></strong><small>{proc.title} {proc.bodyLocation?"· "+proc.bodyLocation:""}</small></div>
 <button className="cockpit-icon desktop-only" onClick={()=>{setNote(String(proc.notes||""));setSheet("notes")}}><StickyNote size={17}/></button><div className="cockpit-status"><i/><b>{timer(sec)}</b><span>{run?"EM ANDAMENTO":"PAUSADA"}</span></div>
 </header>
+{focusMode&&<div className="focus-toolbar">
+  <button onClick={()=>void exitFocusMode()} title="Sair do modo foco"><Minimize2 size={17}/><span>Sair</span></button>
+  <button className={cleanMode?"active":""} onClick={()=>setCleanMode(v=>!v)} title={cleanMode?"Mostrar painéis":"Imagem limpa"}>{cleanMode?<Eye size={17}/>:<EyeOff size={17}/>}<span>{cleanMode?"Painéis":"Limpar"}</span></button>
+</div>}
 
 <main ref={stage} className="cockpit-stage" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
 <div className="cockpit-anamnese">Sessão #{procedureId} · banco de teste</div>
-<div className="cockpit-view-quick"><button onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button></div>
+<div className="cockpit-view-quick"><button onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button><button onClick={()=>void enterFocusMode()} title="Modo foco"><Maximize2 size={15}/></button></div>
 <div className="cockpit-transform" style={{transform:"translate("+view.x+"px,"+view.y+"px) rotate("+view.rotation+"deg) scale("+view.scale+")"}}>
 {orderedLayers.map((layer:any)=>{
   if(!layerVisible(layer))return null;
@@ -454,7 +473,12 @@ return <div className="cockpit-lab">
 </aside>
 
 <div className="cockpit-palette"><button className="palette-add" onClick={()=>{if(mode==="tonal"){setMode("color");setSampler(true)}else{setMode("tonal");setSampler(false);setReferenceDraft(null)}}}><Palette size={13}/> {mode==="tonal"?"Cores":"Tons"}</button>
-{mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):<>{samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}<button className={"palette-add "+(sampler?"selected":"")} onClick={()=>setSampler(v=>{const next=!v;if(!next)setReferenceDraft(null);return next})} disabled={samples.length>=30}><Pipette size={13}/> {sampler?"Amostragem ativa":"Amostrar"}</button></>}</div>
+{mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):<>{samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}<button className={"palette-add "+(sampler?"selected":"")} onClick={()=>setSampler(v=>{const next=!v;if(!next)setReferenceDraft(null);return next})} disabled={samples.length>=30}><Pipette size={13}/> {sampler?"Amostragem ativa":"Amostrar"}</button></>}</div>{focusMode&&<div className="focus-palette-strip">
+  <div className="focus-tonal-gradient" title="Escala de contraste"/>
+  <div className="focus-samples">{samples.map(s=><button key={s.id} style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}} title={s.code}><span>{s.code}</span></button>)}</div>
+  <button className={"focus-sampler-button "+(sampler?"active":"")} onClick={()=>setSampler(v=>{const next=!v;if(!next)setReferenceDraft(null);return next})} title={sampler?"Encerrar amostragem":"Amostrar cor"}><Pipette size={15}/></button>
+</div>}
+
 
 {flash&&<div className="cockpit-toast"><Check size={17} color="#10b981"/><span>{flash}</span><button onClick={()=>void undoStock()}>DESFAZER (5s)</button></div>}
 <input ref={colorPhotoInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const file=e.target.files?.[0];if(file){if(photoSrc)URL.revokeObjectURL(photoSrc);setPhotoSrc(URL.createObjectURL(file))}e.currentTarget.value=""}}/>
