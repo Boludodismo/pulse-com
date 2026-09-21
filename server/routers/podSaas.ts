@@ -31,6 +31,8 @@ import {
   procedureColorSamples,
   procedureInkRecipes,
   procedureInkRecipeItems,
+  procedureInkRecipeResults,
+  tenantMaterialColorSamples,
   technicalProcedures,
   tenantInventoryMovements,
   tenantMaterials,
@@ -48,6 +50,19 @@ import { normalizeBrazilianPhone } from "../messaging/phone";
 const quantitySchema = z.string().regex(/^\d{1,9}(?:\.\d{1,3})?$/, "Informe uma quantidade positiva com até três casas decimais.");
 const costSchema = z.string().regex(/^\d{1,8}(?:\.\d{1,4})?$/, "Informe um custo não negativo com até quatro casas decimais.");
 const dateTimeSchema = z.string().datetime({ offset: true }).optional();
+const colorValueSchema = z.object({
+  hex: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  red: z.number().int().min(0).max(255),
+  green: z.number().int().min(0).max(255),
+  blue: z.number().int().min(0).max(255),
+  cyan: z.number().int().min(0).max(100),
+  magenta: z.number().int().min(0).max(100),
+  yellow: z.number().int().min(0).max(100),
+  black: z.number().int().min(0).max(100),
+  labL: z.number().min(0).max(100),
+  labA: z.number().min(-160).max(160),
+  labB: z.number().min(-160).max(160),
+});
 
 const SESSION_CUP_CAPACITY_ML = { P: 0.5, M: 1, G: 2, GG: 4 } as const;
 type SessionCupSize = keyof typeof SESSION_CUP_CAPACITY_ML;
