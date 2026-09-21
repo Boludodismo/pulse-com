@@ -864,6 +864,198 @@ export const podSaasRouter = router({
       return { procedure, pauses, consumptions, plannedMaterials, timing: calculateTiming(procedure.startedAt, procedure.finishedAt, pauses) };
     }),
 
+    listVisualLayers: tenantProcedure
+      .input(z.object({ procedureId: z.number().int().positive() }))
+      .query(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod");
+        const database = await requireDatabase();
+        const procedure = await requireProcedure(database, input.procedureId, ctx);
+        const stored = await database.select().from(procedureVisualLayers).where(and(
+          eq(procedureVisualLayers.studioId, ctx.studioId),
+          eq(procedureVisualLayers.procedureId, procedure.id),
+        )).orderBy(asc(procedureVisualLayers.sortOrder), asc(procedureVisualLayers.id));
+
+        const referenceSettings = stored.find(layer => layer.layerKey === "reference");
+        const sampleSettings = stored.find(layer => layer.layerKey === "samples");
+        const extras = stored.filter(layer => layer.layerKey !== "reference" && layer.layerKey !== "samples");
+        return [
+          {
+            id: referenceSettings?.id ?? null,
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            layerKey: "reference",
+            name: referenceSettings?.name ?? "Referência principal",
+            layerType: "reference",
+            imageUrl: procedure.referenceImageUrl ?? null,
+            imageKey: procedure.referenceImageKey ?? null,
+            opacity: referenceSettings?.opacity ?? 100,
+            isVisible: referenceSettings?.isVisible ?? 1,
+            sortOrder: referenceSettings?.sortOrder ?? 0,
+          },
+          ...extras,
+          {
+            id: sampleSettings?.id ?? null,
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            layerKey: "samples",
+            name: sampleSettings?.name ?? "Amostras de cor",
+            layerType: "samples",
+            imageUrl: null,
+            imageKey: null,
+            opacity: sampleSettings?.opacity ?? 100,
+            isVisible: sampleSettings?.isVisible ?? 1,
+            sortOrder: sampleSettings?.sortOrder ?? 900,
+          },
+        ].sort((a, b) => Number(a.sortOrder) - Number(b.sortOrder));
+      }),
+
+    updateVisualLayer: tenantProcedure
+      .input(z.object({
+        procedureId: z.number().int().positive(),
+        layerKey: z.string().trim().min(1).max(80),
+        name: z.string().trim().min(1).max(160).optional(),
+        opacity: z.number().int().min(0).max(100).optional(),
+        isVisible: z.boolean().optional(),
+        sortOrder: z.number().int().min(-1000).max(5000).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const procedure = await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            input.procedureId,
+            ctx,
+          );
+          const existing = (await tx.select().from(procedureVisualLayers).where(and(
+            eq(procedureVisualLayers.studioId, ctx.studioId),
+            eq(procedureVisualLayers.procedureId, procedure.id),
+            eq(procedureVisualLayers.layerKey, input.layerKey),
+          )).limit(1))[0];
+
+          const values = {
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.opacity !== undefined ? { opacity: input.opacity } : {}),
+            ...(input.isVisible !== undefined ? { isVisible: input.isVisible ? 1 : 0 } : {}),
+            ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+          };
+
+          if (existing) {
+            await tx.update(procedureVisualLayers).set(values).where(and(
+              eq(procedureVisualLayers.id, existing.id),
+              eq(procedureVisualLayers.studioId, ctx.studioId),
+            ));
+            return { id: existing.id, layerKey: existing.layerKey };
+          }
+
+          if (input.layerKey !== "reference" && input.layerKey !== "samples") {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Camada não encontrada." });
+          }
+
+          const isReference = input.layerKey === "reference";
+          const inserted = await tx.insert(procedureVisualLayers).values({
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            layerKey: input.layerKey,
+            name: input.name ?? (isReference ? "Referência principal" : "Amostras de cor"),
+            layerType: isReference ? "reference" : "samples",
+            imageUrl: null,
+            imageKey: null,
+            opacity: input.opacity ?? 100,
+            isVisible: input.isVisible === false ? 0 : 1,
+            sortOrder: input.sortOrder ?? (isReference ? 0 : 900),
+            createdByUserId: ctx.user.id,
+          });
+          return { id: insertId(inserted), layerKey: input.layerKey };
+        });
+      }),
+
+    addVisualLayer: tenantProcedure
+      .input(z.object({
+        procedureId: z.number().int().positive(),
+        name: z.string().trim().min(1).max(160),
+        layerType: z.enum(["contrast", "stencil", "stencil_overlay", "image"]),
+        imageUrl: z.string().trim().min(1).max(3000),
+        imageKey: z.string().trim().min(1).max(500),
+        opacity: z.number().int().min(0).max(100).default(100),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const procedure = await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            input.procedureId,
+            ctx,
+          );
+          const previous = (await tx.select({ sortOrder: procedureVisualLayers.sortOrder })
+            .from(procedureVisualLayers)
+            .where(and(
+              eq(procedureVisualLayers.studioId, ctx.studioId),
+              eq(procedureVisualLayers.procedureId, procedure.id),
+            ))
+            .orderBy(desc(procedureVisualLayers.sortOrder))
+            .limit(1))[0];
+          const layerKey = "layer-" + randomUUID();
+          const inserted = await tx.insert(procedureVisualLayers).values({
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            layerKey,
+            name: input.name,
+            layerType: input.layerType,
+            imageUrl: input.imageUrl,
+            imageKey: input.imageKey,
+            opacity: input.opacity,
+            isVisible: 1,
+            sortOrder: Math.min(850, Math.max(10, Number(previous?.sortOrder ?? 0) + 10)),
+            createdByUserId: ctx.user.id,
+          });
+          const id = insertId(inserted);
+          if (!id) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível criar a camada." });
+          return { id, layerKey };
+        });
+      }),
+
+    removeVisualLayer: tenantProcedure
+      .input(z.object({ procedureId: z.number().int().positive(), layerKey: z.string().trim().min(1).max(80) }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        if (input.layerKey === "reference" || input.layerKey === "samples") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "As camadas-base podem ser ocultadas, mas não removidas." });
+        }
+        const database = await requireDatabase();
+        const layer = (await database.select().from(procedureVisualLayers).where(and(
+          eq(procedureVisualLayers.studioId, ctx.studioId),
+          eq(procedureVisualLayers.procedureId, input.procedureId),
+          eq(procedureVisualLayers.layerKey, input.layerKey),
+        )).limit(1))[0];
+        if (!layer) throw new TRPCError({ code: "NOT_FOUND", message: "Camada não encontrada." });
+        await requireProcedure(database, input.procedureId, ctx);
+
+        await database.delete(procedureVisualLayers).where(and(
+          eq(procedureVisualLayers.id, layer.id),
+          eq(procedureVisualLayers.studioId, ctx.studioId),
+        ));
+        if (layer.imageKey) {
+          await database.delete(procedureImages).where(and(
+            eq(procedureImages.procedureId, input.procedureId),
+            eq(procedureImages.imageKey, layer.imageKey),
+          )).catch(() => undefined);
+          await storageDelete(layer.imageKey).catch(error => {
+            console.warn("[Visual layer] Could not delete stored object:", error);
+          });
+        }
+        return { id: layer.id, layerKey: layer.layerKey };
+      }),
+
     listColorSamples: tenantProcedure
       .input(z.object({ procedureId: z.number().int().positive() }))
       .query(async ({ ctx, input }) => {
