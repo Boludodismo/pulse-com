@@ -20,7 +20,7 @@ REGRAS
 12. Não declare que cadastrou, atualizou ou importou dados no Tatuei. A conferência e o lançamento serão feitos pelo usuário. Não sugira substituir um lote antigo ou apagar campos já preenchidos.
 
 ENTREGA
-Primeiro liste as dúvidas necessárias, sem bloquear a entrega dos dados legíveis. Depois apresente uma tabela revisável e, se puder gerar arquivos, uma planilha XLSX com aba Leitura e uma linha de cabeçalho. Use células numéricas para quantidades e valores; células de texto para códigos. Não use macros, fórmulas executáveis nem células mescladas. Se não puder gerar XLSX, entregue a tabela e informe essa limitação. Este é um documento de conferência, não um arquivo cuja importação no Tatuei esteja garantida.
+Primeiro liste as dúvidas necessárias, sem bloquear a entrega dos dados legíveis. Depois apresente uma tabela revisável e, se puder gerar arquivos, uma planilha XLSX com aba Leitura e uma linha de cabeçalho. Use células numéricas para quantidades e valores; células de texto para códigos. Não use macros, fórmulas executáveis nem células mescladas. Se não puder gerar XLSX, entregue a tabela e informe essa limitação. Use exatamente as colunas abaixo, compatíveis com o modelo de importação do Tatuei. O usuário deverá revisar e vincular os materiais antes de confirmar a importação.
 
 COLUNAS, NESTA ORDEM
 nome, categoria, marca, linha, modelo_sku, configuracao, quantidade_pontas, calibre_fabricante, diametro_mm, taper, tamanho_batoque, codigo_barras, anvisa_rotulo, unidade_base, tipo_embalagem, itens_por_embalagem, volume_por_embalagem_ml, peso_por_embalagem_g, quantidade_embalagens_recebidas, quantidade_avulsa_recebida, quantidade_recebida_base, lote, validade_rotulo, validade_data, fornecedor, proprietario_estoque, custo_total_da_entrada, custo_por_unidade_base, campos_para_revisar, observacoes.
@@ -58,9 +58,9 @@ export default function InventoryEntryGuide({onManual,disabled}:{onManual:()=>vo
           <li>Fotografe o rótulo completo e os detalhes do lote, validade, medidas e conteúdo da embalagem. Evite reflexos e identifique quais fotos pertencem ao mesmo produto.</li>
           <li>Copie o prompt abaixo e cole no assistente de IA de sua preferência. Anexe as fotos e informe quantas embalagens ou unidades avulsas comprou, o proprietário do estoque, o fornecedor e o valor pago.</li>
           <li>Confira a tabela ou planilha gerada com as embalagens. Resolva dados ilegíveis, quantidades e datas incompletas antes de lançar.</li>
-          <li>Use os dados conferidos para preencher <strong>Novo material</strong> ou <strong>Receber / lotes</strong>, seguindo os passos acima.</li>
+          <li>Abra <strong>Importar planilha de materiais</strong>, selecione o arquivo, confira cada linha e escolha cadastrar, atualizar ou registrar entrada. Você também pode preencher <strong>Novo material</strong> ou <strong>Receber / lotes</strong> manualmente.</li>
         </ol>
-        <p className="rounded-lg border p-3 text-muted-foreground"><strong>Sobre a planilha:</strong> neste momento, ela serve para organizar e conferir a leitura. A importação geral de planilhas de materiais ainda não está disponível nesta tela; o lançamento é feito pelos formulários.</p>
+        <p className="rounded-lg border p-3 text-muted-foreground"><strong>Sobre a planilha:</strong> baixe o modelo em Importar planilha de materiais e use suas colunas. A importação aceita XLSX e CSV, com até 100 linhas por arquivo. Cada lote deve ocupar uma linha. Confira os dados antes de confirmar.</p>
         <Button type="button" variant="outline" onClick={()=>void copyPrompt()} className="min-h-11"><ClipboardCopy className="mr-2 h-4 w-4"/>Copiar prompt para IA</Button>
         <label className="block font-medium" htmlFor="inventory-photo-prompt">Prompt para leitura de rótulos</label>
         <textarea ref={promptRef} id="inventory-photo-prompt" readOnly value={PHOTO_PROMPT} className="block w-full min-h-64 rounded-lg border bg-background p-3 text-base leading-relaxed" spellCheck={false}/>

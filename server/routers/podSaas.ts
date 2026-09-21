@@ -420,6 +420,20 @@ export const podSaasRouter = router({
       });
     }),
 
+    importUpdate: tenantProcedure.input(z.object({
+      tenantMaterialId:z.number().int().positive(),
+      fields:z.object({name:z.string().trim().min(2).max(255).optional(),category:z.string().trim().min(1).max(120).optional(),brand:z.string().trim().min(1).max(120).optional(),line:z.string().trim().min(1).max(120).optional(),model:z.string().trim().min(1).max(120).optional(),configuration:z.string().trim().min(1).max(120).optional(),diameter:z.string().trim().min(1).max(40).optional(),gauge:z.string().trim().min(1).max(20).optional(),taper:z.string().trim().min(1).max(80).optional(),purchaseUnit:z.string().trim().min(1).max(50).optional(),needleCount:z.number().int().min(1).max(1000).optional(),packageQuantity:z.number().int().min(1).max(100000).optional()}).strict(),
+    })).mutation(async({ctx,input})=>{
+      await requireModule(ctx,"stock",true);const database=await requireDatabase();
+      return database.transaction(async tx=>{
+        const [material]=await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id,input.tenantMaterialId),eq(tenantMaterials.studioId,ctx.studioId),eq(tenantMaterials.isActive,1))).limit(1).for("update");
+        if(!material)throw new TRPCError({code:"NOT_FOUND",message:"Material não encontrado."});
+        assertOwnArtist(ctx,material.ownerArtistId);await assertNotLoanStock(tx,ctx.studioId,material.id);await assertNoPendingLoan(tx,ctx.studioId,material.id);
+        if(Object.keys(input.fields).length)await tx.update(tenantMaterials).set(input.fields).where(and(eq(tenantMaterials.id,material.id),eq(tenantMaterials.studioId,ctx.studioId)));
+        return {id:material.id};
+      });
+    }),
+
     create: tenantProcedure.input(z.object({
       registrationKey: z.string().uuid().optional(),
       suppliedArtistId: z.number().int().positive().optional(),

@@ -1,3 +1,4 @@
+import InventorySpreadsheetImport from "./InventorySpreadsheetImport";
 import InventoryEntryGuide from "./InventoryEntryGuide";
 import ImportTestInventory from "./ImportTestInventory";
 import { readTestMetadata } from "@shared/inventoryTestCatalog";
@@ -188,6 +189,7 @@ export default function ArtistInventory() {
           <Plus className="mr-2 h-4 w-4" /> Novo material
         </Button>
       </div>
+      <InventorySpreadsheetImport materials={materials} artists={artists} manager={manager} artistId={user?.artistId} onComplete={refresh} />
       <InventoryEntryGuide onManual={openManual} disabled={!manager && !user?.artistId} />
       <div className="flex flex-wrap gap-2"><Button variant={view === "stock" ? "default" : "outline"} onClick={() => setView("stock")}>Estoque operacional</Button><Button variant={view === "catalog" ? "default" : "outline"} onClick={() => setView("catalog")}>Catálogo técnico</Button><Button variant={view === "loans" ? "default" : "outline"} onClick={() => setView("loans")}>Empréstimos de materiais</Button><Button variant={view === "notices" ? "default" : "outline"} onClick={() => setView("notices")}>Avisos e antecedência</Button></div>
       {view === "loans" && <InventoryLoans />}
