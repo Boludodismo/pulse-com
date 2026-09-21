@@ -163,23 +163,44 @@ async function redoStock(){
   }catch(e:any){toast.error(e.message||"Não foi possível refazer.")}
 }
 
-async function sampleAt(cx:number,cy:number){
-  const s=stage.current,im=image.current;if(!s||!im||!im.naturalWidth||samples.length>=30)return;
+function readReferenceAt(cx:number,cy:number){
+  const s=stage.current,im=image.current;if(!s||!im||!im.naturalWidth||samples.length>=30)return null;
   const rect=s.getBoundingClientRect(),w=rect.width,h=rect.height,p=new DOMPoint(cx-rect.left,cy-rect.top);
   const matrix=new DOMMatrix().translate(w/2+vr.current.x,h/2+vr.current.y).rotate(vr.current.rotation).scale(vr.current.scale).translate(-w/2,-h/2);
   const q=p.matrixTransform(matrix.inverse()),fit=Math.min(w/im.naturalWidth,h/im.naturalHeight),iw=im.naturalWidth*fit,ih=im.naturalHeight*fit,ox=(w-iw)/2,oy=(h-ih)/2;
-  if(q.x<ox||q.x>ox+iw||q.y<oy||q.y>oy+ih)return toast.error("Toque sobre a referência.");
-  const px=Math.round((q.x-ox)/iw*im.naturalWidth),py=Math.round((q.y-oy)/ih*im.naturalHeight),c=document.createElement("canvas");c.width=5;c.height=5;const ctx=c.getContext("2d",{willReadFrequently:true});if(!ctx)return;
+  if(q.x<ox||q.x>ox+iw||q.y<oy||q.y>oy+ih)return null;
+  const px=Math.round((q.x-ox)/iw*im.naturalWidth),py=Math.round((q.y-oy)/ih*im.naturalHeight),canvas=document.createElement("canvas");canvas.width=5;canvas.height=5;const ctx=canvas.getContext("2d",{willReadFrequently:true});if(!ctx)return null;
   try{
-    ctx.drawImage(im,Math.max(0,px-2),Math.max(0,py-2),5,5,0,0,5,5);const d=ctx.getImageData(0,0,5,5).data;let R=0,G=0,B=0,n=0;for(let i=0;i<d.length;i+=4){R+=d[i];G+=d[i+1];B+=d[i+2];n++}R=Math.round(R/n);G=Math.round(G/n);B=Math.round(B/n);const CMYK=cmyk(R,G,B),H=hex(R,G,B);
-    const saved=await saveSampleMutation.mutateAsync({procedureId,hex:H,red:R,green:G,blue:B,cyan:CMYK[0],magenta:CMYK[1],yellow:CMYK[2],black:CMYK[3],xPct:q.x/w*100,yPct:q.y/h*100,sampleSize:5});
-    const x:Sample={id:String(saved.id),code:saved.code,hex:H,rgb:[R,G,B],cmyk:CMYK,xPct:q.x/w*100,yPct:q.y/h*100};setSample(x);setMode("color");await utils.pod.session.listColorSamples.invalidate({procedureId});if(samples.length+1>=30){setSampler(false);toast.success(saved.code+" salva. Limite de 30 amostras atingido.");}else{setSampler(true);toast.success(saved.code+" salva. Toque em outro ponto para continuar.");}
-  }catch(e:any){toast.error(e.message||"Não foi possível ler/salvar essa cor.")}
+    const sx=Math.max(0,Math.min(im.naturalWidth-5,px-2)),sy=Math.max(0,Math.min(im.naturalHeight-5,py-2));
+    ctx.drawImage(im,sx,sy,5,5,0,0,5,5);const d=ctx.getImageData(0,0,5,5).data;let R=0,G=0,B=0,n=0;for(let i=0;i<d.length;i+=4){R+=d[i];G+=d[i+1];B+=d[i+2];n++}R=Math.round(R/n);G=Math.round(G/n);B=Math.round(B/n);
+    const CMYK=cmyk(R,G,B),LAB=lab(R,G,B),draft:ReferenceDraft={hex:hex(R,G,B),red:R,green:G,blue:B,cyan:CMYK[0],magenta:CMYK[1],yellow:CMYK[2],black:CMYK[3],labL:LAB[0],labA:LAB[1],labB:LAB[2],xPct:q.x/w*100,yPct:q.y/h*100};
+    setReferenceDraft(draft);return draft;
+  }catch{return null}
 }
-
-function down(e:RP<HTMLDivElement>){e.currentTarget.setPointerCapture(e.pointerId);pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pts.current.size===1){start.current=vr.current;pstart.current={x:e.clientX,y:e.clientY}}if(pts.current.size===2){multiTouch.current=true;const[a,b]=[...pts.current.values()];base.current={v:vr.current,d:Math.hypot(b.x-a.x,b.y-a.y),a:Math.atan2(b.y-a.y,b.x-a.x),m:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}}}}
-function move(e:RP<HTMLDivElement>){if(!pts.current.has(e.pointerId))return;pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});const p=[...pts.current.values()];if(p.length===2&&base.current){const[a,b]=p,z=base.current,d=Math.hypot(b.x-a.x,b.y-a.y),ang=Math.atan2(b.y-a.y,b.x-a.x),m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};setView({...z.v,scale:Math.max(.2,Math.min(5,z.v.scale*d/z.d)),rotation:z.v.rotation+(ang-z.a)*180/Math.PI,x:z.v.x+m.x-z.m.x,y:z.v.y+m.y-z.m.y})}else if(p.length===1&&!sampler&&start.current&&pstart.current)setView({...start.current,x:start.current.x+e.clientX-pstart.current.x,y:start.current.y+e.clientY-pstart.current.y})}
-function up(e:RP<HTMLDivElement>){const ps=pstart.current;pts.current.delete(e.pointerId);if(sampler&&!multiTouch.current&&ps&&Math.hypot(e.clientX-ps.x,e.clientY-ps.y)<8)void sampleAt(e.clientX,e.clientY);if(pts.current.size===0){if(start.current&&JSON.stringify(start.current)!==JSON.stringify(vr.current)){setVu(h=>[...h,start.current!]);setVredo([])}start.current=null;pstart.current=null;base.current=null;multiTouch.current=false}}
+async function confirmReferenceSample(){
+  const x=referenceDraft;if(!x)return;
+  try{
+    const saved=await saveSampleMutation.mutateAsync({procedureId,hex:x.hex,red:x.red,green:x.green,blue:x.blue,cyan:x.cyan,magenta:x.magenta,yellow:x.yellow,black:x.black,labL:x.labL,labA:x.labA,labB:x.labB,xPct:x.xPct,yPct:x.yPct,sampleSize:5});
+    const s:Sample={id:String(saved.id),code:saved.code,hex:x.hex,rgb:[x.red,x.green,x.blue],cmyk:[x.cyan,x.magenta,x.yellow,x.black],lab:[x.labL,x.labA,x.labB],xPct:x.xPct,yPct:x.yPct};
+    setSample(s);setReferenceDraft(null);setMode("color");await utils.pod.session.listColorSamples.invalidate({procedureId});
+    if(samples.length+1>=30){setSampler(false);toast.success(saved.code+" salva. Limite de 30 amostras atingido.");}else{setSampler(true);toast.success(saved.code+" salva. Arraste para escolher a próxima cor.");}
+  }catch(e:any){toast.error(e.message||"Não foi possível salvar essa cor.")}
+}
+function down(e:RP<HTMLDivElement>){
+  e.currentTarget.setPointerCapture(e.pointerId);pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pts.current.size===1){start.current=vr.current;pstart.current={x:e.clientX,y:e.clientY};if(sampler){samplerPointerActive.current=true;readReferenceAt(e.clientX,e.clientY)}}
+  if(pts.current.size===2){multiTouch.current=true;samplerPointerActive.current=false;const[a,b]=[...pts.current.values()];base.current={v:vr.current,d:Math.hypot(b.x-a.x,b.y-a.y),a:Math.atan2(b.y-a.y,b.x-a.x),m:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}}}
+}
+function move(e:RP<HTMLDivElement>){
+  if(!pts.current.has(e.pointerId))return;pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});const p=[...pts.current.values()];
+  if(p.length===2&&base.current){const[a,b]=p,z=base.current,d=Math.hypot(b.x-a.x,b.y-a.y),ang=Math.atan2(b.y-a.y,b.x-a.x),m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};setView({...z.v,scale:Math.max(.2,Math.min(5,z.v.scale*d/z.d)),rotation:z.v.rotation+(ang-z.a)*180/Math.PI,x:z.v.x+m.x-z.m.x,y:z.v.y+m.y-z.m.y})}
+  else if(p.length===1&&sampler&&samplerPointerActive.current&&!multiTouch.current)readReferenceAt(e.clientX,e.clientY);
+  else if(p.length===1&&!sampler&&start.current&&pstart.current)setView({...start.current,x:start.current.x+e.clientX-pstart.current.x,y:start.current.y+e.clientY-pstart.current.y});
+}
+function up(e:RP<HTMLDivElement>){
+  pts.current.delete(e.pointerId);samplerPointerActive.current=false;
+  if(pts.current.size===0){if(!sampler&&start.current&&JSON.stringify(start.current)!==JSON.stringify(vr.current)){setVu(h=>[...h,start.current!]);setVredo([])}start.current=null;pstart.current=null;base.current=null;multiTouch.current=false}
+}
 function wheel(e:RW<HTMLDivElement>){e.preventDefault();vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
 useEffect(()=>{const el=stage.current as any;if(!el)return;let st:View|null=null;const a=(e:any)=>{e.preventDefault();st={...vr.current}},b=(e:any)=>{if(st){e.preventDefault();setView({...st,scale:Math.max(.2,Math.min(5,st.scale*(e.scale||1))),rotation:st.rotation+(e.rotation||0)})}},c=(e:any)=>{e.preventDefault();if(st){setVu(h=>[...h,st!]);setVredo([])}st=null};el.addEventListener("gesturestart",a,{passive:false});el.addEventListener("gesturechange",b,{passive:false});el.addEventListener("gestureend",c,{passive:false});return()=>{el.removeEventListener("gesturestart",a);el.removeEventListener("gesturechange",b);el.removeEventListener("gestureend",c)}},[]);
 
@@ -187,6 +208,23 @@ async function toggleTimer(){
   try{if(run){await pauseMutation.mutateAsync({procedureId});setRun(false)}else{await resumeMutation.mutateAsync({procedureId});setRun(true)}await utils.pod.session.get.invalidate({procedureId})}catch(e:any){toast.error(e.message)}
 }
 async function saveNotes(){try{await updateProcedure.mutateAsync({id:procedureId,notes:note});setSheet(null);toast.success("Notas salvas na sessão.")}catch(e:any){toast.error(e.message)}}
+function openColorPhoto(target:PhotoTarget){setPhotoTarget(target);colorPhotoInput.current?.click()}
+function closeColorPhoto(){if(photoSrc)URL.revokeObjectURL(photoSrc);setPhotoSrc(null);setPhotoTarget(null)}
+async function confirmTemporaryColor(color:ColorValue){
+  if(!photoTarget)return;
+  try{
+    if(photoTarget.kind==="material"){
+      await saveMaterialColorMutation.mutateAsync({tenantMaterialId:photoTarget.materialId,artistId:proc?.artistId??undefined,source:"photo",color});
+      await utils.pod.inventory.materialColorSamples.invalidate({artistId:proc?.artistId??undefined});
+      toast.success("Amostra tonal da tinta salva. A foto foi descartada.");
+    }else{
+      await saveRecipeResultMutation.mutateAsync({recipeId:photoTarget.recipeId,color});
+      await utils.pod.session.listInkRecipes.invalidate({procedureId});
+      toast.success("Resultado tonal da mistura salvo. A foto foi descartada.");
+    }
+    closeColorPhoto();
+  }catch(e:any){toast.error(e.message||"Não foi possível salvar a amostra tonal.")}
+}
 async function uploadReference(file:File){
   if(file.size>16*1024*1024)return toast.error("Imagem acima de 16 MB.");
   if(!file.type.startsWith("image/"))return toast.error("Selecione um arquivo de imagem.");
