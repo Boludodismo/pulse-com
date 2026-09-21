@@ -10,6 +10,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -17,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ChevronLeft, Stethoscope, Upload, X, Calendar, Clock, Link2, CheckCircle2, Package, Plus } from "lucide-react";
+import { ChevronLeft, Stethoscope, Upload, X, Calendar, Clock, Link2, CheckCircle2, Package, Plus, Search, UserPlus, Phone } from "lucide-react";
 
 const BODY_LOCATIONS = [
   "Braço direito", "Braço esquerdo", "Antebraço direito", "Antebraço esquerdo",
@@ -83,10 +90,28 @@ export default function NewProcedure() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [plannedMaterialId, setPlannedMaterialId] = useState<string | undefined>();
   const [plannedQuantity, setPlannedQuantity] = useState("1");
+  const [clientSearch, setClientSearch] = useState("");
+  const [newClientOpen, setNewClientOpen] = useState(false);
+  const [newClientForm, setNewClientForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    instagram: "",
+  });
 
   const artistsQuery = trpc.artists.list.useQuery();
   const clientsQuery = trpc.clients.list.useQuery();
   const clients = clientsQuery.data ?? [];
+  const clientSearchNormalized = clientSearch.trim().toLowerCase();
+  const clientSearchDigits = clientSearch.replace(/\D/g, "");
+  const filteredClients = clientSearchNormalized
+    ? clients.filter((client) => {
+        const nameMatch = client.name.toLowerCase().includes(clientSearchNormalized);
+        const phoneDigits = (client.phone ?? "").replace(/\D/g, "");
+        const phoneMatch = clientSearchDigits.length > 0 && phoneDigits.includes(clientSearchDigits);
+        return nameMatch || phoneMatch;
+      }).slice(0, 8)
+    : [];
 
   // Dados do cliente pré-preenchido
   const clientQuery = trpc.clients.getById.useQuery(
@@ -120,6 +145,22 @@ export default function NewProcedure() {
       artistId: selectedAppointment.artistId ?? undefined,
     }));
   }, [selectedAppointment?.id]);
+
+  const createClientMutation = trpc.clients.create.useMutation({
+    onSuccess: async (client) => {
+      await clientsQuery.refetch();
+      setForm((current) => ({
+        ...current,
+        clientId: client.id,
+        appointmentId: null,
+      }));
+      setClientSearch(client.name);
+      setNewClientOpen(false);
+      setNewClientForm({ name: "", phone: "", email: "", instagram: "" });
+      toast.success("Cliente cadastrado e selecionado para esta sessão.");
+    },
+    onError: (error) => toast.error("Erro ao cadastrar cliente: " + error.message),
+  });
 
   const createMutation = trpc.procedures.create.useMutation({
     onSuccess: (data) => {
@@ -185,16 +226,16 @@ export default function NewProcedure() {
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2">
               <Stethoscope className="w-5 h-5 text-primary" />
-              Novo Procedimento
+              Nova Sessão Tattoo
             </h1>
-            <p className="text-sm text-muted-foreground">Prontuário técnico de execução</p>
+            <p className="text-sm text-muted-foreground">Prepare a referência e inicie a sessão</p>
           </div>
         </div>
 
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm text-muted-foreground uppercase tracking-wide">
-              Dados do procedimento
+              Dados da sessão
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -203,11 +244,11 @@ export default function NewProcedure() {
               <div>
                 <Label>Cliente</Label>
                 <div className="mt-1 flex items-center gap-3 p-3 rounded-lg bg-muted/50 border">
-                  <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
+                  <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm shrink-0">
                     {selectedClient.name.charAt(0).toUpperCase()}
                   </div>
-                  <div>
-                    <p className="font-medium text-sm">{selectedClient.name}</p>
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm truncate">{selectedClient.name}</p>
                     {selectedClient.phone && (
                       <p className="text-xs text-muted-foreground">{selectedClient.phone}</p>
                     )}
@@ -215,26 +256,91 @@ export default function NewProcedure() {
                 </div>
               </div>
             ) : (
-              <div>
+              <div className="space-y-2">
                 <Label>Cliente *</Label>
-                <Select
-                  value={form.clientId > 0 ? String(form.clientId) : ""}
-                  onValueChange={(v) => {
-                    const newClientId = parseInt(v, 10);
-                    setForm((f) => ({ ...f, clientId: newClientId, appointmentId: null }));
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    value={clientSearch}
+                    onChange={(event) => setClientSearch(event.target.value)}
+                    placeholder="Buscar por nome ou telefone..."
+                    inputMode="search"
+                    className="pl-9"
+                    autoComplete="off"
+                  />
+                </div>
+
+                {form.clientId > 0 && selectedClient && (
+                  <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+                    <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm shrink-0">
+                      {selectedClient.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{selectedClient.name}</p>
+                      {selectedClient.phone && (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Phone className="w-3 h-3" /> {selectedClient.phone}
+                        </p>
+                      )}
+                    </div>
+                    <CheckCircle2 className="w-5 h-5 text-primary shrink-0" />
+                  </div>
+                )}
+
+                {clientSearchNormalized && (
+                  <div className="rounded-lg border bg-popover overflow-hidden">
+                    {filteredClients.length > 0 ? (
+                      <div className="max-h-64 overflow-y-auto">
+                        {filteredClients.map((client) => (
+                          <button
+                            key={client.id}
+                            type="button"
+                            className={`w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-accent transition-colors border-b last:border-b-0 ${form.clientId === client.id ? "bg-primary/10" : ""}`}
+                            onClick={() => {
+                              setForm((current) => ({
+                                ...current,
+                                clientId: client.id,
+                                appointmentId: null,
+                              }));
+                              setClientSearch(client.name);
+                            }}
+                          >
+                            <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
+                              {client.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-sm truncate">{client.name}</p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {client.phone || "Sem telefone cadastrado"}
+                              </p>
+                            </div>
+                            {form.clientId === client.id && <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-3 text-sm text-muted-foreground">
+                        Nenhum cliente encontrado com “{clientSearch}”.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2 justify-center min-h-11"
+                  onClick={() => {
+                    setNewClientForm((current) => ({
+                      ...current,
+                      name: current.name || clientSearch.trim(),
+                    }));
+                    setNewClientOpen(true);
                   }}
                 >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Selecionar cliente..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.name} {c.phone ? `· ${c.phone}` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <UserPlus className="w-4 h-4" />
+                  Adicionar novo cliente
+                </Button>
               </div>
             )}
 
@@ -336,7 +442,7 @@ export default function NewProcedure() {
 
             {/* Título */}
             <div>
-              <Label>Título do procedimento *</Label>
+              <Label>Projeto / título da sessão *</Label>
               <Input
                 value={form.title}
                 onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
@@ -468,6 +574,85 @@ export default function NewProcedure() {
           </Button>
         </div>
       </div>
+
+      <Dialog open={newClientOpen} onOpenChange={(open) => {
+        if (!createClientMutation.isPending) setNewClientOpen(open);
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Novo cliente</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="session-new-client-name">Nome *</Label>
+              <Input
+                id="session-new-client-name"
+                value={newClientForm.name}
+                onChange={(event) => setNewClientForm((current) => ({ ...current, name: event.target.value }))}
+                placeholder="Nome do cliente"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="session-new-client-phone">Telefone / WhatsApp</Label>
+              <Input
+                id="session-new-client-phone"
+                value={newClientForm.phone}
+                onChange={(event) => setNewClientForm((current) => ({ ...current, phone: event.target.value }))}
+                placeholder="(38) 99999-9999"
+                inputMode="tel"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="session-new-client-email">E-mail</Label>
+              <Input
+                id="session-new-client-email"
+                value={newClientForm.email}
+                onChange={(event) => setNewClientForm((current) => ({ ...current, email: event.target.value }))}
+                placeholder="cliente@email.com"
+                inputMode="email"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="session-new-client-instagram">Instagram</Label>
+              <Input
+                id="session-new-client-instagram"
+                value={newClientForm.instagram}
+                onChange={(event) => setNewClientForm((current) => ({ ...current, instagram: event.target.value }))}
+                placeholder="@usuario"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={createClientMutation.isPending}
+              onClick={() => setNewClientOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={createClientMutation.isPending || !newClientForm.name.trim()}
+              onClick={() => {
+                if (!newClientForm.name.trim()) {
+                  toast.error("Informe o nome do cliente.");
+                  return;
+                }
+                createClientMutation.mutate({
+                  name: newClientForm.name.trim(),
+                  phone: newClientForm.phone.trim() || undefined,
+                  email: newClientForm.email.trim(),
+                  instagram: newClientForm.instagram.trim() || undefined,
+                });
+              }}
+            >
+              {createClientMutation.isPending ? "Salvando..." : "Cadastrar e selecionar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
