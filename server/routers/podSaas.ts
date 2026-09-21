@@ -1367,7 +1367,6 @@ export const podSaasRouter = router({
             tenantMaterialId: number;
             batchId?: number;
             quantity: string;
-            recipeId: number;
           }) => {
             const material = (await tx
               .select()
@@ -1465,7 +1464,6 @@ export const podSaasRouter = router({
               artistId: procedure.artistId,
               tenantMaterialId: material.id,
               plannedMaterialId: null,
-              recipeId: args.recipeId,
               nameSnapshot: batch?.nameSnapshot ?? material.name,
               unitSnapshot: batch?.unitSnapshot ?? material.unit,
               quantity: scaledToDecimal(quantity, 3),
@@ -1518,7 +1516,6 @@ export const podSaasRouter = router({
               tenantMaterialId: ingredient.tenantMaterialId,
               batchId: ingredient.batchId,
               quantity: converted.quantity,
-              recipeId,
             });
             consumptionIds.push(consumed.consumptionId);
             await tx.insert(procedureInkRecipeItems).values({
@@ -1543,7 +1540,6 @@ export const podSaasRouter = router({
               tenantMaterialId: input.cupTenantMaterialId,
               batchId: input.cupBatchId,
               quantity: "1.000",
-              recipeId,
             });
             cupConsumptionId = consumedCup.consumptionId;
             consumptionIds.push(consumedCup.consumptionId);
@@ -1595,15 +1591,28 @@ export const podSaasRouter = router({
           if (recipe.status === "reverted")
             return { id: recipe.id, alreadyReverted: true, restored: 0 };
 
-          const rows = await tx
-            .select()
-            .from(procedureInventoryConsumptions)
+          const recipeItems = await tx
+            .select({ consumptionId: procedureInkRecipeItems.consumptionId })
+            .from(procedureInkRecipeItems)
             .where(and(
-              eq(procedureInventoryConsumptions.studioId, ctx.studioId),
-              eq(procedureInventoryConsumptions.recipeId, recipe.id),
-              eq(procedureInventoryConsumptions.status, "consumido"),
-            ))
-            .orderBy(desc(procedureInventoryConsumptions.id));
+              eq(procedureInkRecipeItems.studioId, ctx.studioId),
+              eq(procedureInkRecipeItems.recipeId, recipe.id),
+            ));
+          const consumptionIds = Array.from(new Set([
+            ...recipeItems.map(item => item.consumptionId),
+            ...(recipe.cupConsumptionId ? [recipe.cupConsumptionId] : []),
+          ]));
+          const rows = consumptionIds.length
+            ? await tx
+                .select()
+                .from(procedureInventoryConsumptions)
+                .where(and(
+                  eq(procedureInventoryConsumptions.studioId, ctx.studioId),
+                  inArray(procedureInventoryConsumptions.id, consumptionIds),
+                  eq(procedureInventoryConsumptions.status, "consumido"),
+                ))
+                .orderBy(desc(procedureInventoryConsumptions.id))
+            : [];
 
           let restored = 0;
           for (const consumption of rows) {
@@ -1839,7 +1848,6 @@ export const podSaasRouter = router({
           artistId: procedure.artistId,
           tenantMaterialId: material.id,
           plannedMaterialId: null,
-          recipeId: null,
           nameSnapshot: batch?.nameSnapshot ?? material.name,
           unitSnapshot: batch?.unitSnapshot ?? material.unit,
           quantity: scaledToDecimal(quantity, 3),
