@@ -1,3 +1,4 @@
+import InventoryEntryGuide from "./InventoryEntryGuide";
 import ImportTestInventory from "./ImportTestInventory";
 import { readTestMetadata } from "@shared/inventoryTestCatalog";
 import InventoryLoans from "./InventoryLoans";
@@ -162,6 +163,10 @@ export default function ArtistInventory() {
         currentQuantity: form.currentQuantity.replace(",", "."),
       });
   };
+  const openManual = () => {
+    setEditingId(null);
+    setForm(emptyForm(manager ? (owner === "all" ? "studio" : owner) : String(user?.artistId)));
+  };
   return (
     <section className="space-y-5">
       {receiving&&<ReceiveMaterial material={receiving} onClose={()=>setReceiving(null)}/>}
@@ -177,23 +182,13 @@ export default function ArtistInventory() {
           </p>
         </div>
         <Button
-          onClick={() => {
-            setEditingId(null);
-            setForm(
-              emptyForm(
-                manager
-                  ? owner === "all"
-                    ? "studio"
-                    : owner
-                  : String(user?.artistId)
-              )
-            );
-          }}
+          onClick={openManual}
           disabled={!manager && !user?.artistId}
         >
           <Plus className="mr-2 h-4 w-4" /> Novo material
         </Button>
       </div>
+      <InventoryEntryGuide onManual={openManual} disabled={!manager && !user?.artistId} />
       <div className="flex flex-wrap gap-2"><Button variant={view === "stock" ? "default" : "outline"} onClick={() => setView("stock")}>Estoque operacional</Button><Button variant={view === "catalog" ? "default" : "outline"} onClick={() => setView("catalog")}>Catálogo técnico</Button><Button variant={view === "loans" ? "default" : "outline"} onClick={() => setView("loans")}>Empréstimos de materiais</Button><Button variant={view === "notices" ? "default" : "outline"} onClick={() => setView("notices")}>Avisos e antecedência</Button></div>
       {view === "loans" && <InventoryLoans />}
       {view === "notices" && <InventoryNotices />}
