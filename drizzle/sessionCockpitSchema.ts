@@ -214,3 +214,29 @@ export const procedureInkRecipeResults = mysqlTable(
     ),
   ]
 );
+
+export const procedureVisualLayers = mysqlTable(
+  "procedure_visual_layers",
+  {
+    id: int().autoincrement().primaryKey(),
+    studioId: int().notNull(),
+    procedureId: int().notNull(),
+    clientId: int().notNull(),
+    artistId: int(),
+    layerKey: varchar({ length: 80 }).notNull(),
+    name: varchar({ length: 160 }).notNull(),
+    layerType: varchar({ length: 32 }).notNull(),
+    imageUrl: varchar({ length: 3000 }),
+    imageKey: varchar({ length: 500 }),
+    opacity: int().default(100).notNull(),
+    isVisible: int().default(1).notNull(),
+    sortOrder: int().default(0).notNull(),
+    createdByUserId: int().notNull(),
+    createdAt: timestamp({ mode: "string" }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp({ mode: "string" }).defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    uniqueIndex("procedure_visual_layer_key_unique").on(t.studioId, t.procedureId, t.layerKey),
+    index("procedure_visual_layers_order_idx").on(t.studioId, t.procedureId, t.sortOrder, t.id),
+  ]
+);
