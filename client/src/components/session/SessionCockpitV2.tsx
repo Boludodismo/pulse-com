@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import {useEffect,useMemo,useRef,useState,type CSSProperties,type PointerEvent as RP,type WheelEvent as RW} from "react";
 import {ArrowLeft,Home,Undo2,Redo2,Minus,Eye,EyeOff,Plus,Pause,Play,Package,Camera,Square,StickyNote,RotateCcw,RotateCw,Palette,Pipette,X,Search,Droplets,Check,Layers3,ChevronLeft,ChevronRight,Maximize2,Minimize2} from "lucide-react";
 import {toast} from "sonner";
@@ -107,7 +108,7 @@ const found=useMemo(()=>{const q=search.toLowerCase();return stock.filter(m=>!ac
 
 const [view,setView]=useState<View>(V0),vr=useRef(view);vr.current=view;
 const [vu,setVu]=useState<View[]>([]),[vredo,setVredo]=useState<View[]>([]);
-const [lmin,setLmin]=useState(false),[rmin,setRmin]=useState(false),[lex,setLex]=useState(false),[rex,setRex]=useState(false);
+const [lmin,setLmin]=useState(()=>window.matchMedia("(max-width: 620px)").matches),[rmin,setRmin]=useState(()=>window.matchMedia("(max-width: 620px)").matches),[lex,setLex]=useState(false),[rex,setRex]=useState(false);
 const [focusMode,setFocusMode]=useState(false),[cleanMode,setCleanMode]=useState(false);
 const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=useState(1),[rscale,setRscale]=useState(1);
 const [layerLocal,setLayerLocal]=useState<Record<string,{opacity:number;isVisible:boolean}>>({});
@@ -119,6 +120,14 @@ const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoSta
 const [photoTarget,setPhotoTarget]=useState<PhotoTarget|null>(null),[photoSrc,setPhotoSrc]=useState<string|null>(null);
 const [newLayerType,setNewLayerType]=useState<"contrast"|"stencil"|"stencil_overlay"|"image">("contrast"),[newLayerName,setNewLayerName]=useState("Contraste");
 const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null),colorPhotoInput=useRef<HTMLInputElement>(null),layerImageInput=useRef<HTMLInputElement>(null),cockpitRoot=useRef<HTMLDivElement>(null);
+// Fixed panels must follow the visual viewport inside Safari's in-app browser.
+const [viewport,setViewport]=useState<CSSProperties>({});
+useEffect(()=>{
+  const visual=window.visualViewport;
+  const sync=()=>setViewport({width:visual?.width??window.innerWidth,height:visual?.height??window.innerHeight,left:visual?.offsetLeft??0,top:visual?.offsetTop??0,right:"auto",bottom:"auto"});
+  sync();visual?.addEventListener("resize",sync);visual?.addEventListener("scroll",sync);window.addEventListener("resize",sync);
+  return()=>{visual?.removeEventListener("resize",sync);visual?.removeEventListener("scroll",sync);window.removeEventListener("resize",sync)};
+},[]);
 const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pts=useRef(new Map<number,{x:number;y:number}>());
 const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false),samplerPointerActive=useRef(false),samplePointerId=useRef<number|null>(null),interactionMode=useRef<"idle"|"sample"|"transform">("idle");
 
@@ -261,7 +270,11 @@ async function confirmReferenceSample(){
     if(samples.length+1>=30){setSampler(false);toast.success(saved.code+" salva. Limite de 30 amostras atingido.");}else{setSampler(true);toast.success(saved.code+" salva. Arraste para escolher a próxima cor.");}
   }catch(e:any){toast.error(e.message||"Não foi possível salvar essa cor.")}
 }
+function isControl(target:EventTarget|null){
+  return target instanceof Element && Boolean(target.closest("button,input,textarea,select,a,[role=button],.reference-sampler-card"));
+}
 function down(e:RP<HTMLDivElement>){
+  if(isControl(e.target))return;
   if(e.pointerType==="mouse"&&e.button!==0)return;
   e.preventDefault();e.stopPropagation();
   e.currentTarget.setPointerCapture(e.pointerId);
@@ -322,6 +335,8 @@ function move(e:RP<HTMLDivElement>){
   }
 }
 function up(e:RP<HTMLDivElement>){
+  if(!pts.current.has(e.pointerId))return;
+  if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
   e.preventDefault();e.stopPropagation();
   pts.current.delete(e.pointerId);
 
@@ -349,11 +364,11 @@ function up(e:RP<HTMLDivElement>){
     samplerPointerActive.current=false;
   }
 }
-function wheel(e:RW<HTMLDivElement>){e.preventDefault();if(interactionMode.current==="sample")return;if(sampler&&!e.ctrlKey)return;vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
+function wheel(e:RW<HTMLDivElement>){if(isControl(e.target))return;e.preventDefault();if(interactionMode.current==="sample")return;if(sampler&&!e.ctrlKey)return;vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
 useEffect(()=>{const el=stage.current as any;if(!el)return;let st:View|null=null;
-      const a=(e:any)=>{e.preventDefault();if(sampler&&interactionMode.current==="sample")return;if(pts.current.size===1)return;interactionMode.current="transform";st={...vr.current}};
-      const b=(e:any)=>{e.preventDefault();if(!st||interactionMode.current!=="transform")return;setView({...st,scale:Math.max(.2,Math.min(5,st.scale*(e.scale||1))),rotation:st.rotation+(e.rotation||0)})};
-      const end=(e:any)=>{e.preventDefault();if(st){setVu(h=>[...h,st!]);setVredo([])}st=null;if(pts.current.size===0)interactionMode.current="idle"};
+      const a=(e:any)=>{if(isControl(e.target))return;e.preventDefault();if(sampler&&interactionMode.current==="sample")return;if(pts.current.size===1)return;interactionMode.current="transform";st={...vr.current}};
+      const b=(e:any)=>{if(isControl(e.target))return;e.preventDefault();if(!st||interactionMode.current!=="transform")return;setView({...st,scale:Math.max(.2,Math.min(5,st.scale*(e.scale||1))),rotation:st.rotation+(e.rotation||0)})};
+      const end=(e:any)=>{if(isControl(e.target))return;e.preventDefault();if(st){setVu(h=>[...h,st!]);setVredo([])}st=null;if(pts.current.size===0)interactionMode.current="idle"};
       el.addEventListener("gesturestart",a,{passive:false});el.addEventListener("gesturechange",b,{passive:false});el.addEventListener("gestureend",end,{passive:false});
       return()=>{el.removeEventListener("gesturestart",a);el.removeEventListener("gesturechange",b);el.removeEventListener("gestureend",end)}
     },[sampler]);
@@ -418,9 +433,9 @@ const orderedLayers=(visualLayers.length?visualLayers:[
 const layerVisible=(layer:any)=>layer.layerKey==="reference"?refOn:layer.layerKey==="samples"?markOn:(layerLocal[String(layer.layerKey)]?.isVisible??Boolean(layer.isVisible));
 const layerOpacity=(layer:any)=>layer.layerKey==="reference"?Math.round(refOp*100):layer.layerKey==="samples"?Math.round(markOp*100):(layerLocal[String(layer.layerKey)]?.opacity??Number(layer.opacity??100));
 
-return <div ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
+return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
 <header className="cockpit-top">
-<button className="cockpit-icon" onClick={props.onClose}><ArrowLeft size={18}/></button>
+<button type="button" aria-label="Voltar à sessão" className="cockpit-icon" onClick={props.onClose}><ArrowLeft size={18}/></button>
 <button className="cockpit-icon" onClick={vundo} disabled={!vu.length} title="Desfazer imagem"><Undo2 size={18}/></button><button className="cockpit-icon" onClick={vred} disabled={!vredo.length} title="Refazer imagem"><Redo2 size={18}/></button>
 <div className="cockpit-client"><strong>{client.data?.name||"Cliente"}</strong><small>{props.title} {proc.bodyLocation?"· "+proc.bodyLocation:""}</small></div>
 <button className="cockpit-icon desktop-only" onClick={()=>{setNote(String(proc.notes||""));setSheet("notes")}}><StickyNote size={17}/></button><div className="cockpit-status"><i/><b>{props.elapsed}</b><span>{props.running?"EM ANDAMENTO":"PAUSADA"}</span></div>
@@ -432,7 +447,7 @@ return <div ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode "
 
 <main ref={stage} className="cockpit-stage" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
 <div className="cockpit-anamnese">Sessão #{procedureId}</div>
-<div className="cockpit-view-quick"><button onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button></div><button className="focus-entry-button" onClick={()=>void enterFocusMode()} title="Abrir modo foco"><Maximize2 size={16}/><span>FOCO</span></button>
+<div className="cockpit-view-quick"><button type="button" aria-label="Restaurar imagem" onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button type="button" aria-label="Girar imagem à esquerda" onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button type="button" aria-label="Girar imagem à direita" onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button></div><button className="focus-entry-button" onClick={()=>void enterFocusMode()} title="Abrir modo foco"><Maximize2 size={16}/><span>FOCO</span></button>
 <div className="cockpit-transform" style={{transform:"translate("+view.x+"px,"+view.y+"px) rotate("+view.rotation+"deg) scale("+view.scale+")"}}>
 {orderedLayers.map((layer:any)=>{
   if(!layerVisible(layer))return null;
@@ -460,14 +475,14 @@ return <div ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode "
 </main>
 
 <aside className={"cockpit-dock left "+(lmin?"minimized ":"")+(lex?"expanded":"")} style={panel(lop,lscale,"left")}>
-<header><button onClick={()=>setLmin(v=>!v)}><Minus size={16}/></button><strong>Materiais</strong><button onClick={()=>setLex(v=>!v)}>{lex?<ChevronLeft size={16}/>:<ChevronRight size={16}/>}</button></header>
+<header><button type="button" aria-label={lmin?"Abrir materiais":"Recolher materiais"} onClick={()=>{setLmin(v=>!v);if(lmin&&window.matchMedia("(max-width: 620px)").matches){setLex(true);setRmin(true)}}}>{lmin?<Package size={18}/>:<Minus size={16}/>}</button><strong>Materiais</strong><button type="button" aria-label="Expandir ou compactar materiais" onClick={()=>setLex(v=>!v)}>{lex?<ChevronLeft size={16}/>:<ChevronRight size={16}/>}</button></header>
 <div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={lscale} onChange={e=>setLscale(+e.target.value)}/><output>{Math.round(lscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={lop} onChange={e=>setLop(+e.target.value)}/><output>{Math.round(lop*100)}</output></label></div>
 <div className="dock-body">{mats.map(m=><button key={m.id} className={"material-card "+(totals[m.id]?"active":"")} onClick={()=>useMat(m)}><span className="material-glyph" style={m.color?{background:m.color,color:m.color==="#f4f4f5"?"#18181b":"white"}:undefined}>{m.kind==="ink"||m.kind==="diluent"?<Droplets size={17}/>:m.short}</span>{lex&&<span className="material-meta"><b>{m.name}</b><small>{m.kind==="ink"||m.kind==="diluent"?"gotas / mistura":m.kind==="ointment"?"+10 g":"+1"}</small></span>}{!!totals[m.id]&&<span className="material-count">✓ {Number(totals[m.id]).toFixed(2)} {m.unit}</span>}</button>)}<button className="dock-add" onClick={()=>setSheet("materials")}><Plus size={18}/>{lex&&" Adicionar"}</button></div>
 <div className="dock-undo"><button onClick={()=>void undoStock()} disabled={!undoStack.length}><Undo2 size={16}/></button><button onClick={()=>void redoStock()} disabled={!redoStack.length}><Redo2 size={16}/></button></div>
 </aside>
 
 <aside className={"cockpit-dock right "+(rmin?"minimized ":"")+(rex?"expanded":"")} style={panel(rop,rscale,"right")}>
-<header><button onClick={()=>setRmin(v=>!v)}><Minus size={16}/></button><strong>Camadas</strong><button onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
+<header><button type="button" aria-label={rmin?"Abrir camadas":"Recolher camadas"} onClick={()=>{setRmin(v=>!v);if(rmin&&window.matchMedia("(max-width: 620px)").matches){setRex(true);setLmin(true)}}}>{rmin?<Layers3 size={18}/>:<Minus size={16}/>}</button><strong>Camadas</strong><button type="button" aria-label="Expandir ou compactar camadas" onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
 <div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={rscale} onChange={e=>setRscale(+e.target.value)}/><output>{Math.round(rscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={rop} onChange={e=>setRop(+e.target.value)}/><output>{Math.round(rop*100)}</output></label></div>
 <div className="dock-body">{orderedLayers.map((layer:any)=>{
   const src=layer.layerKey==="reference"?canvasRefSrc:layer.layerKey==="samples"?null:canvasSafeSource(layer.imageUrl);
@@ -495,9 +510,9 @@ return <div ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode "
 <input ref={layerImageInput} type="file" accept="image/jpeg,image/png,image/webp" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void uploadVisualLayer(f);e.currentTarget.value=""}}/>
 <input ref={referenceInput} type="file" accept="image/jpeg,image/png,image/webp" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void uploadReference(f);e.currentTarget.value=""}}/>
 <input ref={finalInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void finalPhoto(f);e.currentTarget.value=""}}/>
-<footer className="cockpit-bottom"><button onClick={()=>void toggleTimer()}>{props.running?<Pause size={18}/>:<Play size={18}/>}<span className="button-label">{props.running?"PAUSAR":"RETOMAR"}</span></button><button onClick={()=>setSheet("materials")}><Package size={18}/><span className="button-label">ESTOQUE</span></button><button onClick={()=>finalInput.current?.click()}><Camera size={18}/><span className="button-label">FOTO</span></button><button className="finish" onClick={()=>setSheet("finish")}><Square size={17}/><span className="button-label">CONCLUIR</span></button></footer>
+<footer className="cockpit-bottom"><button type="button" aria-label={props.running?"Pausar sessão":"Retomar sessão"} onClick={()=>void toggleTimer()}>{props.running?<Pause size={18}/>:<Play size={18}/>}<span className="button-label">{props.running?"PAUSAR":"RETOMAR"}</span></button><button type="button" aria-label="Buscar materiais no estoque" onClick={()=>setSheet("materials")}><Package size={18}/><span className="button-label">ESTOQUE</span></button><button type="button" aria-label="Adicionar foto da sessão" onClick={()=>finalInput.current?.click()}><Camera size={18}/><span className="button-label">FOTO</span></button><button type="button" aria-label="Revisar conclusão da sessão" className="finish" onClick={()=>setSheet("finish")}><Square size={17}/><span className="button-label">CONCLUIR</span></button></footer>
 
-{sheet==="layerAdd"&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Nova camada visual</h3><p>Adicione uma imagem independente. Ela poderá ser ocultada, ter a opacidade alterada e ser reordenada sem modificar a referência principal.</p>
+{sheet==="layerAdd"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Nova camada visual</h3><p>Adicione uma imagem independente. Ela poderá ser ocultada, ter a opacidade alterada e ser reordenada sem modificar a referência principal.</p>
 <div className="sheet-grid">{[
   {type:"contrast",name:"Contraste",desc:"Versão preparada para leitura de contraste"},
   {type:"stencil",name:"Decalque",desc:"Decalque isolado"},
@@ -507,11 +522,11 @@ return <div ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode "
 <label className="layer-name-label">Nome da camada</label><input className="search-input" value={newLayerName} onChange={e=>setNewLayerName(e.target.value)} placeholder="Ex.: Contraste PB, Decalque 2..."/>
 <div className="sheet-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={!newLayerName.trim()||addVisualLayerMutation.isPending||uploadImage.isPending} onClick={()=>layerImageInput.current?.click()}><Plus size={15}/> Selecionar imagem</button></div>
 </section>}
-{sheet==="materials"&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Adicionar material ativo</h3><p>Busca real no estoque. Nenhum material é duplicado.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} onClick={()=>{setActive(a=>[...a,m.id]);setSheet(null);setSearch("")}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section>}
+{sheet==="materials"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Adicionar material ativo</h3><p>Busca real no estoque. Nenhum material é duplicado.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} onClick={()=>{setActive(a=>[...a,m.id]);setSheet(null);setSearch("")}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section>}
 
-{sheet==="ink"&&ink&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{ink.name}</h3><p>Uso direto ou mistura. Conversão padrão: 20 gotas/ml.</p><div className="sheet-grid">{[1,3,5,10].map(n=><button key={n} className="sheet-option" onClick={()=>{try{const q=quantityForDrops(ink,n);void quickConsume(ink,q,ink.name+" · "+n+" gotas");setSheet(null)}catch(e:any){toast.error(e.message)}}}><b>+ {n} gotas</b><small>~ {(n*DROP).toFixed(2)} ml</small></button>)}<button className="sheet-option selected" onClick={()=>recipe(ink)}><b>Criar mistura</b><small>Batoque + proporções + histórico</small></button></div></section>}
+{sheet==="ink"&&ink&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{ink.name}</h3><p>Uso direto ou mistura. Conversão padrão: 20 gotas/ml.</p><div className="sheet-grid">{[1,3,5,10].map(n=><button key={n} className="sheet-option" onClick={()=>{try{const q=quantityForDrops(ink,n);void quickConsume(ink,q,ink.name+" · "+n+" gotas");setSheet(null)}catch(e:any){toast.error(e.message)}}}><b>+ {n} gotas</b><small>~ {(n*DROP).toFixed(2)} ml</small></button>)}<button className="sheet-option selected" onClick={()=>recipe(ink)}><b>Criar mistura</b><small>Batoque + proporções + histórico</small></button></div></section>}
 
-{sheet==="recipe"&&<section className="cockpit-sheet recipe-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Receita {sample?"· "+sample.code:""}</h3><p>Será gravada junto da sessão e das baixas de cada pigmento.</p>
+{sheet==="recipe"&&<section className="cockpit-sheet recipe-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Receita {sample?"· "+sample.code:""}</h3><p>Será gravada junto da sessão e das baixas de cada pigmento.</p>
 {sample&&<div className="recipe-sample-card">
   <div className="sample-crop" style={canvasRefSrc?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/>
   <div className="recipe-sample-swatch" style={{background:sample.hex}}/>
@@ -536,10 +551,10 @@ return <div ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode "
 <div className={"mix-summary mix-summary-sticky "+(drops>cupDropCapacity?"over":"")}><div>Total: {drops} / {cupDropCapacity} gotas · ~{ml.toFixed(2)} ml</div><div>Batoque {cup}: {CUP[cup].toFixed(2)} ml · ocupação ~{pct}%</div>{drops>cupDropCapacity&&<div className="mix-over-warning">Mistura acima da capacidade do batoque.</div>}{ings.map(i=>{const m=stock.find(x=>x.id===i.materialId);return <div key={i.materialId}>{m?.short}: {i.drops}gt · {drops?((i.drops/drops)*100).toFixed(1):0}%</div>})}</div>
 <div className="sheet-actions recipe-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={saveRecipeMutation.isPending||drops===0||drops>cupDropCapacity} onClick={()=>void saveRecipe()}>Salvar receita + baixar estoque</button></div></section>}
 
-{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · Amostra 5×5 px</h3><div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={canvasRefSrc?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);setSampler(true)}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button></div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · Batoque {r.cupSize}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
+{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · Amostra 5×5 px</h3><div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={canvasRefSrc?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);setSampler(true)}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button></div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · Batoque {r.cupSize}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
 
-{sheet==="notes"&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Notas rápidas</h3><textarea className="cockpit-note" value={note} onChange={e=>setNote(e.target.value)}/><div className="sheet-actions"><button className="primary" disabled={updateProcedure.isPending} onClick={()=>void saveNotes()}>Salvar na sessão</button></div></section>}
-{sheet==="finish"&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Revisão antes de concluir</h3><p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {recipes.filter((r:any)=>r.status!=="reverted").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>setSheet(null)}>Voltar</button><button className="primary" onClick={()=>{setSheet(null);props.onFinish()}}>Ir para conclusão da sessão</button></div></section>}
+{sheet==="notes"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Notas rápidas</h3><textarea className="cockpit-note" value={note} onChange={e=>setNote(e.target.value)}/><div className="sheet-actions"><button className="primary" disabled={updateProcedure.isPending} onClick={()=>void saveNotes()}>Salvar na sessão</button></div></section>}
+{sheet==="finish"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Revisão antes de concluir</h3><p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {recipes.filter((r:any)=>r.status!=="reverted").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>setSheet(null)}>Voltar</button><button className="primary" onClick={()=>{setSheet(null);props.onFinish()}}>Ir para conclusão da sessão</button></div></section>}
 {photoTarget&&photoSrc&&<TemporaryColorSampler src={photoSrc} title={photoTarget.kind==="material"?"Calibrar "+photoTarget.name:"Resultado da mistura "+photoTarget.code} subtitle="Pressione e arraste o ponto. O quadrado superior mostra a cor em tempo real." onCancel={closeColorPhoto} onConfirm={confirmTemporaryColor}/>}
-</div>
+</div>,document.body);
 }
