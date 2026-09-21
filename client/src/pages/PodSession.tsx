@@ -1,3 +1,4 @@
+import SessionFinalization from "@/components/SessionFinalization";
 import SessionPreparationSummary from "@/components/SessionPreparationSummary";
 import { isSessionInk, inkStockQuantity } from "@shared/sessionInkQuantity";
 import SessionMaterialQuantity from "@/components/SessionMaterialQuantity";
@@ -159,12 +160,6 @@ export default function PodSession() {
 
   // ── Estado do modal de finalização ──────────────────────────────────────
   const [finalizeOpen, setFinalizeOpen] = useState(false);
-  const [finalizeForm, setFinalizeForm] = useState({
-    chargedAmount: "",
-    paymentMethod: "pix" as "pix" | "dinheiro" | "credito" | "debito" | "transferencia",
-    notes: "",
-  });
-
   // ── Queries ──────────────────────────────────────────────────────────────
   const procedureQuery = trpc.procedures.getById.useQuery(
     { id: procedureId },
@@ -261,20 +256,6 @@ export default function PodSession() {
     onError: (err) => toast.error("Erro: " + err.message),
   });
 
-  const finalizeMutation = trpc.procedures.finalize.useMutation({
-    onSuccess: (data) => {
-      utils.procedures.getById.invalidate({ id: procedureId });
-      utils.appointments.list.invalidate();
-      setFinalizeOpen(false);
-      const msgs: string[] = ["Sessão finalizada com sucesso!"];
-      if (data.appointmentUpdated) msgs.push("Agendamento marcado como concluído.");
-      if (data.transactionCreated) msgs.push("Valor registrado no financeiro.");
-      toast.success(msgs.join(" "));
-      navigate(`/procedures/${procedureId}/summary`);
-    },
-    onError: (err) => toast.error("Erro ao finalizar: " + err.message),
-  });
-
   const uploadImageMutation = trpc.procedures.uploadImage.useMutation({
     onSuccess: () => {
       utils.procedures.getById.invalidate({ id: procedureId });
@@ -355,25 +336,7 @@ export default function PodSession() {
     resumePauseMutation.mutate({ procedureId });
   };
 
-  const handleFinish = () => {
-    // Abre modal de confirmação antes de finalizar
-    setIsRunning(false);
-    // Pré-preencher valor cobrado com o valor do procedimento, se existir
-    if (procedure?.chargedAmount) {
-      setFinalizeForm((f) => ({ ...f, chargedAmount: String(procedure.chargedAmount) }));
-    }
-    setFinalizeOpen(true);
-  };
-
-  const handleConfirmFinalize = () => {
-    const charged = finalizeForm.chargedAmount ? parseFloat(finalizeForm.chargedAmount) : 0;
-    finalizeMutation.mutate({
-      procedureId,
-      chargedAmount: charged,
-      paymentMethod: finalizeForm.paymentMethod as "pix" | "dinheiro" | "credito" | "debito" | "transferencia",
-      notes: finalizeForm.notes || undefined,
-    });
-  };
+  const handleFinish = () => setFinalizeOpen(true);
 
   // ── Upload de imagem ─────────────────────────────────────────────────────
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, imageType: "reference" | "progress" | "final" | "stencil") => {
@@ -749,7 +712,7 @@ export default function PodSession() {
             setBatchConsumption({ materialId: id, quantity });
           } : undefined} />
           {/* Consumo real do estoque isolado. Não altera os lançamentos legados abaixo. */}
-          <div className="border-b bg-primary/[0.03] p-3 space-y-2.5">
+          <div id="session-stock" className="border-b bg-primary/[0.03] p-3 space-y-2.5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-primary">Consumo do estoque</p>
@@ -1040,104 +1003,8 @@ export default function PodSession() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Modal de Finalização ─────────────────────────────────────────────── */}
-      <Dialog open={finalizeOpen} onOpenChange={(open) => {
-        if (!open && !finalizeMutation.isPending) setFinalizeOpen(false);
-      }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-green-500" />
-              Finalizar Sessão POD
-            </DialogTitle>
-          </DialogHeader>
+      <SessionFinalization key={procedureId} procedureId={procedureId} open={finalizeOpen} onClose={() => setFinalizeOpen(false)} uploading={uploadingImage || uploadImageMutation.isPending} onPhoto={() => openImagePicker("final")} onMaterials={() => { setFinalizeOpen(false); requestAnimationFrame(() => document.getElementById("session-stock")?.scrollIntoView({ behavior: "smooth", block: "start" })); }} onColors={() => { setFinalizeOpen(false); setReferenceFullscreen(true); }} onSuccess={() => { setFinalizeOpen(false); navigate(`/procedures/${procedureId}/summary`); }} />
 
-          <div className="space-y-4 py-2">
-            {/* Resumo de insumos */}
-            <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
-              <p className="font-medium">Resumo da sessão</p>
-              <p className="text-muted-foreground">
-                Insumos registrados: <span className="font-medium text-foreground">{consumables.length}</span>
-              </p>
-              <p className="text-muted-foreground">
-                Duração: <span className="font-medium text-foreground">{formatTime(elapsed)}</span>
-              </p>
-              {linkedAppointment && (
-                <p className="text-muted-foreground">
-                  Agendamento: <span className="font-medium text-foreground">{linkedAppointment.service} — {linkedAppointment.artist}</span>
-                  <span className="ml-1 text-xs text-green-600">✓ será marcado como concluído</span>
-                </p>
-              )}
-            </div>
-
-            {/* Valor cobrado */}
-            <div className="space-y-1.5">
-              <Label htmlFor="charged-amount">Valor cobrado (R$)</Label>
-              <Input
-                id="charged-amount"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Ex: 350.00"
-                value={finalizeForm.chargedAmount}
-                onChange={(e) => setFinalizeForm((f) => ({ ...f, chargedAmount: e.target.value }))}
-              />
-              {linkedAppointment && finalizeForm.chargedAmount && (
-                <p className="text-xs text-green-600">✓ Será registrado no financeiro do cliente</p>
-              )}
-            </div>
-
-            {/* Método de pagamento */}
-            <div className="space-y-1.5">
-              <Label>Método de pagamento</Label>
-              <Select
-                value={finalizeForm.paymentMethod}
-                onValueChange={(v) => setFinalizeForm((f) => ({ ...f, paymentMethod: v as typeof f.paymentMethod }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pix">PIX</SelectItem>
-                  <SelectItem value="dinheiro">Dinheiro</SelectItem>
-                  <SelectItem value="credito">Cartão de crédito</SelectItem>
-                  <SelectItem value="debito">Cartão de débito</SelectItem>
-                  <SelectItem value="transferencia">Transferência</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Observações finais */}
-            <div className="space-y-1.5">
-              <Label htmlFor="finalize-notes">Observações finais (opcional)</Label>
-              <Textarea
-                id="finalize-notes"
-                placeholder="Cuidados pós-sessão, próxima etapa..."
-                rows={3}
-                value={finalizeForm.notes}
-                onChange={(e) => setFinalizeForm((f) => ({ ...f, notes: e.target.value }))}
-              />
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setFinalizeOpen(false)}
-              disabled={finalizeMutation.isPending}
-            >
-              Cancelar
-            </Button>
-            <Button
-              className="bg-green-600 hover:bg-green-700 text-white"
-              onClick={handleConfirmFinalize}
-              disabled={finalizeMutation.isPending}
-            >
-              {finalizeMutation.isPending ? "Finalizando..." : "Confirmar e Finalizar"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

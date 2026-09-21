@@ -1,3 +1,5 @@
+import { finalizationPreview, finalizeSession } from "../sessionFinalization";
+import { finalizeSessionInput, readFinalization } from "../../shared/sessionFinalization";
 import { preparationSchema, preparationRgb, readPreparation, validatePreparationMaterial, validateRecipeMaterial } from "../../shared/sessionPreparation";
 import { assertOwnArtist, requireMaterialForArtist } from "../inventoryAccess";
 import { resolveProcedureArtist } from "../procedureArtist";
@@ -134,7 +136,8 @@ export const proceduresRouter = router({
 
       const preparationEvent = (await db.select({ payload: procedureEvents.payload }).from(procedureEvents)
         .where(and(eq(procedureEvents.procedureId, input.id), sql`${procedureEvents.eventType} LIKE 'prepared:%'`)).limit(1))[0];
-      return { procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images, preparation: readPreparation(preparationEvent?.payload) };
+      const closure = (await db.select({ payload: procedureEvents.payload }).from(procedureEvents).where(and(eq(procedureEvents.procedureId, input.id), eq(procedureEvents.eventType, "finalization"))).limit(1))[0];
+      return { procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images, preparation: readPreparation(preparationEvent?.payload), finalization: readFinalization(closure?.payload) };
     }),
 
   // ── Criar novo procedimento ──────────────────────────────────────────────
@@ -694,96 +697,17 @@ export const proceduresRouter = router({
     }),
 
   // ── Finalizar sessão POD: fechar procedimento + concluir agendamento + registrar transação ──────────────────
-  finalize: tenantProcedure
-    .input(z.object({
-      procedureId: z.number(),
-      chargedAmount: z.number().min(0),
-      paymentMethod: z.enum(["dinheiro", "pix", "credito", "debito", "transferencia"]),
-      notes: z.string().optional(),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      const studioId = ctx.studioId;
-      const db = await requireDb();
-
-      // 1. Buscar o procedimento e verificar ownership
-      const [proc] = await db
-        .select()
-        .from(technicalProcedures)
-        .where(and(eq(technicalProcedures.id, input.procedureId), eq(technicalProcedures.studioId, studioId)))
-        .limit(1);
-
-      if (!proc) throw new TRPCError({ code: "NOT_FOUND", message: "Procedimento não encontrado." });
-      if (proc.status === "finalizado") throw new TRPCError({ code: "BAD_REQUEST", message: "Procedimento já finalizado." });
-
-      const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-
-      // 2. Fechar o procedimento
-      await db
-        .update(technicalProcedures)
-        .set({
-          status: "finalizado",
-          finishedAt: now,
-          chargedAmount: input.chargedAmount,
-          notes: input.notes ?? proc.notes,
-          updatedAt: now,
-        })
-        .where(eq(technicalProcedures.id, input.procedureId));
-
-      // 3. Marcar agendamento vinculado como concluído (se houver)
-      if (proc.appointmentId) {
-        await db
-          .update(appointments)
-          .set({ status: "concluido", updatedAt: now })
-          .where(and(eq(appointments.id, proc.appointmentId), eq(appointments.studioId, studioId)));
-      }
-
-      // 4. Registrar transação financeira
-      const amountCents = Math.round(input.chargedAmount * 100);
-      if (amountCents > 0) {
-        await db.insert(transactions).values({
-          studioId,
-          clientId: proc.clientId ?? null,
-          appointmentId: proc.appointmentId ?? null,
-          type: "entrada",
-          category: "servico",
-          description: `Sessão POD: ${proc.title}`,
-          amount: amountCents,
-          paymentMethod: input.paymentMethod,
-          date: now,
-        });
-      }
-
-      // 5. Notificar o dono do estúdio
+  finalizationPreview: tenantProcedure.input(z.object({ procedureId: z.number().int().positive() })).query(async ({ ctx, input }) => finalizationPreview(await requireDb(), ctx, input.procedureId)),
+  finalize: tenantProcedure.input(finalizeSessionInput).mutation(async ({ ctx, input }) => {
+    const result = await finalizeSession(await requireDb(), ctx, input);
+    if (!result.replayed) {
       try {
-        const duracaoMin = proc.startedAt && proc.finishedAt
-          ? Math.round((new Date(proc.finishedAt.replace(' ', 'T')).getTime() - new Date(proc.startedAt.replace(' ', 'T')).getTime()) / 60000)
-          : null;
-        const valorFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(input.chargedAmount);
-        const duracaoFmt = duracaoMin != null ? `${duracaoMin} min` : 'n/d';
         const { notifyOwner } = await import("../_core/notification");
-        await notifyOwner({
-          title: `✅ Sessão POD Finalizada: ${proc.title}`,
-          content: [
-            `**Procedimento:** ${proc.title}`,
-            `**Artista:** ${proc.artistName || 'N/A'}`,
-            `**Duração:** ${duracaoFmt}`,
-            `**Valor cobrado:** ${valorFmt}`,
-            `**Método:** ${input.paymentMethod}`,
-            proc.appointmentId ? `**Agendamento #${proc.appointmentId}:** marcado como concluído` : '',
-            amountCents > 0 ? `**Transação registrada:** ${valorFmt}` : '',
-            input.notes ? `**Obs:** ${input.notes}` : '',
-          ].filter(Boolean).join('\n'),
-        });
-      } catch (_e) {
-        // Não bloquear a finalização se a notificação falhar
-      }
-
-      return {
-        success: true,
-        appointmentUpdated: !!proc.appointmentId,
-        transactionCreated: amountCents > 0,
-      };
-    }),
+        await notifyOwner({ title: `Sessão POD #${input.procedureId} concluída`, content: `Valor da sessão: R$ ${(input.totalCents / 100).toFixed(2)}. Recebido agora: R$ ${(input.receivedCents / 100).toFixed(2)}. Saldo na conclusão: R$ ${(result.outstandingCents / 100).toFixed(2)}.` });
+      } catch { /* Notification failure must not retry the financial writes. */ }
+    }
+    return result;
+  }),
 
   // ── Listar todos os appointmentIds que têm sessão POD vinculada ────────────────────────────────────────────────
   // ── Relatório de insumos por artista/período ─────────────────────────────────────────────────────────────────

@@ -175,7 +175,7 @@ async function requireProcedure(database: Awaited<ReturnType<typeof requireDatab
   const procedure = (await database.select().from(technicalProcedures).where(and(
     eq(technicalProcedures.id, procedureId),
     eq(technicalProcedures.studioId, ctx.studioId),
-  )).limit(1))[0];
+  )).limit(1).for("update"))[0];
   if (!procedure) throw new TRPCError({ code: "NOT_FOUND", message: "Sessão POD não encontrada nesta empresa." });
   const resolved = await resolveProcedureArtist(database, procedure);
   assertOwnArtist(ctx, resolved.artistId ?? null);

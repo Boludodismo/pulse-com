@@ -396,6 +396,15 @@ export default function ProcedureSummary() {
           </Card>
         )}
 
+        {procedureQuery.data?.finalization && <Card><CardHeader><CardTitle className="text-base">Pagamento na conclusão</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
+          <p>Valor da sessão: {(procedureQuery.data.finalization.totalCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+          <p>Recebimentos anteriores: {(procedureQuery.data.finalization.previousCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+          <p>Recebido ao concluir: {(procedureQuery.data.finalization.receivedCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+          <p className="font-semibold">Saldo pendente na conclusão: {(procedureQuery.data.finalization.outstandingCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+          <p className="text-muted-foreground">Registro do fechamento. Recebimentos posteriores devem ser consultados no financeiro.</p>
+          {procedureQuery.data.finalization.nextSteps && <p className="whitespace-pre-wrap">Próxima sessão: {procedureQuery.data.finalization.nextSteps}</p>}
+        </CardContent></Card>}
+
         {/* ── Observações ────────────────────────────────────────────────── */}
         <Card>
           <CardHeader className="pb-3">
