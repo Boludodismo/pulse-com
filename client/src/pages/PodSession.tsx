@@ -1,3 +1,4 @@
+import SessionMaterialPicker, { formatMaterialQuantity } from "@/components/SessionMaterialPicker";
 import { defaultSessionQuantity } from "@shared/sessionMaterialDefaults";
 import SessionCockpitV2 from "@/components/session/SessionCockpitV2";
 import ConsumeMaterialBatch from "@/components/ConsumeMaterialBatch";
@@ -145,8 +146,7 @@ export default function PodSession() {
     estimatedUnitCost: 0,
     notes: "",
   });
-  const [tenantMaterialId, setTenantMaterialId] = useState<string | undefined>();
-  const [tenantConsumptionQuantity, setTenantConsumptionQuantity] = useState("1");
+  const [selectedMaterials, setSelectedMaterials] = useState<{ id: number; quantity: string }[]>([]);
   const [referenceFullscreen, setReferenceFullscreen] = useState(() => new URLSearchParams(window.location.search).get("session") === "1");
 
   // ── Estado do upload de imagem ───────────────────────────────────────────
@@ -221,7 +221,7 @@ export default function PodSession() {
       utils.pod.inventory.batches.invalidate();
       utils.pod.session.get.invalidate({ procedureId });
       utils.pod.inventory.list.invalidate();
-      setTenantConsumptionQuantity("1");
+      setSelectedMaterials(items => items.filter(item => item.id !== batchConsumption?.materialId));
       toast.success("Consumo confirmado e saldo atualizado.");
     },
     onError: (err) => toast.error("Não foi possível confirmar o consumo: " + err.message),
@@ -755,42 +755,47 @@ export default function PodSession() {
             ) : tenantMaterials.length === 0 ? (
               <p className="rounded-md border border-dashed bg-background/60 p-2 text-xs text-muted-foreground">Nenhum material disponível para o artista desta sessão. Abra o painel para conferir o responsável e os materiais.</p>
             ) : (
-              <div className="grid grid-cols-[minmax(0,1fr)_84px_auto] gap-2">
-                <Select value={tenantMaterialId} onValueChange={setTenantMaterialId}>
-                  <SelectTrigger className="h-9 min-w-0 text-xs"><SelectValue placeholder="Selecionar material" /></SelectTrigger>
-                  <SelectContent>
-                    {tenantMaterials.map((material) => (
-                      <SelectItem key={material.id} value={String(material.id)}>
-                        {material.name} ({material.ownerArtistId == null ? "Estúdio" : "Artista"}) · {material.currentQuantity} {material.unit}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  className="h-9 min-w-0 text-xs"
-                  inputMode="decimal"
-                  value={tenantConsumptionQuantity}
-                  onChange={(event) => setTenantConsumptionQuantity(event.target.value.replace(",", "."))}
-                  aria-label="Quantidade consumida"
-                />
-                <Button
-                  size="sm"
-                  className="h-9 text-xs"
-                  disabled={!tenantMaterialId || consumeTenantMaterialMutation.isPending || isFinished}
-                  onClick={() => setBatchConsumption({materialId:Number(tenantMaterialId),quantity:tenantConsumptionQuantity})}
-                >
-                  Baixar
-                </Button>
+              <div className="space-y-3">
+                {selectedMaterials.map(selection => {
+                  const material = tenantMaterials.find(item => item.id === selection.id);
+                  if (!material) return null;
+                  return <div key={material.id} className="rounded-lg border bg-background p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium break-words">{material.name}</p>
+                        <p className="text-xs text-muted-foreground">{material.ownerArtistId == null ? "Estúdio" : "Artista"} · Saldo: {formatMaterialQuantity(material.currentQuantity)} {material.unit}</p>
+                      </div>
+                      <Button type="button" size="icon" variant="ghost" aria-label={`Remover ${material.name} da seleção`}
+                        disabled={consumeTenantMaterialMutation.isPending}
+                        onClick={() => setSelectedMaterials(items => items.filter(item => item.id !== material.id))}><Trash2 className="h-4 w-4" /></Button>
+                    </div>
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-end">
+                      <label className="text-xs text-muted-foreground">Quantidade ({material.unit})
+                        <Input className="mt-1 min-h-11 text-base" inputMode="decimal" value={selection.quantity}
+                          disabled={consumeTenantMaterialMutation.isPending || isFinished}
+                          aria-label={`Quantidade de ${material.name}`}
+                          onChange={event => setSelectedMaterials(items => items.map(item => item.id === material.id ? { ...item, quantity: event.target.value.replace(",", ".") } : item))} />
+                      </label>
+                      <Button className="min-h-11" disabled={consumeTenantMaterialMutation.isPending || isFinished || !Number.isFinite(Number(selection.quantity)) || Number(selection.quantity) <= 0}
+                        onClick={() => setBatchConsumption({ materialId: material.id, quantity: selection.quantity })}>Confirmar uso</Button>
+                    </div>
+                  </div>;
+                })}
+                <SessionMaterialPicker materials={tenantMaterials.filter(material => !selectedMaterials.some(item => item.id === material.id))}
+                  more={selectedMaterials.length > 0 || auditConsumptions.length > 0}
+                  disabled={isFinished || consumeTenantMaterialMutation.isPending}
+                  onSelect={material => setSelectedMaterials(items => [...items, { id: material.id, quantity: defaultSessionQuantity(material) }])} />
+                <p className="text-xs text-muted-foreground">Selecione os materiais e ajuste as quantidades. Confirme o uso de cada item para registrar o lote e baixar o estoque.</p>
               </div>
             )}
             {plannedMaterials.length > 0 && (
               <p className="text-[11px] text-muted-foreground">Previstos: {plannedMaterials.filter((item) => item.status === "planejado").map((item) => `${item.nameSnapshot} (${item.quantityPlanned} ${item.unitSnapshot})`).join(" · ") || "todos tratados"}.</p>
             )}
             {auditConsumptions.length > 0 && (
-              <div className="max-h-24 space-y-1 overflow-y-auto pr-1">
+              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
                 {auditConsumptions.map((consumption) => (
-                  <div key={consumption.id} className="flex items-center gap-2 rounded-md bg-background/75 px-2 py-1.5 text-xs">
-                    <span className="min-w-0 flex-1 break-words">{consumption.nameSnapshot} · {consumption.quantity} {consumption.unitSnapshot}<br/>Lote: {consumption.lotSnapshot||"não registrado"} · {consumption.supplierNameSnapshot||"fornecedor não registrado"} · Validade: {consumption.expiresAtSnapshot?.slice(0,10).split("-").reverse().join("/")||"não registrada"}</span>
+                  <div key={consumption.id} className="flex flex-wrap items-center gap-2 rounded-md bg-background/75 p-3 text-xs">
+                    <span className="min-w-0 flex-1 break-words">{consumption.nameSnapshot} · {formatMaterialQuantity(consumption.quantity)} {consumption.unitSnapshot}<br/>Lote: {consumption.lotSnapshot||"não registrado"} · {consumption.supplierNameSnapshot||"fornecedor não registrado"} · Validade: {consumption.expiresAtSnapshot?.slice(0,10).split("-").reverse().join("/")||"não registrada"}</span>
                     <span className={consumption.status === "revertido" ? "text-muted-foreground" : "text-emerald-600"}>{consumption.status === "revertido" ? "Revertido" : "Confirmado"}</span>
                     {consumption.status === "consumido" && !isFinished && (
                       <Button
