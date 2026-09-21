@@ -334,6 +334,12 @@ const panel=(o:number,s:number,side:"left"|"right")=>({"--panel-alpha":o,transfo
 const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP,pct=Math.round(ml/CUP[cup]*100),cupDropCapacity=Math.round(CUP[cup]/DROP);
 const refSrc=proc.referenceImageUrl?String(proc.referenceImageUrl):null;
 const canvasRefSrc=canvasSafeSource(refSrc);
+const orderedLayers=(visualLayers.length?visualLayers:[
+  {layerKey:"reference",name:"Referência principal",layerType:"reference",imageUrl:refSrc,opacity:Math.round(refOp*100),isVisible:refOn?1:0,sortOrder:0},
+  {layerKey:"samples",name:"Amostras de cor",layerType:"samples",imageUrl:null,opacity:Math.round(markOp*100),isVisible:markOn?1:0,sortOrder:900},
+]).slice().sort((a:any,b:any)=>Number(a.sortOrder)-Number(b.sortOrder));
+const layerVisible=(layer:any)=>layer.layerKey==="reference"?refOn:layer.layerKey==="samples"?markOn:(layerLocal[String(layer.layerKey)]?.isVisible??Boolean(layer.isVisible));
+const layerOpacity=(layer:any)=>layer.layerKey==="reference"?Math.round(refOp*100):layer.layerKey==="samples"?Math.round(markOp*100):(layerLocal[String(layer.layerKey)]?.opacity??Number(layer.opacity??100));
 
 return <div className="cockpit-lab">
 <header className="cockpit-top">
@@ -347,15 +353,22 @@ return <div className="cockpit-lab">
 <div className="cockpit-anamnese">Sessão #{procedureId} · banco de teste</div>
 <div className="cockpit-view-quick"><button onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button></div>
 <div className="cockpit-transform" style={{transform:"translate("+view.x+"px,"+view.y+"px) rotate("+view.rotation+"deg) scale("+view.scale+")"}}>
-{refOn&&canvasRefSrc?<img ref={image} src={canvasRefSrc} className="cockpit-reference" style={{opacity:refOp}} alt="Referência"/>:refOn?<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
-  <div>
-    <div style={{marginBottom:10}}>Nenhuma referência anexada</div>
-    <button className="dock-add" style={{padding:"0 16px"}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();referenceInput.current?.click()}}><Plus size={16}/> Adicionar referência</button>
-  </div>
-</div>:<div className="cockpit-empty">Referência oculta</div>}
-{markOn&&samples.map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex,opacity:markOp}}/>)}
+{orderedLayers.map((layer:any)=>{
+  if(!layerVisible(layer))return null;
+  if(layer.layerKey==="reference"){
+    return canvasRefSrc?<img key="reference" ref={image} src={canvasRefSrc} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100}} alt="Referência"/>:null;
+  }
+  if(layer.layerKey==="samples"){
+    return <div key="samples" className="cockpit-sample-layer" style={{opacity:layerOpacity(layer)/100}}>{samples.map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex}}/>)}</div>;
+  }
+  const src=canvasSafeSource(layer.imageUrl);
+  return src?<img key={layer.layerKey} src={src} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100}} alt={layer.name}/>:null;
+})}
 {referenceDraft&&<span className="reference-draft-marker" style={{left:referenceDraft.xPct+"%",top:referenceDraft.yPct+"%",background:referenceDraft.hex}}/>}
 </div>
+{refOn&&!canvasRefSrc&&<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
+  <div><div style={{marginBottom:10}}>Nenhuma referência anexada</div><button className="dock-add" style={{padding:"0 16px"}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();referenceInput.current?.click()}}><Plus size={16}/> Adicionar referência</button></div>
+</div>}
 {sampler&&!referenceDraft&&<div className="cockpit-empty" style={{pointerEvents:"none",color:"#fecdd3"}}><Pipette size={28}/><br/>Pressione e arraste sobre a referência<br/><small style={{fontSize:10,color:"#fda4af"}}>A cor muda em tempo real · solte para fixar · confirme para salvar</small></div>}
 {sampler&&referenceDraft&&<div className="reference-sampler-card" onPointerDown={e=>e.stopPropagation()}>
   <div className="preview" style={{background:referenceDraft.hex}}/>
@@ -375,10 +388,17 @@ return <div className="cockpit-lab">
 <aside className={"cockpit-dock right "+(rmin?"minimized ":"")+(rex?"expanded":"")} style={panel(rop,rscale,"right")}>
 <header><button onClick={()=>setRmin(v=>!v)}><Minus size={16}/></button><strong>Camadas</strong><button onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
 <div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={rscale} onChange={e=>setRscale(+e.target.value)}/><output>{Math.round(rscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={rop} onChange={e=>setRop(+e.target.value)}/><output>{Math.round(rop*100)}</output></label></div>
-<div className="dock-body"><div className="layer-card">{canvasRefSrc?<img className="layer-thumb" src={canvasRefSrc}/>:<div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Plus size={16}/></div>}<div><strong>Ref. Principal</strong><input type="range" min="0" max="1" step=".05" value={refOp} onChange={e=>setRefOp(+e.target.value)}/></div><button className="layer-eye" onClick={()=>setRefOn(v=>!v)}>{refOn?<Eye size={16}/>:<EyeOff size={16}/>}</button></div>
-<div className="layer-card"><div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Pipette size={17}/></div><div><strong>Amostras</strong><input type="range" min="0" max="1" step=".05" value={markOp} onChange={e=>setMarkOp(+e.target.value)}/></div><button className="layer-eye" onClick={()=>setMarkOn(v=>!v)}>{markOn?<Eye size={16}/>:<EyeOff size={16}/>}</button></div>
-<div className="layer-card"><div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Layers3 size={17}/></div><div><strong>Linework</strong><small style={{fontSize:8,color:"#71717a"}}>próxima etapa</small></div><button className="layer-eye" disabled><EyeOff size={16}/></button></div>
-<button className="dock-add" onClick={()=>referenceInput.current?.click()}><Plus size={16}/>{rex&&(refSrc?" Trocar referência":" Adicionar referência")}</button></div>
+<div className="dock-body">{orderedLayers.map((layer:any)=>{
+  const src=layer.layerKey==="reference"?canvasRefSrc:layer.layerKey==="samples"?null:canvasSafeSource(layer.imageUrl);
+  const opacity=layerOpacity(layer),visible=layerVisible(layer);
+  return <div className="layer-card layer-card-dynamic" key={layer.layerKey}>
+    {layer.layerKey==="samples"?<div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Pipette size={17}/></div>:src?<img className="layer-thumb" src={src}/>:<div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Layers3 size={17}/></div>}
+    <div className="layer-main"><strong>{layer.name}</strong><input type="range" min="0" max="100" step="5" value={opacity} onChange={e=>{const value=Number(e.target.value);if(layer.layerKey==="reference")setRefOp(value/100);else if(layer.layerKey==="samples")setMarkOp(value/100);else setLayerLocal(x=>({...x,[layer.layerKey]:{opacity:value,isVisible:x[layer.layerKey]?.isVisible??visible}}))}} onPointerUp={e=>void persistLayer(String(layer.layerKey),{opacity:Number(e.currentTarget.value)})}/>{rex&&layer.layerKey!=="reference"&&layer.layerKey!=="samples"&&<div className="layer-row-actions"><button onClick={()=>void moveLayer(layer,-1)}>↑</button><button onClick={()=>void moveLayer(layer,1)}>↓</button><button className="danger" onClick={()=>void removeLayer(layer)}><X size={11}/></button></div>}</div>
+    <button className="layer-eye" onClick={()=>void toggleLayer(String(layer.layerKey),!visible)}>{visible?<Eye size={16}/>:<EyeOff size={16}/>}</button>
+  </div>
+})}
+<button className="dock-add" onClick={()=>setSheet("layerAdd")}><Plus size={16}/>{rex&&" Nova camada"}</button>
+<button className="dock-add secondary" onClick={()=>referenceInput.current?.click()}><Plus size={16}/>{rex&&(refSrc?" Trocar referência":" Adicionar referência")}</button></div>
 </aside>
 
 <div className="cockpit-palette"><button className="palette-add" onClick={()=>{if(mode==="tonal"){setMode("color");setSampler(true)}else{setMode("tonal");setSampler(false);setReferenceDraft(null)}}}><Palette size={13}/> {mode==="tonal"?"Cores":"Tons"}</button>
