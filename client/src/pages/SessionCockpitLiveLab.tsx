@@ -112,6 +112,7 @@ const [view,setView]=useState<View>(V0),vr=useRef(view);vr.current=view;
 const [vu,setVu]=useState<View[]>([]),[vredo,setVredo]=useState<View[]>([]);
 const [lmin,setLmin]=useState(false),[rmin,setRmin]=useState(false),[lex,setLex]=useState(false),[rex,setRex]=useState(false);
 const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=useState(1),[rscale,setRscale]=useState(1);
+const [layerLocal,setLayerLocal]=useState<Record<string,{opacity:number;isVisible:boolean}>>({});
 const [refOn,setRefOn]=useState(true),[refOp,setRefOp]=useState(1),[markOn,setMarkOn]=useState(true),[markOp,setMarkOp]=useState(1);
 const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null);
 const [sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null>(null),[note,setNote]=useState("");
@@ -130,6 +131,12 @@ const visualLayers=(visualLayerQuery.data||[]) as any[];
 const referenceLayer=visualLayers.find(l=>l.layerKey==="reference");
 const sampleLayer=visualLayers.find(l=>l.layerKey==="samples");
 const extraLayers=visualLayers.filter(l=>l.layerKey!=="reference"&&l.layerKey!=="samples");
+useEffect(()=>{
+  if(!visualLayers.length)return;
+  if(referenceLayer){setRefOn(Boolean(referenceLayer.isVisible));setRefOp(Number(referenceLayer.opacity??100)/100)}
+  if(sampleLayer){setMarkOn(Boolean(sampleLayer.isVisible));setMarkOp(Number(sampleLayer.opacity??100)/100)}
+  setLayerLocal(Object.fromEntries(extraLayers.map(layer=>[String(layer.layerKey),{opacity:Number(layer.opacity??100),isVisible:Boolean(layer.isVisible)}])));
+},[visualLayerQuery.data]);
 const totals=useMemo(()=>{const o:Record<string,number>={};for(const u of (session.data?.consumptions||[]) as any[]){if(u.status!=="consumido")continue;o[String(u.tenantMaterialId)]=(o[String(u.tenantMaterialId)]||0)+Number(u.quantity)}return o},[session.data?.consumptions]);
 const visibleRecipeColors=useMemo(()=>stock.filter(m=>m.kind==="ink"||m.kind==="diluent").filter(m=>{if(!familyFilter||m.kind==="diluent")return true;const stored=materialColorMap[m.id];return familyForColor(stored?.hex||m.color,stored)===familyFilter}),[stock,familyFilter,materialColorMap]);
 
@@ -138,6 +145,47 @@ function vundo(){setVu(h=>{const p=h[h.length-1];if(!p)return h;setVredo(r=>[vr.
 function vred(){setVredo(r=>{const n=r[0];if(!n)return r;setVu(h=>[...h,vr.current]);setView(n);return r.slice(1)})}
 async function refreshAll(){await Promise.all([utils.pod.session.get.invalidate({procedureId}),utils.pod.inventory.list.invalidate(),utils.pod.session.listInkRecipes.invalidate({procedureId}),utils.pod.session.listColorSamples.invalidate({procedureId})])}
 function pushAction(a:StockAction){setUndoStack(x=>[...x,a]);setRedoStack([]);setFlash(a.label);setTimeout(()=>setFlash(f=>f===a.label?null:f),5000)}
+
+async function persistLayer(layerKey:string,patch:{name?:string;opacity?:number;isVisible?:boolean;sortOrder?:number}){
+  try{
+    await updateVisualLayerMutation.mutateAsync({procedureId,layerKey,...patch});
+    await utils.pod.session.listVisualLayers.invalidate({procedureId});
+  }catch(e:any){toast.error(e.message||"Não foi possível atualizar a camada.")}
+}
+async function toggleLayer(layerKey:string,next:boolean){
+  if(layerKey==="reference")setRefOn(next);
+  else if(layerKey==="samples")setMarkOn(next);
+  else setLayerLocal(x=>({...x,[layerKey]:{opacity:x[layerKey]?.opacity??100,isVisible:next}}));
+  await persistLayer(layerKey,{isVisible:next});
+}
+async function uploadVisualLayer(file:File){
+  if(file.size>16*1024*1024)return toast.error("Imagem acima de 16 MB.");
+  if(!file.type.startsWith("image/"))return toast.error("Selecione um arquivo de imagem.");
+  const b64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(r.error);r.onload=()=>resolve(String(r.result).split(",")[1]||"");r.readAsDataURL(file)});
+  try{
+    const uploaded=await uploadImage.mutateAsync({procedureId,imageBase64:b64,mimeType:file.type||"image/jpeg",imageType:"other",description:"Camada visual: "+newLayerName});
+    await addVisualLayerMutation.mutateAsync({procedureId,name:newLayerName.trim()||"Nova camada",layerType:newLayerType,imageUrl:String(uploaded.imageUrl),imageKey:String(uploaded.imageKey),opacity:newLayerType==="stencil_overlay"?65:100});
+    await utils.pod.session.listVisualLayers.invalidate({procedureId});
+    setSheet(null);toast.success("Camada adicionada à sessão.");
+  }catch(e:any){toast.error(e.message||"Não foi possível adicionar a camada.")}
+}
+async function removeLayer(layer:any){
+  if(!window.confirm("Remover a camada “"+layer.name+"”?"))return;
+  try{await removeVisualLayerMutation.mutateAsync({procedureId,layerKey:String(layer.layerKey)});await utils.pod.session.listVisualLayers.invalidate({procedureId});toast.success("Camada removida.")}catch(e:any){toast.error(e.message||"Não foi possível remover a camada.")}
+}
+async function moveLayer(layer:any,direction:-1|1){
+  const ordered=extraLayers.slice().sort((a:any,b:any)=>Number(a.sortOrder)-Number(b.sortOrder));
+  const index=ordered.findIndex((x:any)=>x.layerKey===layer.layerKey),other=ordered[index+direction];
+  if(index<0||!other)return;
+  const aOrder=Number(layer.sortOrder),bOrder=Number(other.sortOrder);
+  try{
+    await Promise.all([
+      updateVisualLayerMutation.mutateAsync({procedureId,layerKey:String(layer.layerKey),sortOrder:bOrder}),
+      updateVisualLayerMutation.mutateAsync({procedureId,layerKey:String(other.layerKey),sortOrder:aOrder}),
+    ]);
+    await utils.pod.session.listVisualLayers.invalidate({procedureId});
+  }catch(e:any){toast.error(e.message||"Não foi possível reordenar as camadas.")}
+}
 
 async function quickConsume(m:Material,quantity:string,label?:string){
   try{const r=await consumeAuto.mutateAsync({procedureId,tenantMaterialId:Number(m.id),quantity});pushAction({kind:"consumption",consumptionId:r.id,materialId:Number(m.id),quantity,label:label||m.name,unit:m.unit});await refreshAll()}
