@@ -1,7 +1,7 @@
 import { importTestInventory } from "../inventoryTestImport";
 import { resolveProcedureArtist } from "../procedureArtist";
 import { appointmentKitsRouter } from "./appointmentKits";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { inventoryMaterialRegistrations } from "../../drizzle/appointmentKitSchema";
 import { syncMaterialRegistrationNotices } from "../materialRegistrationNotices";
 import { inventoryLoans } from "../../drizzle/inventoryWorkflowSchema";
@@ -33,6 +33,8 @@ import {
   procedureInkRecipeItems,
   procedureInkRecipeResults,
   tenantMaterialColorSamples,
+  procedureVisualLayers,
+  procedureImages,
   technicalProcedures,
   tenantInventoryMovements,
   tenantMaterials,
@@ -46,6 +48,7 @@ import { hasModulePermission, type SaasModule } from "../saas";
 import { router, superAdminProcedure, tenantProcedure } from "../_core/trpc";
 import { sendAndLog } from "../messaging/service";
 import { normalizeBrazilianPhone } from "../messaging/phone";
+import { storageDelete } from "../storage";
 
 const quantitySchema = z.string().regex(/^\d{1,9}(?:\.\d{1,3})?$/, "Informe uma quantidade positiva com até três casas decimais.");
 const costSchema = z.string().regex(/^\d{1,8}(?:\.\d{1,4})?$/, "Informe um custo não negativo com até quatro casas decimais.");
