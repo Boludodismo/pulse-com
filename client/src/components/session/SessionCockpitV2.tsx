@@ -488,10 +488,12 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 {sampler&&!referenceDraft&&<div className="cockpit-empty" style={{pointerEvents:"none",color:"#fecdd3"}}><Pipette size={28}/><br/>Pressione e arraste sobre a referência<br/><small style={{fontSize:10,color:"#fda4af"}}>A cor muda em tempo real · solte para fixar · confirme para salvar</small></div>}
 {sampler&&referenceDraft&&<div className="reference-sampler-card" onPointerDown={e=>e.stopPropagation()}>
   <div className="preview" style={{background:referenceDraft.hex}}/>
-  <div><strong>Cor selecionada</strong><small>{referenceDraft.hex.toUpperCase()} · RGB {referenceDraft.red}/{referenceDraft.green}/{referenceDraft.blue}</small><small>CMYK {referenceDraft.cyan}/{referenceDraft.magenta}/{referenceDraft.yellow}/{referenceDraft.black} · LAB {referenceDraft.labL.toFixed(1)} {referenceDraft.labA.toFixed(1)} {referenceDraft.labB.toFixed(1)}</small></div>
+  <div className="reference-sampler-info"><strong>Cor selecionada</strong><small>{referenceDraft.hex.toUpperCase()} · RGB {referenceDraft.red}/{referenceDraft.green}/{referenceDraft.blue}</small><small>CMYK {referenceDraft.cyan}/{referenceDraft.magenta}/{referenceDraft.yellow}/{referenceDraft.black} · LAB {referenceDraft.labL.toFixed(1)} {referenceDraft.labA.toFixed(1)} {referenceDraft.labB.toFixed(1)}</small></div>
+  <div className="reference-sampler-actions">
   <button className="cancel-label" onClick={()=>setReferenceDraft(null)}>Mover novamente</button>
   <button disabled={saveSampleMutation.isPending} onClick={stopSampling}>Cancelar coleta</button>
   <button className="primary" disabled={saveSampleMutation.isPending} onClick={()=>void confirmReferenceSample()}>Confirmar</button>
+  </div>
 </div>}
 </main>
 
