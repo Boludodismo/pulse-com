@@ -123,3 +123,91 @@ export const procedureInkRecipeItems = mysqlTable(
     ),
   ]
 );
+
+export const tenantMaterialColorSamples = mysqlTable(
+  "tenant_material_color_samples",
+  {
+    id: int().autoincrement().primaryKey(),
+    studioId: int().notNull(),
+    tenantMaterialId: int().notNull(),
+    artistId: int(),
+    source: varchar({ length: 24 }).default("photo").notNull(),
+    hex: varchar({ length: 9 }).notNull(),
+    red: int().notNull(),
+    green: int().notNull(),
+    blue: int().notNull(),
+    cyan: int().notNull(),
+    magenta: int().notNull(),
+    yellow: int().notNull(),
+    black: int().notNull(),
+    labL: decimal({ precision: 7, scale: 3 }).notNull(),
+    labA: decimal({ precision: 7, scale: 3 }).notNull(),
+    labB: decimal({ precision: 7, scale: 3 }).notNull(),
+    createdByUserId: int().notNull(),
+    createdAt: timestamp({ mode: "string" })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: timestamp({ mode: "string" })
+      .defaultNow()
+      .onUpdateNow()
+      .notNull(),
+  },
+  t => [
+    uniqueIndex("tenant_material_color_sample_unique").on(
+      t.studioId,
+      t.tenantMaterialId
+    ),
+    index("tenant_material_color_samples_artist_idx").on(
+      t.studioId,
+      t.artistId
+    ),
+  ]
+);
+
+export const procedureInkRecipeResults = mysqlTable(
+  "procedure_ink_recipe_results",
+  {
+    id: int().autoincrement().primaryKey(),
+    studioId: int().notNull(),
+    recipeId: int().notNull(),
+    procedureId: int().notNull(),
+    clientId: int().notNull(),
+    artistId: int(),
+    hex: varchar({ length: 9 }).notNull(),
+    red: int().notNull(),
+    green: int().notNull(),
+    blue: int().notNull(),
+    cyan: int().notNull(),
+    magenta: int().notNull(),
+    yellow: int().notNull(),
+    black: int().notNull(),
+    labL: decimal({ precision: 7, scale: 3 }).notNull(),
+    labA: decimal({ precision: 7, scale: 3 }).notNull(),
+    labB: decimal({ precision: 7, scale: 3 }).notNull(),
+    note: varchar({ length: 500 }),
+    createdByUserId: int().notNull(),
+    createdAt: timestamp({ mode: "string" })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: timestamp({ mode: "string" })
+      .defaultNow()
+      .onUpdateNow()
+      .notNull(),
+  },
+  t => [
+    uniqueIndex("procedure_ink_recipe_result_unique").on(
+      t.studioId,
+      t.recipeId
+    ),
+    index("procedure_ink_recipe_results_artist_idx").on(
+      t.studioId,
+      t.artistId,
+      t.id
+    ),
+    index("procedure_ink_recipe_results_procedure_idx").on(
+      t.studioId,
+      t.procedureId,
+      t.id
+    ),
+  ]
+);
