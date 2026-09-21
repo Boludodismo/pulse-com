@@ -1,3 +1,4 @@
+import SessionPreparationSummary from "@/components/SessionPreparationSummary";
 import { isSessionInk, inkStockQuantity } from "@shared/sessionInkQuantity";
 import SessionMaterialQuantity from "@/components/SessionMaterialQuantity";
 import SessionMaterialPicker, { formatMaterialQuantity } from "@/components/SessionMaterialPicker";
@@ -743,6 +744,10 @@ export default function PodSession() {
         {/* ── Coluna direita: insumos ──────────────────────────────────── */}
         <div className="lg:w-1/2 xl:w-2/5 flex flex-col overflow-hidden">
 
+          <SessionPreparationSummary preparation={procedureQuery.data?.preparation} onMaterial={procedure?.status !== "finalizado" ? (id, quantity, unit) => {
+            if (!tenantMaterials.some(m => m.id === id && m.unit === unit)) return toast.error("Material indisponível no estoque deste artista.");
+            setBatchConsumption({ materialId: id, quantity });
+          } : undefined} />
           {/* Consumo real do estoque isolado. Não altera os lançamentos legados abaixo. */}
           <div className="border-b bg-primary/[0.03] p-3 space-y-2.5">
             <div className="flex items-start justify-between gap-3">

@@ -1,3 +1,4 @@
+import SessionPreparationSummary from "@/components/SessionPreparationSummary";
 import SessionMaterialQuantity from "@/components/SessionMaterialQuantity";
 import { SESSION_CUP_ML, SESSION_DROPS_PER_ML, inkStockQuantity } from "@shared/sessionInkQuantity";
 import { createPortal } from "react-dom";
@@ -16,13 +17,13 @@ type View={x:number;y:number;scale:number;rotation:number};
 type Sample={id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];lab:[number,number,number];xPct:number;yPct:number};
 type ReferenceDraft=ColorValue&{xPct:number;yPct:number};
 type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
-type Sheet="materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|null;
+type Sheet="preparation"|"materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|null;
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
 type RecipeAction={kind:"recipe";recipeId:number;label:string;payload:{procedureId:number;sampleId?:number;cupSize:Cup;dropsPerMl:number;cupTenantMaterialId?:number;ingredients:{tenantMaterialId:number;drops:number}[]}};
 type StockAction=QuickAction|RecipeAction;
 
 const CUP=SESSION_CUP_ML;
-const DROP=1/SESSION_DROPS_PER_ML;
+
 const V0:View={x:0,y:0,scale:1,rotation:0};
 const GRAYS=["#050505","#191919","#333333","#525252","#737373","#969696","#b8b8b8","#dddddd","#ffffff"];
 const COLOR_FAMILIES=[
@@ -81,6 +82,7 @@ const client=trpc.clients.getById.useQuery({id:props.clientId},{enabled:!!props.
 const inventory=trpc.pod.inventory.list.useQuery({artistId:props.artistId??proc?.artistId??undefined},{enabled:!!procedureId});
 const materialColorQuery=trpc.pod.inventory.materialColorSamples.useQuery({artistId:props.artistId??proc?.artistId??undefined},{enabled:!!procedureId});
 const sampleQuery=trpc.pod.session.listColorSamples.useQuery({procedureId},{enabled:!!procedureId});
+const preparationQuery=trpc.procedures.getById.useQuery({id:procedureId},{enabled:!!procedureId});
 const recipeQuery=trpc.pod.session.listInkRecipes.useQuery({procedureId},{enabled:!!procedureId});
 const visualLayerQuery=trpc.pod.session.listVisualLayers.useQuery({procedureId},{enabled:!!procedureId});
 const utils=trpc.useUtils();
@@ -117,6 +119,8 @@ const [refOn,setRefOn]=useState(true),[refOp,setRefOp]=useState(1),[markOn,setMa
 const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null);
 const [directQuantity,setDirectQuantity]=useState("1");
 const [sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null>(null),[note,setNote]=useState("");
+const [recipeDropsPerMl,setRecipeDropsPerMl]=useState(SESSION_DROPS_PER_ML);
+const DROP=1/recipeDropsPerMl;
 const [cup,setCup]=useState<Cup>("M"),[ings,setIngs]=useState<Ingredient[]>([]),[familyFilter,setFamilyFilter]=useState<string|null>(null);
 const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoStack]=useState<StockAction[]>([]),[flash,setFlash]=useState<string|null>(null);
 const [photoTarget,setPhotoTarget]=useState<PhotoTarget|null>(null),[photoSrc,setPhotoSrc]=useState<string|null>(null);
@@ -134,6 +138,7 @@ const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pt
 const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false),samplerPointerActive=useRef(false),samplePointerId=useRef<number|null>(null),interactionMode=useRef<"idle"|"sample"|"transform">("idle");
 
 const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],lab:[Number(s.labL||0),Number(s.labA||0),Number(s.labB||0)],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
+useEffect(()=>{if(preparationQuery.data?.preparation?.colors.length)setMode("color")},[preparationQuery.data?.preparation]);
 const recipes=(recipeQuery.data||[]) as any[];
 const visualLayers=(visualLayerQuery.data||[]) as any[];
 const referenceLayer=visualLayers.find(l=>l.layerKey==="reference");
@@ -222,12 +227,12 @@ async function quickConsume(m:Material,quantity:string,label?:string){
 }
 function useMat(m:Material){if(m.kind==="cartridge"||m.kind==="protection")return void quickConsume(m,"1.000",m.name);if(m.kind==="ointment")return void quickConsume(m,"10.000",m.name+" +10 g");setInk(m);setDirectQuantity(m.kind==="cup"?"1":inkStockQuantity(m.unit,1,"drops","M"));setSheet("ink")}
 function setIng(mid:string,n:number){setIngs(a=>n<=0?a.filter(x=>x.materialId!==mid):a.some(x=>x.materialId===mid)?a.map(x=>x.materialId===mid?{...x,drops:n}:x):[...a,{materialId:mid,drops:n}])}
-function recipe(seed?:Material){setCup("M");setIngs(seed?[{materialId:seed.id,drops:1}]:[]);setSheet("recipe")}
+function recipe(seed?:Material){setRecipeDropsPerMl(20);setCup("M");setIngs(seed?[{materialId:seed.id,drops:1}]:[]);setSheet("recipe")}
 function cupMaterialId(size:Cup){const re=new RegExp("(batoque|ink.?cap).*(^|[^a-z])"+size.toLowerCase()+"([^a-z]|$)","i");const direct=stock.find(m=>re.test(m.name+" "+(m.configuration||"")));if(direct)return Number(direct.id);const byName=stock.find(m=>(m.name+" "+(m.configuration||"")).toLowerCase().includes("batoque "+size.toLowerCase()));return byName?Number(byName.id):undefined}
 
 async function saveRecipe(){
   const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP;if(!drops)return toast.error("Adicione tinta ou diluente.");if(ml>CUP[cup])return toast.error("Mistura maior que a capacidade do batoque.");
-  const payload={procedureId,sampleId:sample?Number(sample.id):undefined,cupSize:cup,dropsPerMl:20,cupTenantMaterialId:cupMaterialId(cup),ingredients:ings.map(i=>({tenantMaterialId:Number(i.materialId),drops:i.drops}))};
+  const payload={procedureId,sampleId:sample?Number(sample.id):undefined,cupSize:cup,dropsPerMl:recipeDropsPerMl,cupTenantMaterialId:cupMaterialId(cup),ingredients:ings.map(i=>({tenantMaterialId:Number(i.materialId),drops:i.drops}))};
   try{const r=await saveRecipeMutation.mutateAsync(payload);pushAction({kind:"recipe",recipeId:r.id,label:r.code+" · "+drops+" gotas",payload});setSheet(null);await refreshAll();toast.success(r.code+" salva com baixa transacional no estoque.")}
   catch(e:any){toast.error(e.message||"Não foi possível salvar a mistura.")}
 }
@@ -438,7 +443,7 @@ async function finalPhoto(file:File){if(file.size>16*1024*1024)return toast.erro
 if(session.isLoading||!proc)return <div className="cockpit-lab" style={{display:"grid",placeItems:"center"}}>Abrindo sessão…</div>;
 
 const panel=(o:number,s:number,side:"left"|"right")=>({"--panel-alpha":o,transform:"scale("+s+")",transformOrigin:side==="left"?"left top":"right top"} as CSSProperties);
-const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP,pct=Math.round(ml/CUP[cup]*100),cupDropCapacity=Math.round(CUP[cup]/DROP);
+const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP,pct=Math.round(ml/CUP[cup]*100),cupDropCapacity=Math.floor(CUP[cup]/DROP);
 const refSrc=proc.referenceImageUrl?String(proc.referenceImageUrl):(props.originalSrc?String(props.originalSrc):null);
 const canvasRefSrc=canvasSafeSource(refSrc);
 const orderedLayers=(visualLayers.length?visualLayers:[
@@ -470,7 +475,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
     return canvasRefSrc?<img key="reference" ref={image} src={canvasRefSrc} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100}} alt="Referência"/>:null;
   }
   if(layer.layerKey==="samples"){
-    return <div key="samples" className="cockpit-sample-layer" style={{opacity:layerOpacity(layer)/100}}>{samples.map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex}}/>)}</div>;
+    return <div key="samples" className="cockpit-sample-layer" style={{opacity:layerOpacity(layer)/100}}>{samples.filter(s=>!s.code.startsWith("P")).map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex}}/>)}</div>;
   }
   const src=canvasSafeSource(layer.imageUrl);
   return src?<img key={layer.layerKey} src={src} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100}} alt={layer.name}/>:null;
@@ -538,19 +543,26 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <label className="layer-name-label">Nome da camada</label><input className="search-input" value={newLayerName} onChange={e=>setNewLayerName(e.target.value)} placeholder="Ex.: Contraste PB, Decalque 2..."/>
 <div className="sheet-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={!newLayerName.trim()||addVisualLayerMutation.isPending||uploadImage.isPending} onClick={()=>layerImageInput.current?.click()}><Plus size={15}/> Selecionar imagem</button></div>
 </section>}
-{sheet==="materials"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Adicionar material ativo</h3><p>Busca real no estoque. Nenhum material é duplicado.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} onClick={()=>{setActive(a=>[...a,m.id]);setSheet(null);setSearch("")}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section>}
+{sheet==="preparation"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar preparação" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Preparação da sessão</h3><SessionPreparationSummary preparation={preparationQuery.data?.preparation} onMaterial={props.finished?undefined:(id,quantity,unit)=>{
+  const m=stock.find(x=>Number(x.id)===id&&x.unit===unit);if(!m)return toast.error("Material indisponível para este artista.");setInk(m);setDirectQuantity(quantity);setSheet("ink");
+}} onRecipe={props.finished?undefined:index=>{
+  const color=preparationQuery.data?.preparation?.colors[index];if(!color)return;
+  if(color.ingredients.some(i=>!stock.some(m=>Number(m.id)===i.tenantMaterialId)))return toast.error("Uma tinta está indisponível. Atualize o estoque antes de reutilizar a receita.");
+  setSample(samples.find(s=>s.code===`P${String(index+1).padStart(2,"0")}`)||null);setCup(color.cupSize);setRecipeDropsPerMl(color.dropsPerMl);setIngs(color.ingredients.map(i=>({materialId:String(i.tenantMaterialId),drops:i.drops})));setFamilyFilter(null);stopSampling();setSheet("recipe");
+}}/></section>}
+{sheet==="materials"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Adicionar material ativo</h3>{preparationQuery.data?.preparation&&<button className="dock-add" onClick={()=>setSheet("preparation")}>Ver materiais e receitas preparados</button>}<p>Busca real no estoque. Nenhum material é duplicado.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} onClick={()=>{setActive(a=>[...a,m.id]);setSheet(null);setSearch("")}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section>}
 
 {sheet==="ink"&&ink&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{ink.name}</h3>
 <SessionMaterialQuantity key={ink.id} material={ink} value={directQuantity} onChange={setDirectQuantity} materials={stock} onMaterialChange={id=>{const m=stock.find(m=>m.id===id);if(m){setInk(m);setDirectQuantity("1")}}} disabled={consumeAuto.isPending}/>
 <div className="sheet-actions">{ink.kind!=="cup"&&<button onClick={()=>recipe(ink)}>Criar mistura</button>}<button className="primary" disabled={consumeAuto.isPending||!Number.isFinite(Number(directQuantity))||Number(directQuantity)<=0} onClick={()=>void quickConsume(ink,directQuantity,ink.name)}>Confirmar uso</button></div></section>}
 
-{sheet==="recipe"&&<section className="cockpit-sheet recipe-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Receita {sample?"· "+sample.code:""}</h3><p>Será gravada junto da sessão e das baixas de cada pigmento.</p>
+{sheet==="recipe"&&<section className="cockpit-sheet recipe-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Receita {sample?"· "+sample.code:""}</h3><p>Será gravada junto da sessão e das baixas de cada pigmento. Conversão: {recipeDropsPerMl} gotas/ml.</p>
 {sample&&<div className="recipe-sample-card">
-  <div className="sample-crop" style={canvasRefSrc?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/>
+  <div className="sample-crop" style={canvasRefSrc&&!sample.code.startsWith("P")?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/>
   <div className="recipe-sample-swatch" style={{background:sample.hex}}/>
-  <div className="recipe-sample-meta"><strong>{sample.code}</strong><span>Referência retirada da imagem</span><small>{sample.hex.toUpperCase()} · RGB {sample.rgb.join(" / ")} · CMYK {sample.cmyk.join(" / ")}</small></div>
+  <div className="recipe-sample-meta"><strong>{sample.code}</strong><span>{sample.code.startsWith("P")?"Cor preparada antes da sessão":"Referência retirada da imagem"}</span><small>{sample.hex.toUpperCase()} · RGB {sample.rgb.join(" / ")} · CMYK {sample.cmyk.join(" / ")}</small></div>
 </div>}
-<div className="sheet-grid cup-grid">{(["P","M","G","GG"] as Cup[]).map(c=><button key={c} className={"sheet-option "+(cup===c?"selected":"")} onClick={()=>setCup(c)}><b>Batoque {c}</b><small>{CUP[c]} ml · ~{Math.round(CUP[c]/DROP)} gotas</small></button>)}</div>
+<div className="sheet-grid cup-grid">{(["P","M","G","GG"] as Cup[]).map(c=><button key={c} className={"sheet-option "+(cup===c?"selected":"")} onClick={()=>setCup(c)}><b>Batoque {c}</b><small>{CUP[c]} ml · ~{Math.floor(CUP[c]/DROP)} gotas</small></button>)}</div>
 <div className="stock-colors-title"><strong>Paleta-base</strong><small>CMYK + Branco</small></div>
 <div className="color-family-strip">{COLOR_FAMILIES.map(f=><button key={f.key} className={"color-family-chip "+(familyFilter===f.key?"selected":"")} onClick={()=>setFamilyFilter(v=>v===f.key?null:f.key)}><i style={{background:f.hex}}/><span>{f.label}</span></button>)}</div>
 <div className="stock-colors-title"><strong>Cores do estoque</strong><small>{familyFilter?"Filtro "+familyFilter:"Todas as tintas cadastradas"}</small></div>
@@ -569,7 +581,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <div className={"mix-summary mix-summary-sticky "+(drops>cupDropCapacity?"over":"")}><div>Total: {drops} / {cupDropCapacity} gotas · ~{ml.toFixed(2)} ml</div><div>Batoque {cup}: {CUP[cup].toFixed(2)} ml · ocupação ~{pct}%</div>{drops>cupDropCapacity&&<div className="mix-over-warning">Mistura acima da capacidade do batoque.</div>}{ings.map(i=>{const m=stock.find(x=>x.id===i.materialId);return <div key={i.materialId}>{m?.short}: {i.drops}gt · {drops?((i.drops/drops)*100).toFixed(1):0}%</div>})}</div>
 <div className="sheet-actions recipe-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={saveRecipeMutation.isPending||drops===0||drops>cupDropCapacity} onClick={()=>void saveRecipe()}>Salvar receita + baixar estoque</button></div></section>}
 
-{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · Amostra 5×5 px</h3><div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={canvasRefSrc?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);startSampling()}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button></div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · Batoque {r.cupSize}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
+{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · {sample.code.startsWith("P")?"Cor preparada":"Amostra 5×5 px"}</h3><div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={canvasRefSrc&&!sample.code.startsWith("P")?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);startSampling()}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button>{sample.code.startsWith("P")&&<button onClick={()=>setSheet("preparation")}>Ver receita preparada</button>}</div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · Batoque {r.cupSize}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
 
 {sheet==="notes"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Notas rápidas</h3><textarea className="cockpit-note" value={note} onChange={e=>setNote(e.target.value)}/><div className="sheet-actions"><button className="primary" disabled={updateProcedure.isPending} onClick={()=>void saveNotes()}>Salvar na sessão</button></div></section>}
 {sheet==="finish"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Revisão antes de concluir</h3><p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {recipes.filter((r:any)=>r.status!=="reverted").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>setSheet(null)}>Voltar</button><button className="primary" onClick={()=>{setSheet(null);props.onFinish()}}>Ir para conclusão da sessão</button></div></section>}

@@ -92,7 +92,7 @@ function recipeStockQuantity(unit: string, drops: number, dropsPerMl: number) {
 }
 
 function nextSessionCode(prefix: "C" | "M", previous?: string | null) {
-  const parsed = previous?.match(/(\d+)$/);
+  const parsed = previous?.startsWith(prefix) ? previous.match(/(\d+)$/) : null;
   const next = parsed ? Number(parsed[1]) + 1 : 1;
   return prefix + String(next).padStart(2, "0");
 }

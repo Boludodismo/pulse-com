@@ -1,3 +1,5 @@
+import { preparationSchema, preparationRgb, readPreparation, validatePreparationMaterial, validateRecipeMaterial } from "../../shared/sessionPreparation";
+import { assertOwnArtist, requireMaterialForArtist } from "../inventoryAccess";
 import { resolveProcedureArtist } from "../procedureArtist";
 /**
  * POD Session — Módulo de Execução Técnica da Tatuagem
@@ -16,6 +18,8 @@ async function requireDb(): Promise<ReturnType<typeof drizzle>> {
   return db as ReturnType<typeof drizzle>;
 }
 import {
+  tenantMaterials,
+  procedureColorSamples,
   technicalProcedures,
   procedureConsumables,
   procedureImages,
@@ -26,7 +30,7 @@ import {
   transactions,
 } from "../../drizzle/schema";
 import { eq, and, desc, isNotNull, gte, lte, sql, type InferSelectModel } from "drizzle-orm";
-import { storagePut, storageDelete } from "../storage";
+import { storagePut, storageDelete, storageGet } from "../storage";
 // notifyOwner é importado dinamicamente para compatibilidade com o bundler Vite ESM
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -55,6 +59,7 @@ async function assertProcedureLinks(
   const [client] = await db.select({ id: clients.id }).from(clients).where(and(
     eq(clients.id, input.clientId),
     eq(clients.studioId, input.studioId),
+    eq(clients.isArchived, 0),
   )).limit(1);
   if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado nesta empresa." });
 
@@ -127,7 +132,9 @@ export const proceduresRouter = router({
         .where(eq(procedureImages.procedureId, input.id))
         .orderBy(procedureImages.createdAt);
 
-      return { procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images };
+      const preparationEvent = (await db.select({ payload: procedureEvents.payload }).from(procedureEvents)
+        .where(and(eq(procedureEvents.procedureId, input.id), sql`${procedureEvents.eventType} LIKE 'prepared:%'`)).limit(1))[0];
+      return { procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images, preparation: readPreparation(preparationEvent?.payload) };
     }),
 
   // ── Criar novo procedimento ──────────────────────────────────────────────
@@ -144,61 +151,100 @@ export const proceduresRouter = router({
       chargedAmount: z.number().int().min(0).optional(), // centavos
       notes: z.string().optional(),
       // Imagem de referência em base64 (opcional na criação)
-      referenceImageBase64: z.string().optional(),
-      referenceImageMime: z.string().optional(),
-    }))
+      referenceImageBase64: z.string().max(24 * 1024 * 1024).optional(),
+      referenceImageMime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
+      referenceFromProcedureId: z.number().int().positive().optional(),
+      preparation: preparationSchema.optional(),
+      requestId: z.string().uuid().optional(),
+    }).refine(v => !v.preparation || !!v.requestId, "Informe o identificador da preparação."))
     .mutation(async ({ ctx, input }) => {
       const studioId = ctx.studioId;
       const db = await requireDb();
-      await assertProcedureLinks(db, { studioId, clientId: input.clientId, appointmentId: input.appointmentId, artistId: input.artistId });
-      const resolvedArtist = await resolveProcedureArtist(db, { ...input, studioId });
-      let referenceImageUrl: string | undefined;
-      let referenceImageKey: string | undefined;
-
-      if (input.referenceImageBase64 && input.referenceImageMime) {
-        const buffer = Buffer.from(input.referenceImageBase64, "base64");
-        const ext = input.referenceImageMime.split("/")[1] || "jpg";
-        const key = `procedures/${studioId}/ref-${randomSuffix()}.${ext}`;
-        const { url } = await storagePut(key, buffer, input.referenceImageMime);
-        referenceImageUrl = url;
-        referenceImageKey = key;
-      }
-
-      const [result] = await db
-        .insert(technicalProcedures)
-        .values({
-          studioId,
-          clientId: input.clientId,
-          appointmentId: input.appointmentId ?? null,
-          artistId: resolvedArtist.artistId ?? null,
-          artistName: resolvedArtist.artistName ?? null,
-          title: input.title,
-          description: input.description ?? null,
-          bodyLocation: input.bodyLocation ?? null,
-          tattooStyle: input.tattooStyle ?? null,
-          chargedAmount: input.chargedAmount ?? 0,
-          notes: input.notes ?? null,
-          referenceImageUrl: referenceImageUrl ?? null,
-          referenceImageKey: referenceImageKey ?? null,
+      return db.transaction(async tx => {
+        // Serialize retries for this client. The request token and all session rows
+        // commit together, so a lost HTTP response cannot create a second session.
+        const lockedClient = (await tx.select({ id: clients.id }).from(clients).where(and(
+          eq(clients.id, input.clientId), eq(clients.studioId, studioId), eq(clients.isArchived, 0),
+        )).limit(1).for("update"))[0];
+        if (!lockedClient) throw new TRPCError({ code: "NOT_FOUND", message: "Selecione um cliente ativo deste estúdio." });
+        const eventType = input.requestId ? `prepared:${input.requestId}` : "created";
+        if (input.requestId) {
+          const replay = (await tx.select({ procedure: technicalProcedures }).from(technicalProcedures)
+            .innerJoin(procedureEvents, eq(procedureEvents.procedureId, technicalProcedures.id))
+            .where(and(eq(technicalProcedures.studioId, studioId), eq(technicalProcedures.clientId, input.clientId), eq(procedureEvents.eventType, eventType))).limit(1))[0];
+          if (replay) return replay.procedure;
+        }
+        const database = tx as unknown as Awaited<ReturnType<typeof requireDb>>;
+        await assertProcedureLinks(database, { studioId, clientId: input.clientId, appointmentId: input.appointmentId, artistId: input.artistId });
+        const resolvedArtist = await resolveProcedureArtist(database, { ...input, studioId });
+        if (input.preparation) assertOwnArtist(ctx, resolvedArtist.artistId ?? null);
+        const preparation = input.preparation ? preparationSchema.parse(input.preparation) : null;
+        if (preparation) {
+          const ids = new Set([...preparation.materials.map(i => i.tenantMaterialId), ...preparation.colors.flatMap(c => c.ingredients.map(i => i.tenantMaterialId))]);
+          const materials = new Map<number, typeof tenantMaterials.$inferSelect>();
+          for (const id of Array.from(ids)) {
+            const material = (await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id, id), eq(tenantMaterials.studioId, studioId), eq(tenantMaterials.isActive, 1))).limit(1).for("share"))[0];
+            if (!material) throw new TRPCError({ code: "BAD_REQUEST", message: "Um material foi arquivado ou não está disponível. Revise o planejamento." });
+            await requireMaterialForArtist(database, ctx, material, resolvedArtist.artistId ?? null);
+            materials.set(id, material);
+          }
+          try {
+            for (const item of preparation.materials) {
+              const material = materials.get(item.tenantMaterialId)!;
+              validatePreparationMaterial(item, material);
+              item.name = material.name; item.unit = material.unit;
+            }
+            for (const color of preparation.colors) for (const item of color.ingredients) {
+              const material = materials.get(item.tenantMaterialId)!;
+              validateRecipeMaterial(material); item.name = material.name;
+            }
+          } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: (error as Error).message }); }
+          if (Buffer.byteLength(JSON.stringify(preparation), "utf8") > 55000) throw new TRPCError({ code: "BAD_REQUEST", message: "O planejamento está muito grande. Reduza os materiais ou as misturas." });
+        }
+        let referenceImageUrl: string | undefined, referenceImageKey: string | undefined;
+        let imageBuffer: Buffer | undefined, imageMime = input.referenceImageMime;
+        if (input.referenceImageBase64) {
+          if (!imageMime) throw new TRPCError({ code: "BAD_REQUEST", message: "Informe o formato da imagem." });
+          imageBuffer = Buffer.from(input.referenceImageBase64, "base64");
+        } else if (input.referenceFromProcedureId) {
+          const source = (await tx.select().from(technicalProcedures).where(and(eq(technicalProcedures.id, input.referenceFromProcedureId), eq(technicalProcedures.studioId, studioId), eq(technicalProcedures.clientId, input.clientId))).limit(1))[0];
+          if (!source?.referenceImageKey) throw new TRPCError({ code: "BAD_REQUEST", message: "A referência anterior não está disponível. Selecione uma imagem." });
+          const { url } = await storageGet(source.referenceImageKey);
+          const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          if (!response.ok) throw new TRPCError({ code: "BAD_REQUEST", message: "Não foi possível recuperar a referência anterior." });
+          const mime = response.headers.get("content-type")?.split(";")[0];
+          if (!["image/jpeg", "image/png", "image/webp"].includes(mime || "")) throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione a referência em JPG, PNG ou WebP." });
+          imageMime = mime as typeof imageMime;
+          imageBuffer = Buffer.from(await response.arrayBuffer());
+        }
+        if (imageBuffer) {
+          if (!imageBuffer.length || imageBuffer.length > 16 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "A referência deve ter até 16 MB." });
+          const key = `procedures/${studioId}/ref-${randomSuffix()}.${imageMime!.split("/")[1]}`;
+          const uploaded = await storagePut(key, imageBuffer, imageMime);
+          if (!uploaded.url) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar a referência." });
+          referenceImageUrl = uploaded.url; referenceImageKey = key;
+        }
+        const [result] = await tx.insert(technicalProcedures).values({
+          studioId, clientId: input.clientId, appointmentId: input.appointmentId ?? null,
+          artistId: resolvedArtist.artistId ?? null, artistName: resolvedArtist.artistName ?? null,
+          title: input.title, description: input.description ?? null,
+          bodyLocation: input.bodyLocation ?? null, tattooStyle: input.tattooStyle ?? null,
+          chargedAmount: input.chargedAmount ?? 0, notes: input.notes ?? null,
+          referenceImageUrl: referenceImageUrl ?? null, referenceImageKey: referenceImageKey ?? null,
           status: "em_andamento",
         });
-
-      const insertId = (result as any).insertId as number;
-
-      // Registrar evento de criação
-      await db.insert(procedureEvents).values({
-        procedureId: insertId,
-        eventType: "created",
-        payload: JSON.stringify({ createdBy: ctx.user.id, artistName: input.artistName }),
+        const id = (result as any).insertId as number;
+        await tx.insert(procedureEvents).values({ procedureId: id, eventType, payload: preparation ? JSON.stringify(preparation) : JSON.stringify({ createdBy: ctx.user.id }) });
+        // P codes identify prepared colors, which have no sampled image position.
+        if (preparation?.colors.length) await tx.insert(procedureColorSamples).values(preparation.colors.map((c, i) => ({
+          studioId, procedureId: id, clientId: input.clientId, artistId: resolvedArtist.artistId ?? null,
+          code: `P${String(i + 1).padStart(2, "0")}`, hex: c.hex.toUpperCase(), ...preparationRgb(c.hex),
+          xPct: "0", yPct: "0", sampleSize: 0, createdByUserId: ctx.user.id,
+        })));
+        if (input.requestId) await tx.insert(procedureEvents).values({ procedureId: id, eventType: "created", payload: JSON.stringify({ createdBy: ctx.user.id, artistName: input.artistName }) });
+        const [created] = await tx.select().from(technicalProcedures).where(eq(technicalProcedures.id, id)).limit(1);
+        return created;
       });
-
-      const [created] = await db
-        .select()
-        .from(technicalProcedures)
-        .where(eq(technicalProcedures.id, insertId))
-        .limit(1);
-
-      return created;
     }),
 
   // ── Atualizar dados gerais do procedimento ───────────────────────────────
