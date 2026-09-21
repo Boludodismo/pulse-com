@@ -1,0 +1,6 @@
+import {it,expect} from 'vitest';
+import * as XLSX from 'xlsx';
+import {readInventoryWorkbook} from '../shared/inventoryWorkbook';
+it('preserves CSV dates and leading zeros verbatim',async()=>{const rows=await readInventoryWorkbook(new TextEncoder().encode('nome,unidade_base,lote,validade_data\nCartucho,un,00123,2028-10-15').buffer);expect(rows[0].validade_data).toBe('2028-10-15');expect(rows[0].lote).toBe('00123');});
+it('reads Excel numeric dates without timezone shifts',async()=>{const b=XLSX.utils.book_new();const s=XLSX.utils.aoa_to_sheet([['nome','unidade_base','validade_data'],['Cartucho','un',47041]]);s.C2.z='mm/dd/yy';XLSX.utils.book_append_sheet(b,s,'Leitura');const r=await readInventoryWorkbook(XLSX.write(b,{type:'array',bookType:'xlsx'}));const d=XLSX.SSF.parse_date_code(47041);expect(r[0].validade_data).toBe(`${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`);});
+it('rejects formulas before presenting import rows',async()=>{const b=XLSX.utils.book_new();const s=XLSX.utils.aoa_to_sheet([['nome','unidade_base'],['Cartucho','un']]);s.A2.f='1+1';XLSX.utils.book_append_sheet(b,s,'Leitura');await expect(readInventoryWorkbook(XLSX.write(b,{type:'array',bookType:'xlsx'}))).rejects.toThrow('fórmulas');});

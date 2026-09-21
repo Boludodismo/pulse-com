@@ -422,6 +422,7 @@ export const podSaasRouter = router({
 
     importUpdate: tenantProcedure.input(z.object({
       tenantMaterialId:z.number().int().positive(),
+      metadata:z.object({codigo_barras:z.string().trim().min(1).max(120).optional(),anvisa_rotulo:z.string().trim().min(1).max(120).optional(),observacoes:z.string().trim().min(1).max(1500).optional()}).optional(),
       fields:z.object({name:z.string().trim().min(2).max(255).optional(),category:z.string().trim().min(1).max(120).optional(),brand:z.string().trim().min(1).max(120).optional(),line:z.string().trim().min(1).max(120).optional(),model:z.string().trim().min(1).max(120).optional(),configuration:z.string().trim().min(1).max(120).optional(),diameter:z.string().trim().min(1).max(40).optional(),gauge:z.string().trim().min(1).max(20).optional(),taper:z.string().trim().min(1).max(80).optional(),purchaseUnit:z.string().trim().min(1).max(50).optional(),needleCount:z.number().int().min(1).max(1000).optional(),packageQuantity:z.number().int().min(1).max(100000).optional()}).strict(),
     })).mutation(async({ctx,input})=>{
       await requireModule(ctx,"stock",true);const database=await requireDatabase();
@@ -429,7 +430,14 @@ export const podSaasRouter = router({
         const [material]=await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id,input.tenantMaterialId),eq(tenantMaterials.studioId,ctx.studioId),eq(tenantMaterials.isActive,1))).limit(1).for("update");
         if(!material)throw new TRPCError({code:"NOT_FOUND",message:"Material não encontrado."});
         assertOwnArtist(ctx,material.ownerArtistId);await assertNotLoanStock(tx,ctx.studioId,material.id);await assertNoPendingLoan(tx,ctx.studioId,material.id);
-        if(Object.keys(input.fields).length)await tx.update(tenantMaterials).set(input.fields).where(and(eq(tenantMaterials.id,material.id),eq(tenantMaterials.studioId,ctx.studioId)));
+        const patch:any={...input.fields};
+        if(input.metadata&&Object.keys(input.metadata).length){
+          let notes:any={};try{const parsed=JSON.parse(material.notes||"{}");notes=parsed&&typeof parsed==="object"&&!Array.isArray(parsed)?parsed:{textoAnterior:material.notes};}catch{notes={textoAnterior:material.notes};}
+          const previous=notes.leituraPlanilha&&typeof notes.leituraPlanilha==="object"?notes.leituraPlanilha:{};
+          notes.leituraPlanilha={...previous,...input.metadata};patch.notes=JSON.stringify(notes);
+          if(patch.notes.length>4000)throw new TRPCError({code:"BAD_REQUEST",message:"Observações excedem o espaço disponível no cadastro."});
+        }
+        if(Object.keys(patch).length)await tx.update(tenantMaterials).set(patch).where(and(eq(tenantMaterials.id,material.id),eq(tenantMaterials.studioId,ctx.studioId)));
         return {id:material.id};
       });
     }),

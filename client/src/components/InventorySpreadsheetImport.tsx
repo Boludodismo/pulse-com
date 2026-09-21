@@ -1,10 +1,10 @@
+import {readInventoryWorkbook} from "@shared/inventoryWorkbook";
 import { useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
 import {
   INVENTORY_COLUMNS,
-  cleanCell,
   materialFields,
   receiptQuantity,
   receiptCost,
@@ -73,46 +73,9 @@ export default function InventorySpreadsheetImport({
     try {
       if (file.size > 5 * 1024 * 1024)
         throw new Error("Arquivo acima de 5 MB.");
-      const XLSX = await import("xlsx");
       const bytes = await file.arrayBuffer();
-      const book = XLSX.read(bytes, {
-        type: "array",
-        cellDates: false,
-        sheetRows: 102,
-      });
-      const sheet = book.Sheets.Leitura || book.Sheets[book.SheetNames[0]];
-      if (
-        Object.entries(sheet).some(
-          ([k, v]) => !k.startsWith("!") && (v as any)?.f
-        )
-      )
-        throw new Error(
-          "Remova fórmulas da planilha; importe somente valores."
-        );
-      const grid = XLSX.utils.sheet_to_json<any[]>(sheet, {
-        header: 1,
-        defval: "",
-        raw: false,
-      });
-      const headers = (grid.shift() || []).map(v => cleanCell(v).toLowerCase());
-      if (!headers.includes("nome") || !headers.includes("unidade_base"))
-        throw new Error("Use o modelo: faltam nome ou unidade_base.");
-      if (
-        new Set(headers.filter(Boolean)).size !== headers.filter(Boolean).length
-      )
-        throw new Error("Há colunas duplicadas.");
-      const data = grid.filter(r => r.some(v => cleanCell(v)));
-      if (
-        data.length > 100 ||
-        (sheet["!fullref"] &&
-          XLSX.utils.decode_range(sheet["!fullref"]).e.r > 100)
-      )
-        throw new Error("Limite de 100 linhas por arquivo.");
-      if (!data.length) throw new Error("Planilha vazia.");
-      const next = data.map(values => {
-        const cells = Object.fromEntries(
-          INVENTORY_COLUMNS.map(k => [k, cleanCell(values[headers.indexOf(k)])])
-        );
+      const data = await readInventoryWorkbook(bytes);
+      const next = data.map(cells => {
         const named = (suppliers.data || []).filter(
           s => s.name.toLowerCase() === cells.fornecedor.toLowerCase()
         );
@@ -162,6 +125,7 @@ export default function InventorySpreadsheetImport({
       if (!r.target)
         throw new Error("Escolha material existente ou novo cadastro.");
       const f = materialFields(r.cells);
+      if(r.cells.codigo_barras.length>120||r.cells.anvisa_rotulo.length>120||r.cells.observacoes.length>1500)throw new Error("Código acima de 120 caracteres ou observações acima de 1500.");
       const m = owned.find(x => String(x.id) === r.target);
       if (r.target !== "new" && !m)
         throw new Error("Material não pertence ao proprietário selecionado.");
@@ -218,6 +182,8 @@ export default function InventorySpreadsheetImport({
             });
             id = result.id!;
           }
+          const metadata=Object.fromEntries(["codigo_barras","anvisa_rotulo","observacoes"].filter(k=>r.cells[k]).map(k=>[k,r.cells[k]]));
+          if(r.target==="new"&&Object.keys(metadata).length)await update.mutateAsync({tenantMaterialId:id,fields:{},metadata});
           if (r.action === "receive") {
             const quantity = receiptQuantity(r.cells);
             await receive.mutateAsync({
@@ -234,7 +200,7 @@ export default function InventorySpreadsheetImport({
           }
           if (r.action === "update") {
             const { unit, ...data } = fields;
-            await update.mutateAsync({ tenantMaterialId: id, fields: data });
+            await update.mutateAsync({ tenantMaterialId: id, fields: data, metadata });
           }
           patch(i, { done: true, status: "Concluído" });
         } catch (e) {
@@ -263,9 +229,7 @@ export default function InventorySpreadsheetImport({
           Importe XLSX ou CSV (até 100 linhas / 5 MB). Confira cada linha antes
           de confirmar. Novo cadastro começa com saldo zero; entrada soma a
           quantidade e preserva lote e validade. Atualização cadastral preenche
-          somente campos não vazios e preserva saldo, lotes e custos. Código de
-          barras, Anvisa, observações e campos de revisão são exibidos para
-          conferência; não alteram o cadastro.
+          somente campos não vazios e preserva saldo, lotes e custos. Código de barras, Anvisa e observações são preservados nas notas ao cadastrar ou atualizar. O número de Anvisa é apenas transcrito, sem verificação de regularidade.
         </p>
         <Button variant="outline" onClick={() => void template()}>
           Baixar modelo XLSX
