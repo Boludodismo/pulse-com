@@ -125,3 +125,44 @@
   user-select:none;
   -webkit-touch-callout:none;
 }
+
+/* Keep controls inside Safari's visible area, including its browser bars. */
+.cockpit-lab{--cockpit-header-height:calc(58px + env(safe-area-inset-top,0px));--cockpit-footer-height:calc(64px + env(safe-area-inset-bottom,0px));isolation:isolate;height:100dvh;max-width:100%;}
+.cockpit-top{height:var(--cockpit-header-height);min-height:0;padding-top:max(6px,env(safe-area-inset-top));}
+.cockpit-stage{top:var(--cockpit-header-height);bottom:var(--cockpit-footer-height);}
+.cockpit-bottom{height:var(--cockpit-footer-height);}
+.cockpit-dock{top:calc(var(--cockpit-header-height) + 8px);bottom:calc(var(--cockpit-footer-height) + 10px);}
+.cockpit-palette{bottom:calc(var(--cockpit-footer-height) + 8px);}
+.cockpit-toast{bottom:calc(var(--cockpit-footer-height) + 10px);}
+.cockpit-sheet{bottom:calc(var(--cockpit-footer-height) + 8px);max-height:calc(100% - var(--cockpit-header-height) - var(--cockpit-footer-height) - 24px);overscroll-behavior:contain;}
+.cockpit-lab button{touch-action:manipulation;cursor:pointer;}
+.cockpit-lab button:disabled{cursor:default;}
+.cockpit-dock.minimized header{border:0;justify-content:center;padding:4px;}
+.cockpit-dock.minimized header>button:last-child{display:none;}
+.cockpit-dock:not(.expanded) .dock-controls{display:none;}
+.cockpit-dock:not(.expanded) .layer-card{grid-template-columns:minmax(0,1fr);justify-items:center;padding:4px;}
+.cockpit-dock:not(.expanded) .layer-main{display:none;}
+.cockpit-dock:not(.expanded) .layer-eye{width:100%;min-height:38px;}
+.cockpit-dock .dock-body{touch-action:pan-y;}
+.cockpit-dock header button{display:grid;place-items:center;flex-shrink:0;}
+.cockpit-lab input:not([type=range]),.cockpit-lab textarea{font-size:16px;}
+.cockpit-sheet h3{padding-right:42px;}
+@media(max-width:620px){
+  .cockpit-top{gap:4px;}
+  .cockpit-top .cockpit-icon{min-width:38px;width:38px;height:42px;flex-shrink:0;}
+  .cockpit-client{flex:1;min-width:0;}
+  .cockpit-status{flex-shrink:0;gap:4px;padding:6px;}
+  .cockpit-dock.expanded{width:min(260px,calc(100% - 80px));}
+  .cockpit-dock.minimized{width:48px;height:48px;}
+  .cockpit-view-quick{left:50%;right:auto;transform:translateX(-50%);gap:4px;}
+  .cockpit-view-quick button{height:42px;min-width:42px;padding:0 7px;}
+  .cockpit-anamnese{display:none;}
+  .focus-entry-button{top:60px;right:8px;}
+  .cockpit-bottom{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;}
+  .cockpit-bottom button{min-width:0;width:100%;height:48px;padding:4px;flex-direction:column;gap:3px;}
+  .cockpit-bottom .button-label{display:block;font-size:8px;}
+  .cockpit-bottom .finish{margin-left:0;}
+  .cockpit-palette{width:calc(100% - 20px);max-width:100%;min-height:44px;}
+  .cockpit-palette .palette-add{display:flex;align-items:center;gap:4px;flex-shrink:0;min-height:34px;}
+  .cockpit-sheet.recipe-sheet{max-height:calc(100% - var(--cockpit-header-height) - var(--cockpit-footer-height) - 24px);}
+}
