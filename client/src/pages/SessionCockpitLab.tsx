@@ -1,7 +1,7 @@
 import {useEffect,useMemo,useRef,useState,type CSSProperties,type PointerEvent as RP,type WheelEvent as RW} from "react";
 import {ArrowLeft,Home,Undo2,Redo2,Minus,Eye,EyeOff,Plus,Pause,Play,Package,Camera,Square,StickyNote,RotateCcw,RotateCw,Palette,Pipette,X,Search,Droplets,Check,Layers3,ChevronLeft,ChevronRight} from "lucide-react";
 import {toast} from "sonner";
-import "./cockpit-v2-lab.css";
+import "../components/session/cockpit-v2-lab.css";
 
 type Kind="cartridge"|"ink"|"diluent"|"ointment"|"protection";
 type Material={id:string;name:string;short:string;kind:Kind;unit:string;color?:string;detail:string};
