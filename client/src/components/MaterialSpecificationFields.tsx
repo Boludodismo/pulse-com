@@ -12,7 +12,7 @@ export default function MaterialSpecificationFields({value,onChange,materials}:{
  const cup=/batoque|ink.?cap/i.test(value.category);
  const options=(field:keyof SpecificationForm)=>{
  const seedKey:Record<string,string>={brand:'brandName',line:'lineName',model:'sku',configuration:'format',diameter:'needleDiameter',packageQuantity:'unitsPerPackage'};
- const values=[...materials.map(m=>specificationFromMaterial(m)[field]),...TECHNICAL_CATALOG_2026.filter(m=>field==='category'||!value.category||m.category===value.category).map(m=>(m as any)[seedKey[field]??field])];
+ const values=[...materials.filter(m=>field!=='configuration'||!cup||/batoque|ink.?cap/i.test(m.name||'')).map(m=>specificationFromMaterial(m)[field]),...TECHNICAL_CATALOG_2026.filter(m=>field==='category'||!value.category||m.category===value.category).map(m=>(m as any)[seedKey[field]??field])];
  if(field==='gauge')values.push('04','06','08','10','12','14');
  return Array.from(new Set(values.filter(v=>v!==null&&v!==undefined&&String(v)!=='').map(String))).sort((a,b)=>a.localeCompare(b,'pt-BR',{numeric:true}));
  };

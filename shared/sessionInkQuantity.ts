@@ -27,6 +27,6 @@ export function sessionMaterialName(m: QuantityMaterial): string {
   if (!isSessionCup(m)) return m.name;
   const name = m.name.replace(/\s*[—–-]\s*\d+\s*(?:un|unidades)\s*$/i, '').trim();
   const size = sessionCupSizeLabel(m);
-  return size && !name.toUpperCase().split(/\s+/).includes(size.toUpperCase())
+  return size && !name.toUpperCase().endsWith(` · ${size.toUpperCase()}`) && !name.toUpperCase().split(/\s+/).includes(size.toUpperCase())
     ? `${name} · ${size}` : name;
 }
