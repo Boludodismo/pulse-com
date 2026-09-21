@@ -14,7 +14,7 @@ type View={x:number;y:number;scale:number;rotation:number};
 type Sample={id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];lab:[number,number,number];xPct:number;yPct:number};
 type ReferenceDraft=ColorValue&{xPct:number;yPct:number};
 type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
-type Sheet="materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|null;
+type Sheet="materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|null;
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
 type RecipeAction={kind:"recipe";recipeId:number;label:string;payload:{procedureId:number;sampleId?:number;cupSize:Cup;dropsPerMl:number;cupTenantMaterialId?:number;ingredients:{tenantMaterialId:number;drops:number}[]}};
 type StockAction=QuickAction|RecipeAction;
@@ -77,6 +77,7 @@ const inventory=trpc.pod.inventory.list.useQuery({artistId:proc?.artistId??undef
 const materialColorQuery=trpc.pod.inventory.materialColorSamples.useQuery({artistId:proc?.artistId??undefined},{enabled:!!procedureId});
 const sampleQuery=trpc.pod.session.listColorSamples.useQuery({procedureId},{enabled:!!procedureId});
 const recipeQuery=trpc.pod.session.listInkRecipes.useQuery({procedureId},{enabled:!!procedureId});
+const visualLayerQuery=trpc.pod.session.listVisualLayers.useQuery({procedureId},{enabled:!!procedureId});
 const utils=trpc.useUtils();
 
 const consumeAuto=trpc.pod.session.consumeAuto.useMutation();
@@ -84,6 +85,9 @@ const revert=trpc.pod.session.revertConsumption.useMutation();
 const saveSampleMutation=trpc.pod.session.saveColorSample.useMutation();
 const saveMaterialColorMutation=trpc.pod.inventory.saveMaterialColorSample.useMutation();
 const saveRecipeResultMutation=trpc.pod.session.saveInkRecipeResult.useMutation();
+const updateVisualLayerMutation=trpc.pod.session.updateVisualLayer.useMutation();
+const addVisualLayerMutation=trpc.pod.session.addVisualLayer.useMutation();
+const removeVisualLayerMutation=trpc.pod.session.removeVisualLayer.useMutation();
 const saveRecipeMutation=trpc.pod.session.saveInkRecipe.useMutation();
 const revertRecipeMutation=trpc.pod.session.revertInkRecipe.useMutation();
 const pauseMutation=trpc.pod.session.startPause.useMutation();
@@ -115,12 +119,17 @@ const [cup,setCup]=useState<Cup>("M"),[ings,setIngs]=useState<Ingredient[]>([]),
 const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoStack]=useState<StockAction[]>([]),[flash,setFlash]=useState<string|null>(null);
 const [charged,setCharged]=useState(""),[payment,setPayment]=useState<"pix"|"dinheiro"|"credito"|"debito"|"transferencia">("pix");
 const [photoTarget,setPhotoTarget]=useState<PhotoTarget|null>(null),[photoSrc,setPhotoSrc]=useState<string|null>(null);
-const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null),colorPhotoInput=useRef<HTMLInputElement>(null);
+const [newLayerType,setNewLayerType]=useState<"contrast"|"stencil"|"stencil_overlay"|"image">("contrast"),[newLayerName,setNewLayerName]=useState("Contraste");
+const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null),colorPhotoInput=useRef<HTMLInputElement>(null),layerImageInput=useRef<HTMLInputElement>(null);
 const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pts=useRef(new Map<number,{x:number;y:number}>());
 const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false),samplerPointerActive=useRef(false);
 
 const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],lab:[Number(s.labL||0),Number(s.labA||0),Number(s.labB||0)],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
 const recipes=(recipeQuery.data||[]) as any[];
+const visualLayers=(visualLayerQuery.data||[]) as any[];
+const referenceLayer=visualLayers.find(l=>l.layerKey==="reference");
+const sampleLayer=visualLayers.find(l=>l.layerKey==="samples");
+const extraLayers=visualLayers.filter(l=>l.layerKey!=="reference"&&l.layerKey!=="samples");
 const totals=useMemo(()=>{const o:Record<string,number>={};for(const u of (session.data?.consumptions||[]) as any[]){if(u.status!=="consumido")continue;o[String(u.tenantMaterialId)]=(o[String(u.tenantMaterialId)]||0)+Number(u.quantity)}return o},[session.data?.consumptions]);
 const visibleRecipeColors=useMemo(()=>stock.filter(m=>m.kind==="ink"||m.kind==="diluent").filter(m=>{if(!familyFilter||m.kind==="diluent")return true;const stored=materialColorMap[m.id];return familyForColor(stored?.hex||m.color,stored)===familyFilter}),[stock,familyFilter,materialColorMap]);
 
