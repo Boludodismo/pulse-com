@@ -3,6 +3,7 @@ import {ArrowLeft,Home,Undo2,Redo2,Minus,Eye,EyeOff,Plus,Pause,Play,Package,Came
 import {toast} from "sonner";
 import {trpc} from "@/lib/trpc";
 import LocalLogin from "./LocalLogin";
+import TemporaryColorSampler, { type ColorValue } from "../components/session/TemporaryColorSampler";
 import "../components/session/cockpit-v2-lab.css";
 
 type Kind="cartridge"|"ink"|"diluent"|"ointment"|"protection"|"cup";
@@ -10,7 +11,9 @@ type Material={id:string;name:string;short:string;kind:Kind;unit:string;color?:s
 type Cup="P"|"M"|"G"|"GG";
 type Ingredient={materialId:string;drops:number};
 type View={x:number;y:number;scale:number;rotation:number};
-type Sample={id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];xPct:number;yPct:number};
+type Sample={id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];lab:[number,number,number];xPct:number;yPct:number};
+type ReferenceDraft=ColorValue&{xPct:number;yPct:number};
+type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
 type Sheet="materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|null;
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
 type RecipeAction={kind:"recipe";recipeId:number;label:string;payload:{procedureId:number;sampleId?:number;cupSize:Cup;dropsPerMl:number;cupTenantMaterialId?:number;ingredients:{tenantMaterialId:number;drops:number}[]}};
@@ -20,10 +23,20 @@ const CUP:Record<Cup,number>={P:.5,M:1,G:2,GG:4};
 const DROP=.05;
 const V0:View={x:0,y:0,scale:1,rotation:0};
 const GRAYS=["#050505","#191919","#333333","#525252","#737373","#969696","#b8b8b8","#dddddd","#ffffff"];
+const COLOR_FAMILIES=[
+  {key:"C",label:"Ciano",hex:"#00AEEF"},
+  {key:"M",label:"Magenta",hex:"#EC008C"},
+  {key:"Y",label:"Amarelo",hex:"#FFF200"},
+  {key:"K",label:"Preto",hex:"#111111"},
+  {key:"W",label:"Branco",hex:"#FFFFFF"},
+] as const;
 
 function timer(s:number){const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return [h,m,x].map(v=>String(v).padStart(2,"0")).join(":")}
 function hex(r:number,g:number,b:number){return "#"+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,"0")).join("")}
 function cmyk(r:number,g:number,b:number):[number,number,number,number]{const R=r/255,G=g/255,B=b/255,k=1-Math.max(R,G,B);if(k>.999)return[0,0,0,100];return[Math.round((1-R-k)/(1-k)*100),Math.round((1-G-k)/(1-k)*100),Math.round((1-B-k)/(1-k)*100),Math.round(k*100)]}
+function lab(r:number,g:number,b:number):[number,number,number]{const lin=(v:number)=>{v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4)};const R=lin(r),G=lin(g),B=lin(b);let x=(R*.4124564+G*.3575761+B*.1804375)/.95047,y=(R*.2126729+G*.7151522+B*.072175),z=(R*.0193339+G*.1191920+B*.9503041)/1.08883;const f=(v:number)=>v>.008856?Math.cbrt(v):(7.787*v)+(16/116);x=f(x);y=f(y);z=f(z);return[Math.max(0,Math.min(100,116*y-16)),500*(x-y),200*(y-z)]}
+function parseHexColor(value?:string){if(!value||!/^#[0-9a-f]{6}$/i.test(value))return null;return[parseInt(value.slice(1,3),16),parseInt(value.slice(3,5),16),parseInt(value.slice(5,7),16)] as [number,number,number]}
+function familyForColor(hexValue?:string,stored?:any){let values:[number,number,number,number]|null=null;if(stored)values=[Number(stored.cyan),Number(stored.magenta),Number(stored.yellow),Number(stored.black)];else{const rgb=parseHexColor(hexValue);if(rgb)values=cmyk(...rgb)}if(!values)return null;const [C,M,Y,K]=values;if(K>=65)return"K";const rgb=parseHexColor(stored?.hex||hexValue);if(rgb&&rgb.every(v=>v>=225))return"W";const max=Math.max(C,M,Y);if(max===C)return"C";if(max===M)return"M";return"Y"}
 function inferKind(name:string,category?:string|null):Kind{const t=((category||"")+" "+name).toLowerCase();if(/batoque|ink\s*cap|inkcap/.test(t))return"cup";if(/diluent|diluente|mixing|solucao de mistura/.test(t))return"diluent";if(/tinta|pigment|dynamic|electric ink|\bink\b/.test(t))return"ink";if(/cartucho|agulha|needle|round liner|round shader|magnum|\brl\b|\brs\b/.test(t))return"cartridge";if(/vaselina|butter|pomada|karit|slip/.test(t))return"ointment";return"protection"}
 function guessColor(name:string){const t=name.toLowerCase();if(/white|branco/.test(t))return"#f4f4f5";if(/black|preto/.test(t))return"#111111";if(/navy|marinho/.test(t))return"#14213d";if(/orange|laranja/.test(t))return"#f97316";if(/olive|oliva/.test(t))return"#65743a";if(/red|vermelh/.test(t))return"#b91c1c";if(/blue|azul/.test(t))return"#2563eb";if(/green|verde/.test(t))return"#16a34a";if(/yellow|amarel/.test(t))return"#eab308";return undefined}
 function shortName(name:string,configuration?:string|null){if(configuration?.trim())return configuration.trim().slice(0,7).toUpperCase();const m=name.toUpperCase().match(/\b\d{1,2}(?:RL|RS|M1|CM|RM)\b/);if(m)return m[0];return name.replace(/[^A-Za-z0-9]/g,"").slice(0,4).toUpperCase()||"ITEM"}
