@@ -18,3 +18,15 @@ export function inkStockQuantity(unit: string, count: number, mode: 'drops' | 'c
   if (u.includes('gota') || ['drop', 'drops', 'gt'].includes(u)) return (ml * SESSION_DROPS_PER_ML).toFixed(3);
   return '';
 }
+
+// The stock item's size is independent from the ink conversion defaults.
+export function sessionCupSizeLabel(m: QuantityMaterial): string | undefined {
+  return m.configuration?.trim() || m.name.toUpperCase().match(/\b(PP|GG|P|M|G)\b/)?.[1];
+}
+export function sessionMaterialName(m: QuantityMaterial): string {
+  if (!isSessionCup(m)) return m.name;
+  const name = m.name.replace(/\s*[—–-]\s*\d+\s*(?:un|unidades)\s*$/i, '').trim();
+  const size = sessionCupSizeLabel(m);
+  return size && !name.toUpperCase().split(/\s+/).includes(size.toUpperCase())
+    ? `${name} · ${size}` : name;
+}

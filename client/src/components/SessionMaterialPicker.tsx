@@ -1,3 +1,4 @@
+import { sessionMaterialName, isSessionCup, sessionCupSizeLabel } from "@shared/sessionInkQuantity";
 import { useState } from "react";
 import { Search, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -49,9 +50,9 @@ export default function SessionMaterialPicker({ materials, onSelect, disabled, m
         {matches.slice(0, 40).map(material => <button type="button" key={material.id}
           className="w-full text-left rounded-md p-3 min-h-14 hover:bg-accent border-b last:border-0"
           onClick={() => { onSelect(material); setSearch(""); setOpen(false); }}>
-          <span className="block text-sm font-medium break-words">{material.name}</span>
+          <span className="block text-sm font-medium break-words">{sessionMaterialName(material)}</span>
           <span className="block text-xs text-muted-foreground break-words">
-            {[material.brand, material.configuration, material.ownerArtistId == null ? "Estúdio" : "Artista"].filter(Boolean).join(" · ")}
+            {[material.brand, isSessionCup(material) ? `Tamanho: ${sessionCupSizeLabel(material) || "não informado"}` : material.configuration, material.ownerArtistId == null ? "Estúdio" : "Artista"].filter(Boolean).join(" · ")}
             {" · Saldo: "}{formatMaterialQuantity(material.currentQuantity)} {material.unit}{" · #"}{material.id}
           </span>
         </button>)}

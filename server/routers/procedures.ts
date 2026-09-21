@@ -1,3 +1,4 @@
+import { sessionMaterialName } from "../../shared/sessionInkQuantity";
 import { finalizationPreview, finalizeSession } from "../sessionFinalization";
 import { finalizeSessionInput, readFinalization } from "../../shared/sessionFinalization";
 import { preparationSchema, preparationRgb, readPreparation, validatePreparationMaterial, validateRecipeMaterial } from "../../shared/sessionPreparation";
@@ -195,7 +196,7 @@ export const proceduresRouter = router({
             for (const item of preparation.materials) {
               const material = materials.get(item.tenantMaterialId)!;
               validatePreparationMaterial(item, material);
-              item.name = material.name; item.unit = material.unit;
+              item.name = sessionMaterialName(material); item.unit = material.unit;
             }
             for (const color of preparation.colors) for (const item of color.ingredients) {
               const material = materials.get(item.tenantMaterialId)!;

@@ -1,3 +1,4 @@
+import { isSessionCup, sessionCupSizeLabel, sessionMaterialName } from "@shared/sessionInkQuantity";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import SessionMaterialPicker, {
@@ -22,6 +23,7 @@ export default function PreparationMaterials({
   onChange: (value: SessionPreparation["materials"]) => void;
 }) {
   const [selected, setSelected] = useState<SessionMaterialOption | null>(null);
+  const [editingMaterialId, setEditingMaterialId] = useState<number | null>(null);
   const [quantity, setQuantity] = useState("1");
   const [showKits, setShowKits] = useState(false);
   const kits = trpc.pod.planning.kits.list.useQuery(undefined, {
@@ -29,6 +31,7 @@ export default function PreparationMaterials({
   });
   function select(material: SessionMaterialOption) {
     setSelected(material);
+    setEditingMaterialId(value.some(i => i.tenantMaterialId === material.id) ? material.id : null);
     setQuantity(
       value.find(i => i.tenantMaterialId === material.id)?.quantity ||
         defaultSessionQuantity(material)
@@ -47,13 +50,18 @@ export default function PreparationMaterials({
       />
       {selected && (
         <div className="border rounded-lg p-3 space-y-3">
-          <p className="font-medium">{selected.name}</p>
+          <p className="font-medium">{sessionMaterialName(selected)}</p>
           <SessionMaterialQuantity
             key={selected.id}
             material={selected}
             value={quantity}
             onChange={setQuantity}
             planning
+            materials={materials.filter(m => m.id === selected.id || m.id === editingMaterialId || !value.some(i => i.tenantMaterialId === m.id))}
+            onMaterialChange={id => {
+              const material = materials.find(m => m.id === Number(id));
+              if (material) setSelected(material);
+            }}
           />
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setSelected(null)}>
@@ -63,7 +71,7 @@ export default function PreparationMaterials({
               disabled={
                 !preparationMaterial.safeParse({
                   tenantMaterialId: selected.id,
-                  name: selected.name,
+                  name: sessionMaterialName(selected),
                   unit: selected.unit,
                   quantity,
                 }).success
@@ -71,18 +79,18 @@ export default function PreparationMaterials({
               onClick={() => {
                 const next = {
                   tenantMaterialId: selected.id,
-                  name: selected.name,
+                  name: sessionMaterialName(selected),
                   unit: selected.unit,
                   quantity,
                 };
                 onChange([
-                  ...value.filter(i => i.tenantMaterialId !== selected.id),
+                  ...value.filter(i => i.tenantMaterialId !== selected.id && i.tenantMaterialId !== editingMaterialId),
                   next,
                 ]);
                 setSelected(null);
               }}
             >
-              {value.some(i => i.tenantMaterialId === selected.id)
+              {(editingMaterialId !== null || value.some(i => i.tenantMaterialId === selected.id))
                 ? "Atualizar quantidade"
                 : "Adicionar ao planejamento"}
             </Button>
@@ -94,7 +102,8 @@ export default function PreparationMaterials({
           key={item.tenantMaterialId}
           className="border rounded-lg p-3 space-y-2"
         >
-          <p className="font-medium break-words">{item.name}</p>
+          <p className="font-medium break-words">{sessionMaterialName(materials.find(m => m.id === item.tenantMaterialId) || item)}</p>
+          {isSessionCup(materials.find(m => m.id === item.tenantMaterialId) || item) && <p className="text-xs text-muted-foreground">Tamanho: {sessionCupSizeLabel(materials.find(m => m.id === item.tenantMaterialId) || item) || "não informado"} · Contagem por unidade</p>}
           <p>
             {Number(item.quantity).toLocaleString("pt-BR")} {item.unit}
           </p>

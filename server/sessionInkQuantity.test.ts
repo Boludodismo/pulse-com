@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { inkStockQuantity, sessionCupSize, isSessionCup, isSessionInk } from '../shared/sessionInkQuantity';
+import { inkStockQuantity, sessionCupSize, sessionCupSizeLabel, sessionMaterialName, isSessionCup, isSessionInk } from '../shared/sessionInkQuantity';
 describe('session ink consumption in inventory units', () => {
   it('converts drops to ml without consuming an entire bottle', () => {
     expect(inkStockQuantity('ml', 1, 'drops', 'M')).toBe('0.050');
@@ -17,6 +17,15 @@ describe('session ink consumption in inventory units', () => {
   it('rejects invalid counts and unsupported inventory units', () => {
     for (const n of [0,-1,1.5,NaN,Infinity]) expect(inkStockQuantity('ml',n,'cup','M')).toBe('');
     expect(inkStockQuantity('frasco',1,'drops','M')).toBe('');
+  });
+  it('shows the registered cup size without confusing packaging or inventing capacity', () => {
+    expect(sessionMaterialName({name:'Batoque descartável — 100 un',configuration:'PP',unit:'un'})).toBe('Batoque descartável · PP');
+    expect(sessionCupSizeLabel({name:'Batoque PP',unit:'un'})).toBe('PP');
+    expect(sessionCupSize({name:'Batoque PP',unit:'un'})).toBeUndefined();
+    expect(sessionMaterialName({name:'Batoque P',configuration:'P',unit:'un'})).toBe('Batoque P');
+    expect(sessionCupSizeLabel({name:'Batoque descartável — 100 un',unit:'un'})).toBeUndefined();
+    expect(sessionMaterialName({name:'Batoque',configuration:'12 mm',unit:'un'})).toBe('Batoque · 12 mm');
+    expect(sessionMaterialName({name:'Preto Linha — 240 ml',unit:'ml'})).toBe('Preto Linha — 240 ml');
   });
   it('keeps cap items separate from ink and reads their exact size', () => {
     const m={name:'Ink Cap Electric Ink GG',unit:'un'};

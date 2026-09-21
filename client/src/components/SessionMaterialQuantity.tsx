@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { inkStockQuantity, isSessionCup, isSessionInk, sessionCupSize, SESSION_CUP_ML, type SessionCupSize, type QuantityMaterial } from '@shared/sessionInkQuantity';
+import { inkStockQuantity, isSessionCup, isSessionInk, sessionCupSizeLabel, sessionMaterialName, SESSION_CUP_ML, type SessionCupSize, type QuantityMaterial } from '@shared/sessionInkQuantity';
 
 type Props = { planning?: boolean; material: QuantityMaterial; value: string; onChange: (quantity: string) => void; disabled?: boolean; materials?: QuantityMaterial[]; onMaterialChange?: (id: string) => void };
 export default function SessionMaterialQuantity({material,value,onChange,disabled,materials=[],onMaterialChange,planning=false}: Props) {
@@ -8,13 +8,14 @@ export default function SessionMaterialQuantity({material,value,onChange,disable
   const [size,setSize] = useState<SessionCupSize|'custom'>('M');
   const [customMl,setCustomMl] = useState('');
   const [count,setCount] = useState(() => String(Math.round(Number(value) * (material.unit.toLowerCase() === 'ml' ? 20 : 1)) || 1));
-  const cup = isSessionCup(material), ink = isSessionInk(material), actualSize = sessionCupSize(material);
+  const cup = isSessionCup(material), ink = isSessionInk(material), actualSize = sessionCupSizeLabel(material);
   const control = 'w-full min-h-11 rounded-md border border-input bg-background px-3 text-base';
   const update = (n: string, m=mode, s=size) => { setCount(n); onChange(m === 'base' ? n : inkStockQuantity(material.unit, Number(n), m, s==='custom'?Number(customMl):s)); };
   return <div className="space-y-2 min-w-0">
     {cup && <label className="block text-xs">Tamanho do batoque
-      {onMaterialChange ? <select className={control} disabled={disabled} value={String(material.id)} onChange={e=>onMaterialChange(e.target.value)}>{materials.filter(isSessionCup).map(m=><option key={String(m.id)} value={String(m.id)}>{m.name}{m.configuration ? ' · '+m.configuration : ''}</option>)}</select> : <p>{actualSize || material.configuration || 'Conforme o material selecionado'}</p>}
-      {actualSize && <p className="text-xs text-muted-foreground">Capacidade usada na sessão: {SESSION_CUP_ML[actualSize]} ml</p>}
+      {onMaterialChange ? <select className={control} disabled={disabled} value={String(material.id)} onChange={e=>onMaterialChange(e.target.value)}>{materials.filter(isSessionCup).map(m=><option key={String(m.id)} value={String(m.id)}>{sessionMaterialName(m)}{!sessionCupSizeLabel(m) ? ' · tamanho não informado' : ''}</option>)}</select> : <p>{actualSize || 'Tamanho não informado no cadastro'}</p>}
+      <p className="text-xs text-muted-foreground">Contagem por unidade: 4 un = 4 batoques. Cada tamanho tem seu próprio saldo. A quantidade da embalagem não multiplica o uso.</p>
+      {!actualSize && <p className="text-xs text-amber-500">Selecione um batoque com tamanho cadastrado ou informe o tamanho em Estoque → Editar material.</p>}
     </label>}
     {ink && <>
       <label className="block text-xs">Medida da tinta<select className={control} disabled={disabled} value={mode} onChange={e=>{const next=e.target.value as typeof mode;setMode(next);update('1',next);}}><option value="drops">Gotas</option><option value="cup">Batoque cheio</option><option value="base">Unidade do estoque ({material.unit})</option></select></label>
