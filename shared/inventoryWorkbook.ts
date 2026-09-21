@@ -1,7 +1,7 @@
 import {INVENTORY_COLUMNS,cleanCell,type ImportCells} from './inventorySpreadsheet';
 export async function readInventoryWorkbook(bytes:ArrayBuffer):Promise<ImportCells[]>{
  const XLSX=await import('xlsx');
- const book=XLSX.read(bytes,{type:'array',raw:true,cellDates:false,cellNF:true,sheetRows:102});
+ const book=XLSX.read(bytes,{type:'array',codepage:65001,raw:true,cellDates:false,cellNF:true,sheetRows:102});
  const sheet=book.Sheets.Leitura||book.Sheets[book.SheetNames[0]];
  if(!sheet||!sheet['!ref'])throw new Error('Planilha vazia.');
  const range=XLSX.utils.decode_range(sheet['!ref']);

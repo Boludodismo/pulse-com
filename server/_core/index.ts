@@ -1,3 +1,4 @@
+import { INVENTORY_COLUMNS } from "../../shared/inventorySpreadsheet";
 import { ensureAppointmentKitSchema } from "./appointmentKitSchema";
 import { ensureInventoryWorkflowSchema } from "./inventoryWorkflowSchema";
 import {ensureInventoryTraceSchema} from "./inventoryTraceSchema";
@@ -64,6 +65,16 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // Lightweight health endpoint for hosting platforms.
+  app.get("/api/inventory-template.xlsx", async (_req, res) => {
+    try {
+      const XLSX = await import("xlsx");
+      const book = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([INVENTORY_COLUMNS]), "Leitura");
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", 'attachment; filename="Tatuei_Modelo_Materiais.xlsx"');
+      res.send(XLSX.write(book, {type:"buffer", bookType:"xlsx"}));
+    } catch { res.status(500).send("Não foi possível gerar o modelo."); }
+  });
   app.get("/api/health", (_req, res) => {
     res.status(200).json({ ok: true, service: "pod-crm", timestamp: new Date().toISOString() });
   });

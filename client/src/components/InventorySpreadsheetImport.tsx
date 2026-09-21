@@ -105,16 +105,6 @@ export default function InventorySpreadsheetImport({
       toast.error((e as Error).message);
     }
   }
-  async function template() {
-    const XLSX = await import("xlsx");
-    const b = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      b,
-      XLSX.utils.aoa_to_sheet([INVENTORY_COLUMNS]),
-      "Leitura"
-    );
-    XLSX.writeFile(b, "Tatuei_Modelo_Materiais.xlsx");
-  }
   function validate(r: Row) {
     if (r.action === "skip" || r.done) return null;
     try {
@@ -231,9 +221,7 @@ export default function InventorySpreadsheetImport({
           quantidade e preserva lote e validade. Atualização cadastral preenche
           somente campos não vazios e preserva saldo, lotes e custos. Código de barras, Anvisa e observações são preservados nas notas ao cadastrar ou atualizar. O número de Anvisa é apenas transcrito, sem verificação de regularidade.
         </p>
-        <Button variant="outline" onClick={() => void template()}>
-          Baixar modelo XLSX
-        </Button>
+        <Button variant="outline" asChild><a href="/api/inventory-template.xlsx" download>Baixar modelo XLSX</a></Button>
         <label className="block">
           Proprietário do estoque
           <select
