@@ -74,6 +74,7 @@ const session=trpc.pod.session.get.useQuery({procedureId},{enabled:!!procedureId
 const proc=session.data?.procedure;
 const client=trpc.clients.getById.useQuery({id:Number(proc?.clientId||0)},{enabled:!!proc?.clientId});
 const inventory=trpc.pod.inventory.list.useQuery({artistId:proc?.artistId??undefined},{enabled:!!procedureId});
+const materialColorQuery=trpc.pod.inventory.materialColorSamples.useQuery({artistId:proc?.artistId??undefined},{enabled:!!procedureId});
 const sampleQuery=trpc.pod.session.listColorSamples.useQuery({procedureId},{enabled:!!procedureId});
 const recipeQuery=trpc.pod.session.listInkRecipes.useQuery({procedureId},{enabled:!!procedureId});
 const utils=trpc.useUtils();
@@ -81,6 +82,8 @@ const utils=trpc.useUtils();
 const consumeAuto=trpc.pod.session.consumeAuto.useMutation();
 const revert=trpc.pod.session.revertConsumption.useMutation();
 const saveSampleMutation=trpc.pod.session.saveColorSample.useMutation();
+const saveMaterialColorMutation=trpc.pod.inventory.saveMaterialColorSample.useMutation();
+const saveRecipeResultMutation=trpc.pod.session.saveInkRecipeResult.useMutation();
 const saveRecipeMutation=trpc.pod.session.saveInkRecipe.useMutation();
 const revertRecipeMutation=trpc.pod.session.revertInkRecipe.useMutation();
 const pauseMutation=trpc.pod.session.startPause.useMutation();
@@ -90,6 +93,7 @@ const uploadImage=trpc.procedures.uploadImage.useMutation();
 const finalize=trpc.procedures.finalize.useMutation();
 
 const stock=useMemo(()=>((inventory.data||[]) as any[]).map(toMaterial),[inventory.data]);
+const materialColorMap=useMemo(()=>{const map:Record<string,any>={};for(const row of (materialColorQuery.data||[]) as any[])map[String(row.tenantMaterialId)]=row;return map},[materialColorQuery.data]);
 const [active,setActive]=useState<string[]>([]);
 useEffect(()=>{if(active.length||!stock.length)return;const planned=(session.data?.plannedMaterials||[]).map((p:any)=>String(p.tenantMaterialId||"")).filter(Boolean);setActive((planned.length?planned:stock.slice(0,6).map(m=>m.id)))},[stock,session.data?.plannedMaterials,active.length]);
 const mats=useMemo(()=>active.map(x=>stock.find(m=>m.id===x)).filter(Boolean) as Material[],[active,stock]);
@@ -105,18 +109,20 @@ const [vu,setVu]=useState<View[]>([]),[vredo,setVredo]=useState<View[]>([]);
 const [lmin,setLmin]=useState(false),[rmin,setRmin]=useState(false),[lex,setLex]=useState(false),[rex,setRex]=useState(false);
 const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=useState(1),[rscale,setRscale]=useState(1);
 const [refOn,setRefOn]=useState(true),[refOp,setRefOp]=useState(1),[markOn,setMarkOn]=useState(true),[markOp,setMarkOp]=useState(1);
-const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null);
+const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null);
 const [sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null>(null),[note,setNote]=useState("");
-const [cup,setCup]=useState<Cup>("M"),[ings,setIngs]=useState<Ingredient[]>([]);
+const [cup,setCup]=useState<Cup>("M"),[ings,setIngs]=useState<Ingredient[]>([]),[familyFilter,setFamilyFilter]=useState<string|null>(null);
 const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoStack]=useState<StockAction[]>([]),[flash,setFlash]=useState<string|null>(null);
 const [charged,setCharged]=useState(""),[payment,setPayment]=useState<"pix"|"dinheiro"|"credito"|"debito"|"transferencia">("pix");
-const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null);
+const [photoTarget,setPhotoTarget]=useState<PhotoTarget|null>(null),[photoSrc,setPhotoSrc]=useState<string|null>(null);
+const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null),colorPhotoInput=useRef<HTMLInputElement>(null);
 const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pts=useRef(new Map<number,{x:number;y:number}>());
-const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false);
+const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false),samplerPointerActive=useRef(false);
 
-const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
+const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],lab:[Number(s.labL||0),Number(s.labA||0),Number(s.labB||0)],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
 const recipes=(recipeQuery.data||[]) as any[];
 const totals=useMemo(()=>{const o:Record<string,number>={};for(const u of (session.data?.consumptions||[]) as any[]){if(u.status!=="consumido")continue;o[String(u.tenantMaterialId)]=(o[String(u.tenantMaterialId)]||0)+Number(u.quantity)}return o},[session.data?.consumptions]);
+const visibleRecipeColors=useMemo(()=>stock.filter(m=>m.kind==="ink"||m.kind==="diluent").filter(m=>{if(!familyFilter||m.kind==="diluent")return true;const stored=materialColorMap[m.id];return familyForColor(stored?.hex||m.color,stored)===familyFilter}),[stock,familyFilter,materialColorMap]);
 
 function vset(n:View){setVu(h=>[...h,vr.current].slice(-30));setVredo([]);setView(n)}
 function vundo(){setVu(h=>{const p=h[h.length-1];if(!p)return h;setVredo(r=>[vr.current,...r]);setView(p);return h.slice(0,-1)})}
