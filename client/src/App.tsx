@@ -49,6 +49,7 @@ import SaaSMetrics from "./pages/SaaSMetrics";
 import AcceptInvitation from "./pages/AcceptInvitation";
 import AcceptPilotInvitation from "./pages/AcceptPilotInvitation";
 import SessionCockpitLab from "./pages/SessionCockpitLab";
+import SessionCockpitLiveLab from "./pages/SessionCockpitLiveLab";
 
 function StockEntry(){
   const {user}=useAuth();
@@ -180,6 +181,7 @@ function Router() {
       
       {/* Laboratorio Cockpit V2 - isolado de producao */}
       <Route path="/lab/session-cockpit-v2" component={SessionCockpitLab} />
+      <Route path="/lab/session-cockpit-v2-live" component={SessionCockpitLiveLab} />
 
       {/* Rotas POD Session */}
       <Route path="/procedures" component={ProcedureList} />
