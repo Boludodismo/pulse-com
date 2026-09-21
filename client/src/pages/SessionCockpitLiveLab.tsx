@@ -1,5 +1,5 @@
 import {useEffect,useMemo,useRef,useState,type CSSProperties,type PointerEvent as RP,type WheelEvent as RW} from "react";
-import {ArrowLeft,Home,Undo2,Redo2,Minus,Eye,EyeOff,Plus,Pause,Play,Package,Camera,Square,StickyNote,RotateCcw,RotateCw,Palette,Pipette,X,Search,Droplets,Check,Layers3,ChevronLeft,ChevronRight} from "lucide-react";
+import {ArrowLeft,Home,Undo2,Redo2,Minus,Eye,EyeOff,Plus,Pause,Play,Package,Camera,Square,StickyNote,RotateCcw,RotateCw,Palette,Pipette,X,Search,Droplets,Check,Layers3,ChevronLeft,ChevronRight,Maximize2,Minimize2} from "lucide-react";
 import {toast} from "sonner";
 import {trpc} from "@/lib/trpc";
 import LocalLogin from "./LocalLogin";
@@ -111,6 +111,7 @@ useEffect(()=>{if(!run)return;const t=setInterval(()=>setSec(s=>s+1),1000);retur
 const [view,setView]=useState<View>(V0),vr=useRef(view);vr.current=view;
 const [vu,setVu]=useState<View[]>([]),[vredo,setVredo]=useState<View[]>([]);
 const [lmin,setLmin]=useState(false),[rmin,setRmin]=useState(false),[lex,setLex]=useState(false),[rex,setRex]=useState(false);
+const [focusMode,setFocusMode]=useState(false),[cleanMode,setCleanMode]=useState(false);
 const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=useState(1),[rscale,setRscale]=useState(1);
 const [layerLocal,setLayerLocal]=useState<Record<string,{opacity:number;isVisible:boolean}>>({});
 const [refOn,setRefOn]=useState(true),[refOp,setRefOp]=useState(1),[markOn,setMarkOn]=useState(true),[markOp,setMarkOp]=useState(1);
@@ -121,9 +122,9 @@ const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoSta
 const [charged,setCharged]=useState(""),[payment,setPayment]=useState<"pix"|"dinheiro"|"credito"|"debito"|"transferencia">("pix");
 const [photoTarget,setPhotoTarget]=useState<PhotoTarget|null>(null),[photoSrc,setPhotoSrc]=useState<string|null>(null);
 const [newLayerType,setNewLayerType]=useState<"contrast"|"stencil"|"stencil_overlay"|"image">("contrast"),[newLayerName,setNewLayerName]=useState("Contraste");
-const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null),colorPhotoInput=useRef<HTMLInputElement>(null),layerImageInput=useRef<HTMLInputElement>(null);
+const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null),colorPhotoInput=useRef<HTMLInputElement>(null),layerImageInput=useRef<HTMLInputElement>(null),cockpitRoot=useRef<HTMLDivElement>(null);
 const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pts=useRef(new Map<number,{x:number;y:number}>());
-const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false),samplerPointerActive=useRef(false);
+const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false),samplerPointerActive=useRef(false),samplePointerId=useRef<number|null>(null);
 
 const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],lab:[Number(s.labL||0),Number(s.labA||0),Number(s.labB||0)],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
 const recipes=(recipeQuery.data||[]) as any[];
@@ -244,22 +245,72 @@ async function confirmReferenceSample(){
   }catch(e:any){toast.error(e.message||"Não foi possível salvar essa cor.")}
 }
 function down(e:RP<HTMLDivElement>){
-  e.currentTarget.setPointerCapture(e.pointerId);pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(pts.current.size===1){start.current=vr.current;pstart.current={x:e.clientX,y:e.clientY};if(sampler){samplerPointerActive.current=true;readReferenceAt(e.clientX,e.clientY)}}
-  if(pts.current.size===2){multiTouch.current=true;samplerPointerActive.current=false;const[a,b]=[...pts.current.values()];base.current={v:vr.current,d:Math.hypot(b.x-a.x,b.y-a.y),a:Math.atan2(b.y-a.y,b.x-a.x),m:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}}}
+  e.preventDefault();
+  e.stopPropagation();
+  e.currentTarget.setPointerCapture(e.pointerId);
+  pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
+
+  if(pts.current.size===1){
+    pstart.current={x:e.clientX,y:e.clientY};
+    if(sampler){
+      samplePointerId.current=e.pointerId;
+      samplerPointerActive.current=true;
+      start.current=null;
+      readReferenceAt(e.clientX,e.clientY);
+      return;
+    }
+    start.current=vr.current;
+  }
+
+  if(pts.current.size===2){
+    multiTouch.current=true;
+    samplerPointerActive.current=false;
+    samplePointerId.current=null;
+    const[a,b]=[...pts.current.values()];
+    base.current={v:vr.current,d:Math.hypot(b.x-a.x,b.y-a.y),a:Math.atan2(b.y-a.y,b.x-a.x),m:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}};
+  }
 }
 function move(e:RP<HTMLDivElement>){
-  if(!pts.current.has(e.pointerId))return;pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});const p=[...pts.current.values()];
-  if(p.length===2&&base.current){const[a,b]=p,z=base.current,d=Math.hypot(b.x-a.x,b.y-a.y),ang=Math.atan2(b.y-a.y,b.x-a.x),m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};setView({...z.v,scale:Math.max(.2,Math.min(5,z.v.scale*d/z.d)),rotation:z.v.rotation+(ang-z.a)*180/Math.PI,x:z.v.x+m.x-z.m.x,y:z.v.y+m.y-z.m.y})}
-  else if(p.length===1&&sampler&&samplerPointerActive.current&&!multiTouch.current)readReferenceAt(e.clientX,e.clientY);
-  else if(p.length===1&&!sampler&&start.current&&pstart.current)setView({...start.current,x:start.current.x+e.clientX-pstart.current.x,y:start.current.y+e.clientY-pstart.current.y});
+  if(!pts.current.has(e.pointerId))return;
+  e.preventDefault();
+  e.stopPropagation();
+  pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  const p=[...pts.current.values()];
+
+  if(p.length===2&&base.current){
+    const[a,b]=p,z=base.current,d=Math.hypot(b.x-a.x,b.y-a.y),ang=Math.atan2(b.y-a.y,b.x-a.x),m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    setView({...z.v,scale:Math.max(.2,Math.min(5,z.v.scale*d/z.d)),rotation:z.v.rotation+(ang-z.a)*180/Math.PI,x:z.v.x+m.x-z.m.x,y:z.v.y+m.y-z.m.y});
+    return;
+  }
+
+  if(sampler){
+    if(!multiTouch.current&&samplerPointerActive.current&&samplePointerId.current===e.pointerId){
+      readReferenceAt(e.clientX,e.clientY);
+    }
+    return;
+  }
+
+  if(p.length===1&&start.current&&pstart.current){
+    setView({...start.current,x:start.current.x+e.clientX-pstart.current.x,y:start.current.y+e.clientY-pstart.current.y});
+  }
 }
 function up(e:RP<HTMLDivElement>){
-  pts.current.delete(e.pointerId);samplerPointerActive.current=false;
-  if(pts.current.size===0){if(!sampler&&start.current&&JSON.stringify(start.current)!==JSON.stringify(vr.current)){setVu(h=>[...h,start.current!]);setVredo([])}start.current=null;pstart.current=null;base.current=null;multiTouch.current=false}
+  e.preventDefault();
+  e.stopPropagation();
+  pts.current.delete(e.pointerId);
+  if(samplePointerId.current===e.pointerId){
+    samplePointerId.current=null;
+    samplerPointerActive.current=false;
+  }
+  if(pts.current.size===0){
+    if(!sampler&&start.current&&JSON.stringify(start.current)!==JSON.stringify(vr.current)){
+      setVu(h=>[...h,start.current!]);setVredo([]);
+    }
+    start.current=null;pstart.current=null;base.current=null;multiTouch.current=false;samplerPointerActive.current=false;samplePointerId.current=null;
+  }
 }
-function wheel(e:RW<HTMLDivElement>){e.preventDefault();vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
-useEffect(()=>{const el=stage.current as any;if(!el)return;let st:View|null=null;const a=(e:any)=>{e.preventDefault();st={...vr.current}},b=(e:any)=>{if(st){e.preventDefault();setView({...st,scale:Math.max(.2,Math.min(5,st.scale*(e.scale||1))),rotation:st.rotation+(e.rotation||0)})}},c=(e:any)=>{e.preventDefault();if(st){setVu(h=>[...h,st!]);setVredo([])}st=null};el.addEventListener("gesturestart",a,{passive:false});el.addEventListener("gesturechange",b,{passive:false});el.addEventListener("gestureend",c,{passive:false});return()=>{el.removeEventListener("gesturestart",a);el.removeEventListener("gesturechange",b);el.removeEventListener("gestureend",c)}},[]);
+function wheel(e:RW<HTMLDivElement>){e.preventDefault();if(sampler)return;vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
+useEffect(()=>{const el=stage.current as any;if(!el)return;let st:View|null=null;const a=(e:any)=>{e.preventDefault();if(sampler&&pts.current.size<2)return;st={...vr.current}},b=(e:any)=>{if(st){e.preventDefault();setView({...st,scale:Math.max(.2,Math.min(5,st.scale*(e.scale||1))),rotation:st.rotation+(e.rotation||0)})}},end=(e:any)=>{e.preventDefault();if(st){setVu(h=>[...h,st!]);setVredo([])}st=null};el.addEventListener("gesturestart",a,{passive:false});el.addEventListener("gesturechange",b,{passive:false});el.addEventListener("gestureend",end,{passive:false});return()=>{el.removeEventListener("gesturestart",a);el.removeEventListener("gesturechange",b);el.removeEventListener("gestureend",end)}},[sampler]);
 
 async function toggleTimer(){
   try{if(run){await pauseMutation.mutateAsync({procedureId});setRun(false)}else{await resumeMutation.mutateAsync({procedureId});setRun(true)}await utils.pod.session.get.invalidate({procedureId})}catch(e:any){toast.error(e.message)}
