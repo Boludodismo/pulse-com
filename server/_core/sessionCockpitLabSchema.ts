@@ -90,6 +90,57 @@ export async function ensureSessionCockpitLabSchema() {
       KEY procedure_ink_recipe_items_consumption_idx(studioId,consumptionId)
     ) ENGINE=InnoDB`);
 
+    await connection.query(`CREATE TABLE IF NOT EXISTS tenant_material_color_samples (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      studioId INT NOT NULL,
+      tenantMaterialId INT NOT NULL,
+      artistId INT NULL,
+      source VARCHAR(24) NOT NULL DEFAULT 'photo',
+      hex VARCHAR(9) NOT NULL,
+      red INT NOT NULL,
+      green INT NOT NULL,
+      blue INT NOT NULL,
+      cyan INT NOT NULL,
+      magenta INT NOT NULL,
+      yellow INT NOT NULL,
+      black INT NOT NULL,
+      labL DECIMAL(7,3) NOT NULL,
+      labA DECIMAL(7,3) NOT NULL,
+      labB DECIMAL(7,3) NOT NULL,
+      createdByUserId INT NOT NULL,
+      createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY tenant_material_color_sample_unique(studioId,tenantMaterialId),
+      KEY tenant_material_color_samples_artist_idx(studioId,artistId)
+    ) ENGINE=InnoDB`);
+
+    await connection.query(`CREATE TABLE IF NOT EXISTS procedure_ink_recipe_results (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      studioId INT NOT NULL,
+      recipeId INT NOT NULL,
+      procedureId INT NOT NULL,
+      clientId INT NOT NULL,
+      artistId INT NULL,
+      hex VARCHAR(9) NOT NULL,
+      red INT NOT NULL,
+      green INT NOT NULL,
+      blue INT NOT NULL,
+      cyan INT NOT NULL,
+      magenta INT NOT NULL,
+      yellow INT NOT NULL,
+      black INT NOT NULL,
+      labL DECIMAL(7,3) NOT NULL,
+      labA DECIMAL(7,3) NOT NULL,
+      labB DECIMAL(7,3) NOT NULL,
+      note VARCHAR(500) NULL,
+      createdByUserId INT NOT NULL,
+      createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY procedure_ink_recipe_result_unique(studioId,recipeId),
+      KEY procedure_ink_recipe_results_artist_idx(studioId,artistId,id),
+      KEY procedure_ink_recipe_results_procedure_idx(studioId,procedureId,id)
+    ) ENGINE=InnoDB`);
+
     const [columns] = await connection.query<RowDataPacket[]>(
       "SHOW COLUMNS FROM procedure_inventory_consumptions LIKE 'recipeId'"
     );
