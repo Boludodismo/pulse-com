@@ -967,9 +967,118 @@ export const podSaasRouter = router({
             inArray(procedureInkRecipeItems.recipeId, recipes.map(recipe => recipe.id)),
           ))
           .orderBy(asc(procedureInkRecipeItems.id));
+        const results = await database
+          .select()
+          .from(procedureInkRecipeResults)
+          .where(and(
+            eq(procedureInkRecipeResults.studioId, ctx.studioId),
+            inArray(procedureInkRecipeResults.recipeId, recipes.map(recipe => recipe.id)),
+          ));
         return recipes.map(recipe => ({
           ...recipe,
           items: items.filter(item => item.recipeId === recipe.id),
+          result: results.find(result => result.recipeId === recipe.id) ?? null,
+        }));
+      }),
+
+    saveInkRecipeResult: tenantProcedure
+      .input(z.object({
+        recipeId: z.number().int().positive(),
+        color: colorValueSchema,
+        note: z.string().trim().max(500).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const recipe = (await tx.select().from(procedureInkRecipes).where(and(
+            eq(procedureInkRecipes.id, input.recipeId),
+            eq(procedureInkRecipes.studioId, ctx.studioId),
+          )).limit(1))[0];
+          if (!recipe) throw new TRPCError({ code: "NOT_FOUND", message: "Mistura não encontrada." });
+          await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            recipe.procedureId,
+            ctx,
+          );
+
+          const existing = (await tx.select({ id: procedureInkRecipeResults.id })
+            .from(procedureInkRecipeResults)
+            .where(and(
+              eq(procedureInkRecipeResults.studioId, ctx.studioId),
+              eq(procedureInkRecipeResults.recipeId, recipe.id),
+            )).limit(1))[0];
+
+          const values = {
+            procedureId: recipe.procedureId,
+            clientId: recipe.clientId,
+            artistId: recipe.artistId,
+            hex: input.color.hex.toUpperCase(),
+            red: input.color.red,
+            green: input.color.green,
+            blue: input.color.blue,
+            cyan: input.color.cyan,
+            magenta: input.color.magenta,
+            yellow: input.color.yellow,
+            black: input.color.black,
+            labL: input.color.labL.toFixed(3),
+            labA: input.color.labA.toFixed(3),
+            labB: input.color.labB.toFixed(3),
+            note: input.note ?? null,
+            createdByUserId: ctx.user.id,
+          };
+
+          if (existing) {
+            await tx.update(procedureInkRecipeResults).set(values)
+              .where(and(
+                eq(procedureInkRecipeResults.id, existing.id),
+                eq(procedureInkRecipeResults.studioId, ctx.studioId),
+              ));
+            return { id: existing.id, recipeId: recipe.id, updated: true };
+          }
+
+          const inserted = await tx.insert(procedureInkRecipeResults).values({
+            studioId: ctx.studioId,
+            recipeId: recipe.id,
+            ...values,
+          });
+          const id = insertId(inserted);
+          if (!id) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar a amostra da mistura." });
+          return { id, recipeId: recipe.id, updated: false };
+        });
+      }),
+
+    recipeLibrary: tenantProcedure
+      .input(z.object({ artistId: z.number().int().positive().optional(), limit: z.number().int().min(1).max(100).default(30) }).optional())
+      .query(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod");
+        const database = await requireDatabase();
+        const artistId = input?.artistId ?? ctx.artistId ?? null;
+        assertOwnArtist(ctx, artistId);
+        const recipes = await database.select().from(procedureInkRecipes)
+          .where(and(
+            eq(procedureInkRecipes.studioId, ctx.studioId),
+            artistId == null ? undefined : eq(procedureInkRecipes.artistId, artistId),
+          ))
+          .orderBy(desc(procedureInkRecipes.id))
+          .limit(input?.limit ?? 30);
+        if (!recipes.length) return [];
+        const ids = recipes.map(recipe => recipe.id);
+        const items = await database.select().from(procedureInkRecipeItems)
+          .where(and(
+            eq(procedureInkRecipeItems.studioId, ctx.studioId),
+            inArray(procedureInkRecipeItems.recipeId, ids),
+          ))
+          .orderBy(asc(procedureInkRecipeItems.id));
+        const results = await database.select().from(procedureInkRecipeResults)
+          .where(and(
+            eq(procedureInkRecipeResults.studioId, ctx.studioId),
+            inArray(procedureInkRecipeResults.recipeId, ids),
+          ));
+        return recipes.map(recipe => ({
+          ...recipe,
+          items: items.filter(item => item.recipeId === recipe.id),
+          result: results.find(result => result.recipeId === recipe.id) ?? null,
         }));
       }),
 
