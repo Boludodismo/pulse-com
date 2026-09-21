@@ -511,7 +511,6 @@ export const procedureInventoryConsumptions = mysqlTable("procedure_inventory_co
 	artistId: int(),
 	tenantMaterialId: int().notNull(),
 	plannedMaterialId: int(),
-	recipeId: int(),
 	batchId: int(),
 	supplierNameSnapshot: varchar({ length: 255 }),
 	technicalSnapshot: text(),
