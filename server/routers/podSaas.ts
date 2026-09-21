@@ -28,6 +28,9 @@ import {
   materialCatalogItems,
   procedureInventoryConsumptions,
   procedurePauses,
+  procedureColorSamples,
+  procedureInkRecipes,
+  procedureInkRecipeItems,
   technicalProcedures,
   tenantInventoryMovements,
   tenantMaterials,
@@ -45,6 +48,35 @@ import { normalizeBrazilianPhone } from "../messaging/phone";
 const quantitySchema = z.string().regex(/^\d{1,9}(?:\.\d{1,3})?$/, "Informe uma quantidade positiva com até três casas decimais.");
 const costSchema = z.string().regex(/^\d{1,8}(?:\.\d{1,4})?$/, "Informe um custo não negativo com até quatro casas decimais.");
 const dateTimeSchema = z.string().datetime({ offset: true }).optional();
+
+const SESSION_CUP_CAPACITY_ML = { P: 0.5, M: 1, G: 2, GG: 4 } as const;
+type SessionCupSize = keyof typeof SESSION_CUP_CAPACITY_ML;
+
+function recipeStockQuantity(unit: string, drops: number, dropsPerMl: number) {
+  const normalized = unit.trim().toLowerCase();
+  const estimatedMl = drops / dropsPerMl;
+  if (normalized === "ml" || normalized.includes("mililit")) {
+    return { quantity: estimatedMl.toFixed(3), estimatedMl };
+  }
+  if (
+    normalized === "drop" ||
+    normalized === "drops" ||
+    normalized === "gt" ||
+    normalized.includes("gota")
+  ) {
+    return { quantity: drops.toFixed(3), estimatedMl };
+  }
+  throw new TRPCError({
+    code: "BAD_REQUEST",
+    message: "Para usar pigmentos em receitas, configure a unidade do material como ml ou gotas.",
+  });
+}
+
+function nextSessionCode(prefix: "C" | "M", previous?: string | null) {
+  const parsed = previous?.match(/(\d+)$/);
+  const next = parsed ? Number(parsed[1]) + 1 : 1;
+  return prefix + String(next).padStart(2, "0");
+}
 
 function nowSql() {
   return new Date().toISOString().slice(0, 19).replace("T", " ");
