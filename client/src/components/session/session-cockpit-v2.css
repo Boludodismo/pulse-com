@@ -166,3 +166,10 @@
   .cockpit-palette .palette-add{display:flex;align-items:center;gap:4px;flex-shrink:0;min-height:34px;}
   .cockpit-sheet.recipe-sheet{max-height:calc(100% - var(--cockpit-header-height) - var(--cockpit-footer-height) - 24px);}
 }
+
+/* Reserve a separate row for image controls; docks must not intercept their taps. */
+.cockpit-view-quick{left:50%;right:auto;transform:translateX(-50%);}
+.focus-entry-button{top:10px;right:8px;}
+.cockpit-dock{top:calc(var(--cockpit-header-height) + 60px);}
+.cockpit-anamnese{left:10px;transform:none;max-width:110px;}
+.cockpit-dock.minimized .dock-undo{display:none;}
