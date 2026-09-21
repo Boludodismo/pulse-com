@@ -86,6 +86,37 @@ async function startServer() {
       return res.status(404).json({ error: "Arquivo não encontrado." });
     }
   });
+  // Same-origin byte proxy used by the Cockpit color sampler.
+  // Safari blocks canvas pixel reads after a cross-origin redirect, even when
+  // the visible image itself loads correctly. This endpoint keeps the image
+  // response on the Tatuei origin so 5x5 sampling remains safe.
+  app.get("/api/storage-inline", async (req, res) => {
+    try {
+      const key = typeof req.query.key === "string" ? req.query.key : "";
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      if (!key || !token || !verifyStorageAccessToken(key, token)) {
+        return res.status(403).json({ error: "Acesso ao arquivo não autorizado." });
+      }
+
+      const { url } = await storageGet(key);
+      if (!url) return res.status(404).json({ error: "Arquivo indisponível." });
+
+      const upstream = await fetch(url);
+      if (!upstream.ok) {
+        return res.status(upstream.status).json({ error: "Imagem indisponível." });
+      }
+      const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      return res.status(200).send(bytes);
+    } catch (error) {
+      console.error("[Storage inline] Failed to proxy object", error);
+      return res.status(404).json({ error: "Arquivo não encontrado." });
+    }
+  });
+
   // Auth routes based on AUTH_MODE
   if (ENV.authMode === "local") {
     console.log("[Auth] Using local authentication mode");
