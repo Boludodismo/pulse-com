@@ -104,7 +104,8 @@ export default function Clients() {
             Gerencie todos os seus clientes em um só lugar
           </p>
         </div>
-        <div className="flex gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+          {['admin','superadmin'].includes(currentUser?.role||'')&&<Button variant="outline" size={isMobile ? "sm" : "default"} onClick={()=>setLocation('/clients/duplicates')}>Revisar duplicados</Button>}
           <Button variant="outline" size={isMobile ? "sm" : "default"} onClick={() => setLocation("/contacts/import-export")}>
             <ArrowUpDown className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Importar / Exportar</span>

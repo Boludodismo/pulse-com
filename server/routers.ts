@@ -10,6 +10,7 @@ import {studioRelationsRouter} from './routers/studioRelations';
 import { customerCareRouter } from "./routers/customerCare";
 import { quotesRouter } from "./routers/quotes";
 import { contactImportRouter } from "./routers/contactImport";
+import { clientMergeRouter } from "./routers/clientMerge";
 import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
 import { assertOwnArtist, isInventoryManager } from "./inventoryAccess";
 import { z } from "zod";
@@ -341,8 +342,16 @@ export const appRouter = router({
 
     getById: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
-        return await db.getClientById(input.id);
+      .query(async ({ ctx,input }) => {
+        const client=await db.getClientById(input.id);
+        if(client && ctx.user.role!=='superadmin' && client.studioId!==ctx.user.studioId) throw new TRPCError({code:'FORBIDDEN'});
+        if(!client)return null;
+        let mergedIntoId:number|null=null;
+        if(client.isArchived) {
+          const {findMergeDestination}=await import('./clientMerge/destination');
+          mergedIntoId=await findMergeDestination(client.id,client.studioId);
+        }
+        return {...client,mergedIntoId};
       }),
 
     create: protectedProcedure
@@ -465,6 +474,7 @@ export const appRouter = router({
         const clientBefore = await db.getClientById(input.id);
         
         if (!clientBefore) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+        if (clientBefore.isArchived) throw new TRPCError({code:'CONFLICT',message:'Este cadastro está arquivado. Abra o cadastro principal para editar.'});
         if (ctx.user.role !== "superadmin" && clientBefore.studioId !== ctx.user.studioId)
           throw new TRPCError({ code: "FORBIDDEN", message: "Cliente de outro estúdio" });
         if (ctx.user.role === "collaborator" && (!ctx.user.artistId || clientBefore.artistId !== ctx.user.artistId))
@@ -3154,6 +3164,7 @@ export const appRouter = router({
    // ============ CONTACTS IMPORT/EXPORT ROUTER ============
   contacts: contactsRouter,
   contactImport: contactImportRouter,
+  clientMerge: clientMergeRouter,
   // ============ POD SESSION — EXECUÇÃO TÉCNICA ============
   procedures: proceduresRouter,
   // ============ POD SESSION SaaS — CATÁLOGO, ESTOQUE E AUDITORIA ============

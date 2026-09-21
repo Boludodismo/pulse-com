@@ -208,7 +208,7 @@ export async function runAutomaticMessageCycle() {
     const careBirthday = (await db.select({ id: careRules.id }).from(careRules).where(and(eq(careRules.studioId, integration.studioId), eq(careRules.kind, "birthday"), eq(careRules.enabled, 1))).limit(1))[0];
     if (!careBirthday && settings.birthdayMessagesEnabled && now.time >= "09:00" && now.time < "10:00") {
       const allClients = await db.select({ id: clients.id, name: clients.name, phone: clients.phone, birthDate: clients.birthDate })
-        .from(clients).where(and(eq(clients.studioId, integration.studioId), sql`${clients.birthDate} IS NOT NULL`));
+        .from(clients).where(and(eq(clients.studioId, integration.studioId),eq(clients.isArchived,0), sql`${clients.birthDate} IS NOT NULL`));
       const birthdays = allClients.filter((client) => String(client.birthDate).slice(5, 10) === now.date.slice(5, 10));
       for (const client of birthdays) {
         if (!client.phone || !(await hasActiveConsent(integration.studioId, integration.id, client.id))) { result.skipped += 1; continue; }

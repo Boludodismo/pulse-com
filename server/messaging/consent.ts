@@ -62,6 +62,12 @@ export async function saveWhatsappConsent(input: {
     }
     const timestamp = new Date().toISOString().slice(0, 19).replace("T", " ");
     await c.beginTransaction();
+    const [currentClient] = await c.execute<RowDataPacket[]>(
+      'SELECT id,phone,isArchived FROM clients WHERE id=? AND studioId=? FOR UPDATE',
+      [input.clientId,input.studioId]
+    );
+    if (!currentClient[0] || Number(currentClient[0].isArchived)!==0 || currentClient[0].phone!==clients[0].phone)
+      throw new TRPCError({code:'CONFLICT',message:'O cadastro foi alterado ou arquivado. Atualize a tela antes de alterar o consentimento.'});
     await c.execute(
       "INSERT INTO integration_contacts(studio_id,integration_id,client_id,normalized_phone,has_whatsapp_opt_in,opt_in_at,opt_in_source,opted_out_at) VALUES(?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE integration_id=VALUES(integration_id),normalized_phone=VALUES(normalized_phone),has_whatsapp_opt_in=VALUES(has_whatsapp_opt_in),opt_in_at=VALUES(opt_in_at),opt_in_source=VALUES(opt_in_source),opted_out_at=VALUES(opted_out_at)",
       [

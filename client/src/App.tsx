@@ -16,6 +16,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
 import Clients from "./pages/Clients";
+import ClientDuplicates from "./pages/ClientDuplicates";
 import Quotes from "./pages/Quotes";
 import NewClient from "./pages/NewClient";
 import ClientProfile from "./pages/ClientProfile";
@@ -73,6 +74,7 @@ function Router() {
           <Quotes />
         </DashboardLayout>
       )} />
+      <Route path="/clients/duplicates" component={() => <DashboardLayout><ClientDuplicates/></DashboardLayout>} />
       <Route path="/clients" component={() => (
         <DashboardLayout>
           <Clients />

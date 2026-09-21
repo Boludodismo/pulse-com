@@ -526,6 +526,8 @@ export default function ClientProfile() {
     );
   }
 
+  if(client.mergedIntoId) return <Card><CardHeader><CardTitle>Cadastro unificado</CardTitle></CardHeader><CardContent className="space-y-3"><p>O histórico deste cadastro foi reunido no cliente #{client.mergedIntoId}.</p><Button onClick={()=>setLocation(`/clients/${client.mergedIntoId}`)}>Abrir cadastro principal</Button></CardContent></Card>;
+
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Header */}
