@@ -1,9 +1,6 @@
-name: Cockpit promotion build
+name: Cockpit promotion build (manual)
 
 on:
-  pull_request:
-    branches:
-      - feat/session-workspace-2026-09-17
   workflow_dispatch:
 
 jobs:
