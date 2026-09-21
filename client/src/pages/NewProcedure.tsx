@@ -1,3 +1,4 @@
+import SessionMaterialPicker from "@/components/SessionMaterialPicker";
 import { defaultSessionQuantity } from "@shared/sessionMaterialDefaults";
 import { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
@@ -87,6 +88,7 @@ export default function NewProcedure() {
     referenceImageBase64: "",
     referenceImageMime: "",
   });
+  const [readingImage, setReadingImage] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [plannedMaterialId, setPlannedMaterialId] = useState<string | undefined>();
   const [plannedQuantity, setPlannedQuantity] = useState("1");
@@ -118,7 +120,7 @@ export default function NewProcedure() {
     { id: form.clientId },
     { enabled: form.clientId > 0 }
   );
-  const selectedClient = clientQuery.data;
+  const selectedClient = clients.find(client => client.id === form.clientId) ?? clientQuery.data;
 
   // Agendamentos do cliente selecionado (para vincular)
   const appointmentsQuery = trpc.appointments.getByClientId.useQuery(
@@ -154,7 +156,7 @@ export default function NewProcedure() {
         clientId: client.id,
         appointmentId: null,
       }));
-      setClientSearch(client.name);
+      setClientSearch("");
       setNewClientOpen(false);
       setNewClientForm({ name: "", phone: "", email: "", instagram: "" });
       toast.success("Cliente cadastrado e selecionado para esta sessão.");
@@ -177,18 +179,23 @@ export default function NewProcedure() {
       toast.error("Arquivo muito grande. Máximo 16MB.");
       return;
     }
+    setReadingImage(true);
     const reader = new FileReader();
+    reader.onerror = () => { setReadingImage(false); toast.error("Não foi possível ler a imagem. Selecione o arquivo novamente."); };
+    reader.onabort = () => setReadingImage(false);
     reader.onload = () => {
       const result = reader.result as string;
       const base64 = result.split(",")[1];
       setForm((f) => ({ ...f, referenceImageBase64: base64, referenceImageMime: file.type }));
       setPreviewUrl(result);
+      setReadingImage(false);
     };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
 
   const handleSubmit = () => {
+    if (readingImage) return;
     if (!form.clientId || form.clientId <= 0) {
       toast.error("Selecione um cliente.");
       return;
@@ -258,7 +265,7 @@ export default function NewProcedure() {
             ) : (
               <div className="space-y-2">
                 <Label>Cliente *</Label>
-                <div className="relative">
+                {!form.clientId && <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                   <Input
                     value={clientSearch}
@@ -267,8 +274,9 @@ export default function NewProcedure() {
                     inputMode="search"
                     className="pl-9"
                     autoComplete="off"
+                    aria-label="Buscar cliente por nome ou telefone"
                   />
-                </div>
+                </div>}
 
                 {form.clientId > 0 && selectedClient && (
                   <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
@@ -283,11 +291,11 @@ export default function NewProcedure() {
                         </p>
                       )}
                     </div>
-                    <CheckCircle2 className="w-5 h-5 text-primary shrink-0" />
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setForm(current => ({ ...current, clientId: 0, appointmentId: null })); setClientSearch(""); }}>Trocar cliente</Button>
                   </div>
                 )}
 
-                {clientSearchNormalized && (
+                {!form.clientId && clientSearchNormalized && (
                   <div className="rounded-lg border bg-popover overflow-hidden">
                     {filteredClients.length > 0 ? (
                       <div className="max-h-64 overflow-y-auto">
@@ -302,7 +310,7 @@ export default function NewProcedure() {
                                 clientId: client.id,
                                 appointmentId: null,
                               }));
-                              setClientSearch(client.name);
+                              setClientSearch("");
                             }}
                           >
                             <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
@@ -434,7 +442,7 @@ export default function NewProcedure() {
                 {selectedAppointment && <div className="mt-3 space-y-2 rounded-lg border p-3">
                   <Label className="flex items-center gap-2"><Package className="h-4 w-4 text-primary" />Materiais da sessão (opcional)</Label>
                   <p className="text-xs text-muted-foreground">A seleção apenas prepara a sessão; o estoque será baixado quando o artista confirmar o uso.</p>
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_80px_auto] gap-2"><Select value={plannedMaterialId} onValueChange={id => {setPlannedMaterialId(id);setPlannedQuantity(defaultSessionQuantity(availableMaterials.find(m=>String(m.id)===id)));}}><SelectTrigger className="col-span-2 sm:col-span-1 w-full min-w-0 [&>span]:truncate"><SelectValue placeholder="Material" /></SelectTrigger><SelectContent>{availableMaterials.map(material => <SelectItem key={material.id} value={String(material.id)}>{material.name} · {Number(material.currentQuantity).toLocaleString("pt-BR")} {material.unit}</SelectItem>)}</SelectContent></Select><Input value={plannedQuantity} inputMode="decimal" onChange={event => setPlannedQuantity(event.target.value.replace(",", "."))} aria-label="Quantidade prevista" /><Button type="button" size="icon" disabled={!plannedMaterialId || addPlannedMaterialMutation.isPending} onClick={() => addPlannedMaterialMutation.mutate({ appointmentId: selectedAppointment.id, tenantMaterialId: Number(plannedMaterialId), quantityPlanned: plannedQuantity })}><Plus className="h-4 w-4" /></Button></div>
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_80px_auto] gap-2"><div className="col-span-2 sm:col-span-1 min-w-0"><SessionMaterialPicker materials={availableMaterials} more={plannedMaterials.some(item => item.status === "planejado") || !!plannedMaterialId} disabled={addPlannedMaterialMutation.isPending} onSelect={material => {setPlannedMaterialId(String(material.id));setPlannedQuantity(defaultSessionQuantity(material));}} />{plannedMaterialId && <p className="mt-2 text-sm break-words">{availableMaterials.find(material => String(material.id) === plannedMaterialId)?.name}</p>}</div><Input value={plannedQuantity} inputMode="decimal" onChange={event => setPlannedQuantity(event.target.value.replace(",", "."))} aria-label="Quantidade prevista" /><Button type="button" aria-label="Adicionar material ao planejamento" size="icon" disabled={!plannedMaterialId || addPlannedMaterialMutation.isPending} onClick={() => addPlannedMaterialMutation.mutate({ appointmentId: selectedAppointment.id, tenantMaterialId: Number(plannedMaterialId), quantityPlanned: plannedQuantity })}><Plus className="h-4 w-4" /></Button></div>
                   {plannedMaterials.filter(item => item.status === "planejado").map(item => <div key={item.id} className="rounded-md bg-muted/40 px-2 py-1.5 text-xs">{item.nameSnapshot} · {Number(item.quantityPlanned).toLocaleString("pt-BR")} {item.unitSnapshot}</div>)}
                 </div>}
               </div>
@@ -567,10 +575,10 @@ export default function NewProcedure() {
           <Button
             className="flex-1 gap-2"
             onClick={handleSubmit}
-            disabled={createMutation.isPending}
+            disabled={createMutation.isPending || readingImage}
           >
             <Stethoscope className="w-4 h-4" />
-            {createMutation.isPending ? "Criando..." : "Criar e iniciar sessão"}
+            {readingImage ? "Preparando imagem..." : createMutation.isPending ? "Criando..." : "Criar e iniciar sessão"}
           </Button>
         </div>
       </div>
