@@ -29,6 +29,20 @@ function guessColor(name:string){const t=name.toLowerCase();if(/white|branco/.te
 function shortName(name:string,configuration?:string|null){if(configuration?.trim())return configuration.trim().slice(0,7).toUpperCase();const m=name.toUpperCase().match(/\b\d{1,2}(?:RL|RS|M1|CM|RM)\b/);if(m)return m[0];return name.replace(/[^A-Za-z0-9]/g,"").slice(0,4).toUpperCase()||"ITEM"}
 function toMaterial(raw:any):Material{return{id:String(raw.id),name:String(raw.name||"Material"),short:shortName(String(raw.name||""),raw.configuration),kind:inferKind(String(raw.name||""),raw.category),unit:String(raw.unit||"unidade"),color:guessColor(String(raw.name||"")),detail:[raw.brand,raw.configuration,raw.lot?"Lote "+raw.lot:null].filter(Boolean).join(" · ")||"Estoque ativo",brand:raw.brand,configuration:raw.configuration}}
 function quantityForDrops(material:Material,drops:number){const u=material.unit.toLowerCase();if(u==="ml"||u.includes("mililit"))return(drops/20).toFixed(3);if(u.includes("gota")||u==="drop"||u==="gt")return drops.toFixed(3);throw new Error("Configure esta tinta em ml ou gotas no estoque.")}
+function canvasSafeSource(value:string|null|undefined){
+  if(!value)return null;
+  try{
+    const url=new URL(value,window.location.origin);
+    if(url.pathname==="/api/storage"){
+      const key=url.searchParams.get("key"),token=url.searchParams.get("token");
+      if(key&&token)return "/api/storage-inline?key="+encodeURIComponent(key)+"&token="+encodeURIComponent(token);
+    }
+    if(url.origin===window.location.origin)return url.pathname+url.search+url.hash;
+  }catch{}
+  return value;
+}
+
+
 
 export default function SessionCockpitLiveLab(){
 const auth=trpc.auth.me.useQuery();
@@ -85,7 +99,7 @@ const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoSta
 const [charged,setCharged]=useState(""),[payment,setPayment]=useState<"pix"|"dinheiro"|"credito"|"debito"|"transferencia">("pix");
 const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null);
 const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pts=useRef(new Map<number,{x:number;y:number}>());
-const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null);
+const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false);
 
 const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
 const recipes=(recipeQuery.data||[]) as any[];
@@ -140,13 +154,13 @@ async function sampleAt(cx:number,cy:number){
   try{
     ctx.drawImage(im,Math.max(0,px-2),Math.max(0,py-2),5,5,0,0,5,5);const d=ctx.getImageData(0,0,5,5).data;let R=0,G=0,B=0,n=0;for(let i=0;i<d.length;i+=4){R+=d[i];G+=d[i+1];B+=d[i+2];n++}R=Math.round(R/n);G=Math.round(G/n);B=Math.round(B/n);const CMYK=cmyk(R,G,B),H=hex(R,G,B);
     const saved=await saveSampleMutation.mutateAsync({procedureId,hex:H,red:R,green:G,blue:B,cyan:CMYK[0],magenta:CMYK[1],yellow:CMYK[2],black:CMYK[3],xPct:q.x/w*100,yPct:q.y/h*100,sampleSize:5});
-    const x:Sample={id:String(saved.id),code:saved.code,hex:H,rgb:[R,G,B],cmyk:CMYK,xPct:q.x/w*100,yPct:q.y/h*100};setSample(x);setMode("color");setSampler(false);await utils.pod.session.listColorSamples.invalidate({procedureId});toast.success(saved.code+" salva na sessão.");
+    const x:Sample={id:String(saved.id),code:saved.code,hex:H,rgb:[R,G,B],cmyk:CMYK,xPct:q.x/w*100,yPct:q.y/h*100};setSample(x);setMode("color");await utils.pod.session.listColorSamples.invalidate({procedureId});if(samples.length+1>=30){setSampler(false);toast.success(saved.code+" salva. Limite de 30 amostras atingido.");}else{setSampler(true);toast.success(saved.code+" salva. Toque em outro ponto para continuar.");}
   }catch(e:any){toast.error(e.message||"Não foi possível ler/salvar essa cor.")}
 }
 
-function down(e:RP<HTMLDivElement>){e.currentTarget.setPointerCapture(e.pointerId);pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pts.current.size===1){start.current=vr.current;pstart.current={x:e.clientX,y:e.clientY}}if(pts.current.size===2){const[a,b]=[...pts.current.values()];base.current={v:vr.current,d:Math.hypot(b.x-a.x,b.y-a.y),a:Math.atan2(b.y-a.y,b.x-a.x),m:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}}}}
+function down(e:RP<HTMLDivElement>){e.currentTarget.setPointerCapture(e.pointerId);pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pts.current.size===1){start.current=vr.current;pstart.current={x:e.clientX,y:e.clientY}}if(pts.current.size===2){multiTouch.current=true;const[a,b]=[...pts.current.values()];base.current={v:vr.current,d:Math.hypot(b.x-a.x,b.y-a.y),a:Math.atan2(b.y-a.y,b.x-a.x),m:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}}}}
 function move(e:RP<HTMLDivElement>){if(!pts.current.has(e.pointerId))return;pts.current.set(e.pointerId,{x:e.clientX,y:e.clientY});const p=[...pts.current.values()];if(p.length===2&&base.current){const[a,b]=p,z=base.current,d=Math.hypot(b.x-a.x,b.y-a.y),ang=Math.atan2(b.y-a.y,b.x-a.x),m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};setView({...z.v,scale:Math.max(.2,Math.min(5,z.v.scale*d/z.d)),rotation:z.v.rotation+(ang-z.a)*180/Math.PI,x:z.v.x+m.x-z.m.x,y:z.v.y+m.y-z.m.y})}else if(p.length===1&&!sampler&&start.current&&pstart.current)setView({...start.current,x:start.current.x+e.clientX-pstart.current.x,y:start.current.y+e.clientY-pstart.current.y})}
-function up(e:RP<HTMLDivElement>){const ps=pstart.current;pts.current.delete(e.pointerId);if(sampler&&ps&&Math.hypot(e.clientX-ps.x,e.clientY-ps.y)<8)void sampleAt(e.clientX,e.clientY);if(pts.current.size===0){if(start.current&&JSON.stringify(start.current)!==JSON.stringify(vr.current)){setVu(h=>[...h,start.current!]);setVredo([])}start.current=null;pstart.current=null;base.current=null}}
+function up(e:RP<HTMLDivElement>){const ps=pstart.current;pts.current.delete(e.pointerId);if(sampler&&!multiTouch.current&&ps&&Math.hypot(e.clientX-ps.x,e.clientY-ps.y)<8)void sampleAt(e.clientX,e.clientY);if(pts.current.size===0){if(start.current&&JSON.stringify(start.current)!==JSON.stringify(vr.current)){setVu(h=>[...h,start.current!]);setVredo([])}start.current=null;pstart.current=null;base.current=null;multiTouch.current=false}}
 function wheel(e:RW<HTMLDivElement>){e.preventDefault();vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
 useEffect(()=>{const el=stage.current as any;if(!el)return;let st:View|null=null;const a=(e:any)=>{e.preventDefault();st={...vr.current}},b=(e:any)=>{if(st){e.preventDefault();setView({...st,scale:Math.max(.2,Math.min(5,st.scale*(e.scale||1))),rotation:st.rotation+(e.rotation||0)})}},c=(e:any)=>{e.preventDefault();if(st){setVu(h=>[...h,st!]);setVredo([])}st=null};el.addEventListener("gesturestart",a,{passive:false});el.addEventListener("gesturechange",b,{passive:false});el.addEventListener("gestureend",c,{passive:false});return()=>{el.removeEventListener("gesturestart",a);el.removeEventListener("gesturechange",b);el.removeEventListener("gestureend",c)}},[]);
 
@@ -205,6 +219,7 @@ if(session.isLoading||!proc)return <div className="cockpit-lab" style={{display:
 const panel=(o:number,s:number,side:"left"|"right")=>({"--panel-alpha":o,transform:"scale("+s+")",transformOrigin:side==="left"?"left top":"right top"} as CSSProperties);
 const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP,pct=Math.round(ml/CUP[cup]*100);
 const refSrc=proc.referenceImageUrl?String(proc.referenceImageUrl):null;
+const canvasRefSrc=canvasSafeSource(refSrc);
 
 return <div className="cockpit-lab">
 <header className="cockpit-top">
@@ -218,14 +233,14 @@ return <div className="cockpit-lab">
 <div className="cockpit-anamnese">Sessão #{procedureId} · banco de teste</div>
 <div className="cockpit-view-quick"><button onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button></div>
 <div className="cockpit-transform" style={{transform:"translate("+view.x+"px,"+view.y+"px) rotate("+view.rotation+"deg) scale("+view.scale+")"}}>
-{refOn&&refSrc?<img ref={image} src={refSrc} className="cockpit-reference" style={{opacity:refOp}} alt="Referência"/>:refOn?<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
+{refOn&&canvasRefSrc?<img ref={image} src={canvasRefSrc} className="cockpit-reference" style={{opacity:refOp}} alt="Referência"/>:refOn?<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
   <div>
     <div style={{marginBottom:10}}>Nenhuma referência anexada</div>
     <button className="dock-add" style={{padding:"0 16px"}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();referenceInput.current?.click()}}><Plus size={16}/> Adicionar referência</button>
   </div>
 </div>:<div className="cockpit-empty">Referência oculta</div>}
 {markOn&&samples.map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex,opacity:markOp}}/>)}
-</div>{sampler&&<div className="cockpit-empty" style={{pointerEvents:"none",color:"#fecdd3"}}><Pipette size={28}/><br/>Toque em um ponto da referência</div>}
+</div>{sampler&&<div className="cockpit-empty" style={{pointerEvents:"none",color:"#fecdd3"}}><Pipette size={28}/><br/>Amostragem ativa<br/><small style={{fontSize:10,color:"#fda4af"}}>Toque em até 30 pontos · use dois dedos para zoom/rotação</small></div>}
 </main>
 
 <aside className={"cockpit-dock left "+(lmin?"minimized ":"")+(lex?"expanded":"")} style={panel(lop,lscale,"left")}>
@@ -238,14 +253,14 @@ return <div className="cockpit-lab">
 <aside className={"cockpit-dock right "+(rmin?"minimized ":"")+(rex?"expanded":"")} style={panel(rop,rscale,"right")}>
 <header><button onClick={()=>setRmin(v=>!v)}><Minus size={16}/></button><strong>Camadas</strong><button onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
 <div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={rscale} onChange={e=>setRscale(+e.target.value)}/><output>{Math.round(rscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={rop} onChange={e=>setRop(+e.target.value)}/><output>{Math.round(rop*100)}</output></label></div>
-<div className="dock-body"><div className="layer-card">{refSrc?<img className="layer-thumb" src={refSrc}/>:<div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Plus size={16}/></div>}<div><strong>Ref. Principal</strong><input type="range" min="0" max="1" step=".05" value={refOp} onChange={e=>setRefOp(+e.target.value)}/></div><button className="layer-eye" onClick={()=>setRefOn(v=>!v)}>{refOn?<Eye size={16}/>:<EyeOff size={16}/>}</button></div>
+<div className="dock-body"><div className="layer-card">{canvasRefSrc?<img className="layer-thumb" src={canvasRefSrc}/>:<div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Plus size={16}/></div>}<div><strong>Ref. Principal</strong><input type="range" min="0" max="1" step=".05" value={refOp} onChange={e=>setRefOp(+e.target.value)}/></div><button className="layer-eye" onClick={()=>setRefOn(v=>!v)}>{refOn?<Eye size={16}/>:<EyeOff size={16}/>}</button></div>
 <div className="layer-card"><div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Pipette size={17}/></div><div><strong>Amostras</strong><input type="range" min="0" max="1" step=".05" value={markOp} onChange={e=>setMarkOp(+e.target.value)}/></div><button className="layer-eye" onClick={()=>setMarkOn(v=>!v)}>{markOn?<Eye size={16}/>:<EyeOff size={16}/>}</button></div>
 <div className="layer-card"><div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Layers3 size={17}/></div><div><strong>Linework</strong><small style={{fontSize:8,color:"#71717a"}}>próxima etapa</small></div><button className="layer-eye" disabled><EyeOff size={16}/></button></div>
 <button className="dock-add" onClick={()=>referenceInput.current?.click()}><Plus size={16}/>{rex&&(refSrc?" Trocar referência":" Adicionar referência")}</button></div>
 </aside>
 
-<div className="cockpit-palette"><button className="palette-add" onClick={()=>setMode(x=>x==="tonal"?"color":"tonal")}><Palette size={13}/> {mode==="tonal"?"Escala tonal":"Cores"}</button>
-{mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):<>{samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}<button className="palette-add" onClick={()=>setSampler(true)}><Pipette size={13}/> Amostrar</button></>}</div>
+<div className="cockpit-palette"><button className="palette-add" onClick={()=>{if(mode==="tonal"){setMode("color");setSampler(true)}else{setMode("tonal");setSampler(false)}}}><Palette size={13}/> {mode==="tonal"?"Cores":"Tons"}</button>
+{mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):<>{samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}<button className={"palette-add "+(sampler?"selected":"")} onClick={()=>setSampler(v=>!v)} disabled={samples.length>=30}><Pipette size={13}/> {sampler?"Amostragem ativa":"Amostrar"}</button></>}</div>
 
 {flash&&<div className="cockpit-toast"><Check size={17} color="#10b981"/><span>{flash}</span><button onClick={()=>void undoStock()}>DESFAZER (5s)</button></div>}
 <input ref={referenceInput} type="file" accept="image/jpeg,image/png,image/webp" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void uploadReference(f);e.currentTarget.value=""}}/>
