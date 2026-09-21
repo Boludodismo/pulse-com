@@ -1301,6 +1301,154 @@ export const podSaasRouter = router({
       return { id: openPause.id, endedAt };
     }),
 
+    consumeAuto: tenantProcedure.input(z.object({
+      procedureId: z.number().int().positive(),
+      tenantMaterialId: z.number().int().positive(),
+      quantity: quantitySchema.refine((value) => decimalToScaled(value, 3) > 0, "A quantidade deve ser maior que zero."),
+    })).mutation(async ({ ctx, input }) => {
+      await requireModule(ctx, "pod", true);
+      await requireModule(ctx, "stock", true);
+      const database = await requireDatabase();
+      return database.transaction(async tx => {
+        const procedure = await requireProcedure(
+          tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+          input.procedureId,
+          ctx,
+        );
+        if (procedure.status === "finalizado")
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível consumir materiais em uma sessão finalizada." });
+
+        const material = (await tx
+          .select()
+          .from(tenantMaterials)
+          .where(and(
+            eq(tenantMaterials.id, input.tenantMaterialId),
+            eq(tenantMaterials.studioId, ctx.studioId),
+            eq(tenantMaterials.isActive, 1),
+          ))
+          .limit(1)
+          .for("update"))[0];
+        if (!material)
+          throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado." });
+
+        await requireMaterialForArtist(
+          tx as unknown as InventoryDatabase,
+          ctx,
+          material,
+          procedure.artistId,
+        );
+
+        const quantity = decimalToScaled(input.quantity, 3);
+        const previousQuantity = decimalToScaled(material.currentQuantity, 3);
+        if (previousQuantity < quantity)
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Saldo insuficiente de ${material.name}.` });
+
+        const batches = await tx
+          .select()
+          .from(inventoryBatches)
+          .where(and(
+            eq(inventoryBatches.studioId, ctx.studioId),
+            eq(inventoryBatches.tenantMaterialId, material.id),
+          ))
+          .orderBy(asc(inventoryBatches.expiresAt), asc(inventoryBatches.id))
+          .for("update");
+
+        const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date());
+        const tracked = batches.reduce(
+          (sum, batch) => sum + decimalToScaled(batch.remainingQuantity, 3),
+          0,
+        );
+        const untracked = previousQuantity - tracked;
+        const batch = batches.find(candidate => {
+          const expiry = candidate.expiresAt ? String(candidate.expiresAt).slice(0, 10) : null;
+          return (!expiry || expiry >= today)
+            && decimalToScaled(candidate.remainingQuantity, 3) >= quantity;
+        });
+
+        if (!batch && batches.length && untracked < quantity)
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Nenhum lote válido de ${material.name} possui saldo suficiente.`,
+          });
+
+        const expiry = batch?.expiresAt ?? (!batch ? material.expiresAt : null);
+        if (expiry && String(expiry).slice(0, 10) < today)
+          throw new TRPCError({ code: "BAD_REQUEST", message: `O lote de ${material.name} está vencido.` });
+
+        const cost = batch?.unitCost ?? material.unitCost;
+        const persistedPrevious = scaledToDecimal(previousQuantity, 3);
+        const persistedNext = scaledToDecimal(previousQuantity - quantity, 3);
+
+        if (batch) {
+          const batchRemaining = decimalToScaled(batch.remainingQuantity, 3);
+          await tx
+            .update(inventoryBatches)
+            .set({ remainingQuantity: scaledToDecimal(batchRemaining - quantity, 3) })
+            .where(and(
+              eq(inventoryBatches.id, batch.id),
+              eq(inventoryBatches.studioId, ctx.studioId),
+            ));
+        }
+
+        const stockUpdate = await tx
+          .update(tenantMaterials)
+          .set({ currentQuantity: persistedNext })
+          .where(and(
+            eq(tenantMaterials.id, material.id),
+            eq(tenantMaterials.studioId, ctx.studioId),
+            eq(tenantMaterials.currentQuantity, persistedPrevious),
+          ));
+        if (!isAffected(stockUpdate))
+          throw new TRPCError({ code: "CONFLICT", message: "O estoque mudou durante a operação. Tente novamente." });
+
+        const consumption = await tx.insert(procedureInventoryConsumptions).values({
+          procedureId: procedure.id,
+          studioId: ctx.studioId,
+          appointmentId: procedure.appointmentId,
+          clientId: procedure.clientId,
+          artistId: procedure.artistId,
+          tenantMaterialId: material.id,
+          plannedMaterialId: null,
+          recipeId: null,
+          nameSnapshot: batch?.nameSnapshot ?? material.name,
+          unitSnapshot: batch?.unitSnapshot ?? material.unit,
+          quantity: scaledToDecimal(quantity, 3),
+          unitCostSnapshot: scaledToDecimal(decimalToScaled(cost, 4), 4),
+          totalCostSnapshot: multiplyQuantityByCost(scaledToDecimal(quantity, 3), cost),
+          batchId: batch?.id ?? null,
+          supplierNameSnapshot: batch?.supplierName ?? null,
+          technicalSnapshot: batch?.technicalSnapshot ?? materialDescription(material),
+          lotSnapshot: batch?.lot ?? material.lot,
+          expiresAtSnapshot: batch?.expiresAt ?? material.expiresAt,
+          consumedAt: nowSql(),
+          createdByUserId: ctx.user.id,
+        });
+        const consumptionId = insertId(consumption);
+        if (!consumptionId)
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível registrar o consumo." });
+
+        await tx.insert(tenantInventoryMovements).values({
+          studioId: ctx.studioId,
+          tenantMaterialId: material.id,
+          type: "consumo",
+          quantity: scaledToDecimal(quantity, 3),
+          previousQuantity: persistedPrevious,
+          newQuantity: persistedNext,
+          sourceType: "procedure_consumption",
+          sourceId: consumptionId,
+          reason: `Consumo rápido na sessão POD #${procedure.id}`,
+          createdByUserId: ctx.user.id,
+        });
+
+        return {
+          id: consumptionId,
+          remainingQuantity: persistedNext,
+          batchId: batch?.id ?? null,
+          lot: batch?.lot ?? material.lot ?? null,
+        };
+      });
+    }),
+
     consume: tenantProcedure.input(z.object({
       procedureId: z.number().int().positive(),
       tenantMaterialId: z.number().int().positive(),
