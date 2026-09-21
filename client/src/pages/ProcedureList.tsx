@@ -88,7 +88,7 @@ export default function ProcedureList() {
               POD Session
             </h1>
             <p className="text-muted-foreground text-sm mt-1">
-              Prontuários técnicos de execução de tatuagem
+              Referências, camadas, cores, materiais e execução da sessão
             </p>
           </div>
           <Button
@@ -96,7 +96,7 @@ export default function ProcedureList() {
             className="gap-2 self-start sm:self-auto"
           >
             <Plus className="w-4 h-4" />
-            Novo Procedimento
+            Nova Sessão
           </Button>
         </div>
 
@@ -132,7 +132,7 @@ export default function ProcedureList() {
             <div className="text-sm text-muted-foreground">
               <span className="font-medium text-foreground">Como usar:</span> Acesse o perfil de um cliente e clique em{" "}
               <strong>Prontuário Técnico</strong> para criar e gerenciar sessões de tatuagem com timer, insumos e fotos. Ou clique em{" "}
-              <strong>Novo Procedimento</strong> para iniciar diretamente.
+              <strong>Nova Sessão</strong> para iniciar diretamente.
             </div>
           </CardContent>
         </Card>
