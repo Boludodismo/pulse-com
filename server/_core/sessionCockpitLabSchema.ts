@@ -141,6 +141,27 @@ export async function ensureSessionCockpitLabSchema() {
       KEY procedure_ink_recipe_results_procedure_idx(studioId,procedureId,id)
     ) ENGINE=InnoDB`);
 
+    await connection.query(`CREATE TABLE IF NOT EXISTS procedure_visual_layers (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      studioId INT NOT NULL,
+      procedureId INT NOT NULL,
+      clientId INT NOT NULL,
+      artistId INT NULL,
+      layerKey VARCHAR(80) NOT NULL,
+      name VARCHAR(160) NOT NULL,
+      layerType VARCHAR(32) NOT NULL,
+      imageUrl VARCHAR(3000) NULL,
+      imageKey VARCHAR(500) NULL,
+      opacity INT NOT NULL DEFAULT 100,
+      isVisible TINYINT NOT NULL DEFAULT 1,
+      sortOrder INT NOT NULL DEFAULT 0,
+      createdByUserId INT NOT NULL,
+      createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY procedure_visual_layer_key_unique(studioId,procedureId,layerKey),
+      KEY procedure_visual_layers_order_idx(studioId,procedureId,sortOrder,id)
+    ) ENGINE=InnoDB`);
+
     const [sampleLabColumns] = await connection.query<RowDataPacket[]>(
       "SHOW COLUMNS FROM procedure_color_samples LIKE 'labL'"
     );
