@@ -14,6 +14,7 @@ import {
   messageAutomationSettings,
   integrationContacts,
   clients,
+  careTags,
   appointments,
 } from "../../drizzle/schema";
 import { eq, desc, and, inArray } from "drizzle-orm";
@@ -88,13 +89,13 @@ export function assertRetryableMessage<T extends { status: string; clientId: num
 export const messagingRouter = router({
   /** Lista clientes do estúdio e seu opt-in na integração selecionada. */
   listWhatsappConsents: tenantProcedure
-    .input(z.object({ integrationId: z.number().int().positive() }))
+    .input(z.object({ integrationId: z.number().int().positive(), clientId:z.number().int().positive().optional() }))
     .query(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const integration = await findScopedIntegration(db, input.integrationId, ctx.studioId);
       if (!integration.studioId) throw new TRPCError({ code: "BAD_REQUEST", message: "A integração não está vinculada a uma empresa." });
-      return await db.select({
+      const contacts = await db.select({
         clientId: clients.id, clientName: clients.name, phone: clients.phone,
         hasWhatsappOptIn: integrationContacts.hasWhatsappOptIn,
         optInAt: integrationContacts.optInAt, optInSource: integrationContacts.optInSource,
@@ -103,7 +104,10 @@ export const messagingRouter = router({
         eq(integrationContacts.clientId, clients.id),
         eq(integrationContacts.studioId, integration.studioId),
         eq(integrationContacts.integrationId, integration.id),
-      )).where(and(eq(clients.studioId, integration.studioId),eq(clients.isArchived,0))).limit(200);
+      )).where(and(eq(clients.studioId, integration.studioId),eq(clients.isArchived,0),input.clientId?eq(clients.id,input.clientId):undefined)).orderBy(clients.name,clients.id);
+      const labels=await db.select({clientId:careTags.clientId,label:careTags.label}).from(careTags).where(and(eq(careTags.studioId,integration.studioId),input.clientId?eq(careTags.clientId,input.clientId):undefined));
+      const tagsByClient=new Map<number,string[]>();for(const row of labels)tagsByClient.set(row.clientId,[...(tagsByClient.get(row.clientId)||[]),row.label]);
+      return contacts.map(c=>({...c,tags:tagsByClient.get(c.clientId)||[]}));
     }),
 
   /** Registra revogação ou opt-in informado pelo gestor; não envia mensagens. */

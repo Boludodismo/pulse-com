@@ -1,3 +1,5 @@
+import {ClientConsentButton} from "@/components/WhatsappConsentPanel";
+import ClientColorHistory from "@/components/ClientColorHistory";
 import ClientMaterialHistory from "@/components/ClientMaterialHistory";
 import { EditClientDialog } from "@/components/EditClientDialog";
 import ImportedClientRecords from '@/components/ImportedClientRecords';
@@ -544,7 +546,7 @@ export default function ClientProfile() {
         </Badge>
       </div>
 
-      <div className="flex justify-end"><EditClientDialog client={client} /></div>
+      <div className="flex justify-end gap-2"><ClientConsentButton clientId={clientId} name={client.name} /><EditClientDialog client={client} /></div>
 
       {/* Client Info */}
       <Card>
@@ -679,8 +681,8 @@ export default function ClientProfile() {
             )}
           </TabsTrigger>
           {can("pod") && <TabsTrigger value="procedures" className="flex-1 text-xs sm:text-sm py-2">
-            <span className="hidden sm:inline-flex items-center gap-1"><Stethoscope className="w-3 h-3" />POD</span>
-            <span className="sm:hidden">POD</span>
+            <span className="hidden sm:inline-flex items-center gap-1"><Stethoscope className="w-3 h-3" />Sessões e materiais</span>
+            <span className="sm:hidden">Sessões</span>
           </TabsTrigger>}
         </TabsList>
 
@@ -1651,6 +1653,7 @@ export default function ClientProfile() {
         {/* ── Prontuário Técnico (POD Session) ── */}
         {can("pod") && <TabsContent value="procedures">
           <ClientMaterialHistory clientId={clientId}/>
+          <ClientColorHistory clientId={clientId}/>
           <ProceduresTab clientId={clientId} clientName={client?.name ?? ""} />
         </TabsContent>}
       </Tabs>

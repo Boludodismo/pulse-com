@@ -1,3 +1,4 @@
+import {ClientConsentButton} from "@/components/WhatsappConsentPanel";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -201,6 +202,7 @@ export default function Clients() {
                         <span className="font-medium text-foreground">{formatCurrency(client.totalSpent)}</span>
                       </div>
                     </div>
+                    <ClientConsentButton clientId={client.id} name={client.name} />
                     <Eye className="h-4 w-4 text-muted-foreground shrink-0" />
                   </div>
                 ))}
@@ -252,6 +254,7 @@ export default function Clients() {
                           <Badge variant="secondary">{client.appointmentCount}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
+                          <ClientConsentButton clientId={client.id} name={client.name} />
                           <Button
                             variant="ghost"
                             size="sm"
