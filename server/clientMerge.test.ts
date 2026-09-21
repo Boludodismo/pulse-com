@@ -375,6 +375,38 @@ describe("merge consent", () => {
   });
 });
 describe("transactional client merge", () => {
+  it("preserves legacy risk and follow-up snapshots while updating only client links", async () => {
+    const c = new MemoryConnection();
+    c.data.anamnesis_risk_history = [
+      {
+        id: 90,
+        studioId: 7,
+        clientId: 2,
+        submissionId: 12,
+        eventType: "review",
+        riskFactors: "original factors",
+        createdAt: "2025-01-01",
+      },
+    ];
+    c.data.post_sale_followups = [
+      {
+        id: 91,
+        studioId: 7,
+        clientId: 2,
+        appointmentId: 10,
+        status: "completed",
+        serviceSnapshot: "original service",
+        message: "original message",
+        updatedAt: "2025-01-01",
+      },
+    ];
+    const before = clone(c.data),
+      p = await preview(c);
+    expect(p.preview.blockers).toEqual([]);
+    await confirmMerge(c.asConnection(), 7, 99, pair, p.preview.hash);
+    for (const table of ["anamnesis_risk_history", "post_sale_followups"])
+      expect(c.data[table][0]).toEqual({ ...before[table][0], clientId: 1 });
+  });
   it("preview does not mutate data; confirmation preserves sessions, stock snapshots, recipes, messages and audit", async () => {
     const c = new MemoryConnection(),
       before = clone(c.data);

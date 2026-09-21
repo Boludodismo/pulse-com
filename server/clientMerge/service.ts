@@ -29,6 +29,8 @@ export const relationLabels: Record<string, string> = {
   anamnese_requests: "Solicitações de anamnese",
   anamnese_submissions: "Respostas de anamnese",
   anamnesisRecords: "Fichas de anamnese",
+  anamnesis_risk_history: "Histórico de riscos de anamnese",
+  post_sale_followups: "Acompanhamentos anteriores de pós-venda",
   appointments: "Agendamentos",
   clientNotes: "Anotações",
   galleryImages: "Fotos",
