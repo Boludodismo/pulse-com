@@ -79,3 +79,10 @@
 .reference-draft-marker{position:absolute;z-index:8;width:28px;height:28px;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 1px #000,0 4px 12px #000b;pointer-events:none}.reference-draft-marker:before,.reference-draft-marker:after{content:"";position:absolute;left:50%;top:50%;background:#fff8;transform:translate(-50%,-50%)}.reference-draft-marker:before{width:40px;height:1px}.reference-draft-marker:after{width:1px;height:40px}
 .recipe-result-line{display:flex;align-items:center;gap:8px;margin-top:7px;padding-top:7px;border-top:1px solid #ffffff12}.recipe-result-line .result-swatch{width:34px;height:34px;border-radius:8px;border:1px solid #ffffff35}.recipe-result-line button{margin-left:auto;height:36px;border:1px solid #ffffff18;border-radius:9px;background:#ffffff08;padding:0 9px;font-size:8px}
 @media(max-width:620px){.temp-sampler-backdrop{padding:0}.temp-sampler-panel{width:100%;height:100%;max-height:none;border-radius:0}.temp-sampler-head{grid-template-columns:54px 1fr 44px}.temp-sampler-preview{width:54px;height:54px}.reference-sampler-card{top:50px;grid-template-columns:48px 1fr auto}.reference-sampler-card .preview{width:48px;height:48px}.reference-sampler-card button.cancel-label{display:none}.mix-ingredient-head.with-swatch{grid-template-columns:34px minmax(0,1fr) 38px 72px}}
+
+.cockpit-sample-layer{position:absolute;inset:0;pointer-events:none}
+.cockpit-layer-image{position:absolute;inset:0}
+.layer-card-dynamic{grid-template-columns:38px minmax(0,1fr) 36px}.layer-main{min-width:0}.layer-main input{width:100%;accent-color:#f43f5e}.layer-row-actions{display:flex;gap:3px;margin-top:3px}.layer-row-actions button{width:24px;height:22px;border:1px solid #ffffff12;background:#ffffff07;border-radius:6px;font-size:9px;padding:0}.layer-row-actions .danger{color:#fda4af}
+.dock-add.secondary{border-color:#ffffff22;background:#ffffff06;color:#d4d4d8}
+.layer-name-label{display:block;margin:10px 0 5px;font-size:9px;color:#a1a1aa}
+@media(max-width:620px){.layer-card-dynamic{grid-template-columns:34px minmax(0,1fr) 34px}.layer-row-actions button{width:22px}}
