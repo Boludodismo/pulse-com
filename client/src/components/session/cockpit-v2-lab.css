@@ -43,3 +43,5 @@
 .cockpit-note{width:100%;min-height:90px;border:1px solid #3f3f46;background:#09090b;color:white;border-radius:11px;padding:10px;resize:vertical}
 @media(max-width:620px){.cockpit-top{gap:4px}.cockpit-top .desktop-only{display:none}.cockpit-status span{display:none}.cockpit-status{padding:7px}.cockpit-client strong{font-size:12px}.cockpit-client small{font-size:9px}.cockpit-dock{top:72px;bottom:82px;width:68px}.cockpit-dock.expanded{width:154px}.cockpit-dock.right{right:5px}.cockpit-dock.left{left:5px}.cockpit-anamnese{top:7px;max-width:70vw}.cockpit-palette{width:62vw;bottom:78px}.cockpit-bottom button{padding:0 9px}.cockpit-bottom .button-label{display:none}}
 @media(max-width:410px){.cockpit-top .minor-nav{display:none}.cockpit-dock{width:62px}.cockpit-dock.expanded{width:142px}.cockpit-palette{width:58vw}.cockpit-bottom{gap:4px}.cockpit-bottom button{min-width:48px}.cockpit-status b{font-size:10px}}
+
+.cockpit-palette .palette-add.selected{border-color:#10b98199;background:#10b98118;color:#a7f3d0;box-shadow:inset 0 0 0 1px #10b98122}
