@@ -1,3 +1,4 @@
+import { SESSION_CUP_ML } from "../../shared/sessionInkQuantity";
 import { importTestInventory } from "../inventoryTestImport";
 import { resolveProcedureArtist } from "../procedureArtist";
 import { appointmentKitsRouter } from "./appointmentKits";
@@ -67,7 +68,7 @@ const colorValueSchema = z.object({
   labB: z.number().min(-160).max(160),
 });
 
-const SESSION_CUP_CAPACITY_ML = { P: 0.5, M: 1, G: 2, GG: 4 } as const;
+const SESSION_CUP_CAPACITY_ML = SESSION_CUP_ML;
 type SessionCupSize = keyof typeof SESSION_CUP_CAPACITY_ML;
 
 function recipeStockQuantity(unit: string, drops: number, dropsPerMl: number) {

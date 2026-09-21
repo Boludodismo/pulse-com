@@ -1,3 +1,5 @@
+import SessionMaterialQuantity from "@/components/SessionMaterialQuantity";
+import { SESSION_CUP_ML, SESSION_DROPS_PER_ML, inkStockQuantity } from "@shared/sessionInkQuantity";
 import { createPortal } from "react-dom";
 import {useEffect,useMemo,useRef,useState,type CSSProperties,type PointerEvent as RP,type WheelEvent as RW} from "react";
 import {ArrowLeft,Home,Undo2,Redo2,Minus,Eye,EyeOff,Plus,Pause,Play,Package,Camera,Square,StickyNote,RotateCcw,RotateCw,Palette,Pipette,X,Search,Droplets,Check,Layers3,ChevronLeft,ChevronRight,Maximize2,Minimize2} from "lucide-react";
@@ -19,8 +21,8 @@ type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quan
 type RecipeAction={kind:"recipe";recipeId:number;label:string;payload:{procedureId:number;sampleId?:number;cupSize:Cup;dropsPerMl:number;cupTenantMaterialId?:number;ingredients:{tenantMaterialId:number;drops:number}[]}};
 type StockAction=QuickAction|RecipeAction;
 
-const CUP:Record<Cup,number>={P:.5,M:1,G:2,GG:4};
-const DROP=.05;
+const CUP=SESSION_CUP_ML;
+const DROP=1/SESSION_DROPS_PER_ML;
 const V0:View={x:0,y:0,scale:1,rotation:0};
 const GRAYS=["#050505","#191919","#333333","#525252","#737373","#969696","#b8b8b8","#dddddd","#ffffff"];
 const COLOR_FAMILIES=[
@@ -40,7 +42,6 @@ function inferKind(name:string,category?:string|null):Kind{const t=((category||"
 function guessColor(name:string){const t=name.toLowerCase();if(/white|branco/.test(t))return"#f4f4f5";if(/black|preto/.test(t))return"#111111";if(/navy|marinho/.test(t))return"#14213d";if(/orange|laranja/.test(t))return"#f97316";if(/olive|oliva/.test(t))return"#65743a";if(/red|vermelh/.test(t))return"#b91c1c";if(/blue|azul/.test(t))return"#2563eb";if(/green|verde/.test(t))return"#16a34a";if(/yellow|amarel/.test(t))return"#eab308";return undefined}
 function shortName(name:string,configuration?:string|null){if(configuration?.trim())return configuration.trim().slice(0,7).toUpperCase();const m=name.toUpperCase().match(/\b\d{1,2}(?:RL|RS|M1|CM|RM)\b/);if(m)return m[0];return name.replace(/[^A-Za-z0-9]/g,"").slice(0,4).toUpperCase()||"ITEM"}
 function toMaterial(raw:any):Material{return{id:String(raw.id),name:String(raw.name||"Material"),short:shortName(String(raw.name||""),raw.configuration),kind:inferKind(String(raw.name||""),raw.category),unit:String(raw.unit||"unidade"),color:guessColor(String(raw.name||"")),detail:[raw.brand,raw.configuration,raw.lot?"Lote "+raw.lot:null].filter(Boolean).join(" · ")||"Estoque ativo",brand:raw.brand,configuration:raw.configuration}}
-function quantityForDrops(material:Material,drops:number){const u=material.unit.toLowerCase();if(u==="ml"||u.includes("mililit"))return(drops/20).toFixed(3);if(u.includes("gota")||u==="drop"||u==="gt")return drops.toFixed(3);throw new Error("Configure esta tinta em ml ou gotas no estoque.")}
 function canvasSafeSource(value:string|null|undefined){
   if(!value)return null;
   try{
@@ -114,6 +115,7 @@ const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=use
 const [layerLocal,setLayerLocal]=useState<Record<string,{opacity:number;isVisible:boolean}>>({});
 const [refOn,setRefOn]=useState(true),[refOp,setRefOp]=useState(1),[markOn,setMarkOn]=useState(true),[markOp,setMarkOp]=useState(1);
 const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null);
+const [directQuantity,setDirectQuantity]=useState("1");
 const [sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null>(null),[note,setNote]=useState("");
 const [cup,setCup]=useState<Cup>("M"),[ings,setIngs]=useState<Ingredient[]>([]),[familyFilter,setFamilyFilter]=useState<string|null>(null);
 const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoStack]=useState<StockAction[]>([]),[flash,setFlash]=useState<string|null>(null);
@@ -180,7 +182,7 @@ async function persistLayer(layerKey:string,patch:{name?:string;opacity?:number;
   }catch(e:any){toast.error(e.message||"Não foi possível atualizar a camada.")}
 }
 async function toggleLayer(layerKey:string,next:boolean){
-  if(layerKey==="reference")setRefOn(next);
+  if(layerKey==="reference"){setRefOn(next);if(!next)stopSampling();}
   else if(layerKey==="samples")setMarkOn(next);
   else setLayerLocal(x=>({...x,[layerKey]:{opacity:x[layerKey]?.opacity??100,isVisible:next}}));
   await persistLayer(layerKey,{isVisible:next});
@@ -218,7 +220,7 @@ async function quickConsume(m:Material,quantity:string,label?:string){
   try{const r=await consumeAuto.mutateAsync({procedureId,tenantMaterialId:Number(m.id),quantity});pushAction({kind:"consumption",consumptionId:r.id,materialId:Number(m.id),quantity,label:label||m.name,unit:m.unit});await refreshAll()}
   catch(e:any){toast.error(e.message||"Falha ao consumir material.")}
 }
-function useMat(m:Material){if(m.kind==="cartridge"||m.kind==="protection"||m.kind==="cup")return void quickConsume(m,"1.000",m.name);if(m.kind==="ointment")return void quickConsume(m,"10.000",m.name+" +10 g");setInk(m);setSheet("ink")}
+function useMat(m:Material){if(m.kind==="cartridge"||m.kind==="protection")return void quickConsume(m,"1.000",m.name);if(m.kind==="ointment")return void quickConsume(m,"10.000",m.name+" +10 g");setInk(m);setDirectQuantity(m.kind==="cup"?"1":inkStockQuantity(m.unit,1,"drops","M"));setSheet("ink")}
 function setIng(mid:string,n:number){setIngs(a=>n<=0?a.filter(x=>x.materialId!==mid):a.some(x=>x.materialId===mid)?a.map(x=>x.materialId===mid?{...x,drops:n}:x):[...a,{materialId:mid,drops:n}])}
 function recipe(seed?:Material){setCup("M");setIngs(seed?[{materialId:seed.id,drops:1}]:[]);setSheet("recipe")}
 function cupMaterialId(size:Cup){const re=new RegExp("(batoque|ink.?cap).*(^|[^a-z])"+size.toLowerCase()+"([^a-z]|$)","i");const direct=stock.find(m=>re.test(m.name+" "+(m.configuration||"")));if(direct)return Number(direct.id);const byName=stock.find(m=>(m.name+" "+(m.configuration||"")).toLowerCase().includes("batoque "+size.toLowerCase()));return byName?Number(byName.id):undefined}
@@ -261,13 +263,26 @@ function readReferenceAt(cx:number,cy:number){
     setReferenceDraft(draft);return draft;
   }catch{return null}
 }
+function stopSampling(){
+  setSampler(false);
+  setReferenceDraft(null);
+}
+function startSampling(){
+  if(samples.length>=30){toast.info("Limite de 30 amostras atingido.");return;}
+  if(!refOn){toast.info("Mostre a camada de referência para coletar uma cor.");return;}
+  setMode("color");
+  setReferenceDraft(null);
+  setSampler(true);
+}
+function toggleSampling(){if(sampler)stopSampling();else startSampling();}
 async function confirmReferenceSample(){
   const x=referenceDraft;if(!x)return;
   try{
     const saved=await saveSampleMutation.mutateAsync({procedureId,hex:x.hex,red:x.red,green:x.green,blue:x.blue,cyan:x.cyan,magenta:x.magenta,yellow:x.yellow,black:x.black,labL:x.labL,labA:x.labA,labB:x.labB,xPct:x.xPct,yPct:x.yPct,sampleSize:5});
     const s:Sample={id:String(saved.id),code:saved.code,hex:x.hex,rgb:[x.red,x.green,x.blue],cmyk:[x.cyan,x.magenta,x.yellow,x.black],lab:[x.labL,x.labA,x.labB],xPct:x.xPct,yPct:x.yPct};
-    setSample(s);setReferenceDraft(null);setMode("color");await utils.pod.session.listColorSamples.invalidate({procedureId});
-    if(samples.length+1>=30){setSampler(false);toast.success(saved.code+" salva. Limite de 30 amostras atingido.");}else{setSampler(true);toast.success(saved.code+" salva. Arraste para escolher a próxima cor.");}
+    setSample(s);stopSampling();setMode("color");
+    toast.success(saved.code+" salva. Conta-gotas desligado.");
+    await utils.pod.session.listColorSamples.invalidate({procedureId});
   }catch(e:any){toast.error(e.message||"Não foi possível salvar essa cor.")}
 }
 function isControl(target:EventTarget|null){
@@ -470,6 +485,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
   <div className="preview" style={{background:referenceDraft.hex}}/>
   <div><strong>Cor selecionada</strong><small>{referenceDraft.hex.toUpperCase()} · RGB {referenceDraft.red}/{referenceDraft.green}/{referenceDraft.blue}</small><small>CMYK {referenceDraft.cyan}/{referenceDraft.magenta}/{referenceDraft.yellow}/{referenceDraft.black} · LAB {referenceDraft.labL.toFixed(1)} {referenceDraft.labA.toFixed(1)} {referenceDraft.labB.toFixed(1)}</small></div>
   <button className="cancel-label" onClick={()=>setReferenceDraft(null)}>Mover novamente</button>
+  <button disabled={saveSampleMutation.isPending} onClick={stopSampling}>Cancelar coleta</button>
   <button className="primary" disabled={saveSampleMutation.isPending} onClick={()=>void confirmReferenceSample()}>Confirmar</button>
 </div>}
 </main>
@@ -497,11 +513,11 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <button className="dock-add secondary" onClick={()=>referenceInput.current?.click()}><Plus size={16}/>{rex&&(refSrc?" Trocar referência":" Adicionar referência")}</button></div>
 </aside>
 
-<div className="cockpit-palette"><button className="palette-add" onClick={()=>{if(mode==="tonal"){setMode("color");setSampler(true)}else{setMode("tonal");setSampler(false);setReferenceDraft(null)}}}><Palette size={13}/> {mode==="tonal"?"Cores":"Tons"}</button>
-{mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):<>{samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}<button className={"palette-add "+(sampler?"selected":"")} onClick={()=>setSampler(v=>{const next=!v;if(!next)setReferenceDraft(null);return next})} disabled={samples.length>=30}><Pipette size={13}/> {sampler?"Amostragem ativa":"Amostrar"}</button></>}</div>{focusMode&&<div className="focus-palette-strip">
+<div className="cockpit-palette"><button className="palette-add" onClick={()=>{setMode(mode==="tonal"?"color":"tonal");stopSampling();}}><Palette size={13}/> {mode==="tonal"?"Cores":"Tons"}</button>
+{mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):<>{samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}<button className={"palette-add "+(sampler?"selected":"")} onClick={toggleSampling} aria-pressed={sampler} disabled={!sampler&&samples.length>=30}><Pipette size={13}/> {sampler?"Encerrar conta-gotas":"Amostrar"}</button></>}</div>{focusMode&&<div className="focus-palette-strip">
   <div className="focus-tonal-gradient" title="Escala de contraste"/>
   <div className="focus-samples">{samples.map(s=><button key={s.id} style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}} title={s.code}><span>{s.code}</span></button>)}</div>
-  <button className={"focus-sampler-button "+(sampler?"active":"")} onClick={()=>setSampler(v=>{const next=!v;if(!next)setReferenceDraft(null);return next})} title={sampler?"Encerrar amostragem":"Amostrar cor"}><Pipette size={15}/></button>
+  <button className={"focus-sampler-button "+(sampler?"active":"")} onClick={toggleSampling} aria-pressed={sampler} disabled={!sampler&&samples.length>=30} title={sampler?"Encerrar conta-gotas":"Amostrar cor"}>{sampler?<X size={15}/>:<Pipette size={15}/>}<span>{sampler?"Encerrar":"Amostrar"}</span></button>
 </div>}
 
 
@@ -524,7 +540,9 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 </section>}
 {sheet==="materials"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Adicionar material ativo</h3><p>Busca real no estoque. Nenhum material é duplicado.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} onClick={()=>{setActive(a=>[...a,m.id]);setSheet(null);setSearch("")}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section>}
 
-{sheet==="ink"&&ink&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{ink.name}</h3><p>Uso direto ou mistura. Conversão padrão: 20 gotas/ml.</p><div className="sheet-grid">{[1,3,5,10].map(n=><button key={n} className="sheet-option" onClick={()=>{try{const q=quantityForDrops(ink,n);void quickConsume(ink,q,ink.name+" · "+n+" gotas");setSheet(null)}catch(e:any){toast.error(e.message)}}}><b>+ {n} gotas</b><small>~ {(n*DROP).toFixed(2)} ml</small></button>)}<button className="sheet-option selected" onClick={()=>recipe(ink)}><b>Criar mistura</b><small>Batoque + proporções + histórico</small></button></div></section>}
+{sheet==="ink"&&ink&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{ink.name}</h3>
+<SessionMaterialQuantity key={ink.id} material={ink} value={directQuantity} onChange={setDirectQuantity} materials={stock} onMaterialChange={id=>{const m=stock.find(m=>m.id===id);if(m){setInk(m);setDirectQuantity("1")}}} disabled={consumeAuto.isPending}/>
+<div className="sheet-actions">{ink.kind!=="cup"&&<button onClick={()=>recipe(ink)}>Criar mistura</button>}<button className="primary" disabled={consumeAuto.isPending||!Number.isFinite(Number(directQuantity))||Number(directQuantity)<=0} onClick={()=>void quickConsume(ink,directQuantity,ink.name)}>Confirmar uso</button></div></section>}
 
 {sheet==="recipe"&&<section className="cockpit-sheet recipe-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Receita {sample?"· "+sample.code:""}</h3><p>Será gravada junto da sessão e das baixas de cada pigmento.</p>
 {sample&&<div className="recipe-sample-card">
@@ -551,7 +569,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <div className={"mix-summary mix-summary-sticky "+(drops>cupDropCapacity?"over":"")}><div>Total: {drops} / {cupDropCapacity} gotas · ~{ml.toFixed(2)} ml</div><div>Batoque {cup}: {CUP[cup].toFixed(2)} ml · ocupação ~{pct}%</div>{drops>cupDropCapacity&&<div className="mix-over-warning">Mistura acima da capacidade do batoque.</div>}{ings.map(i=>{const m=stock.find(x=>x.id===i.materialId);return <div key={i.materialId}>{m?.short}: {i.drops}gt · {drops?((i.drops/drops)*100).toFixed(1):0}%</div>})}</div>
 <div className="sheet-actions recipe-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={saveRecipeMutation.isPending||drops===0||drops>cupDropCapacity} onClick={()=>void saveRecipe()}>Salvar receita + baixar estoque</button></div></section>}
 
-{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · Amostra 5×5 px</h3><div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={canvasRefSrc?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);setSampler(true)}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button></div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · Batoque {r.cupSize}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
+{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · Amostra 5×5 px</h3><div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={canvasRefSrc?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);startSampling()}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button></div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · Batoque {r.cupSize}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
 
 {sheet==="notes"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Notas rápidas</h3><textarea className="cockpit-note" value={note} onChange={e=>setNote(e.target.value)}/><div className="sheet-actions"><button className="primary" disabled={updateProcedure.isPending} onClick={()=>void saveNotes()}>Salvar na sessão</button></div></section>}
 {sheet==="finish"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Revisão antes de concluir</h3><p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {recipes.filter((r:any)=>r.status!=="reverted").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>setSheet(null)}>Voltar</button><button className="primary" onClick={()=>{setSheet(null);props.onFinish()}}>Ir para conclusão da sessão</button></div></section>}

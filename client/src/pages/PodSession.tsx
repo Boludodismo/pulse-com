@@ -1,3 +1,5 @@
+import { isSessionInk, inkStockQuantity } from "@shared/sessionInkQuantity";
+import SessionMaterialQuantity from "@/components/SessionMaterialQuantity";
 import SessionMaterialPicker, { formatMaterialQuantity } from "@/components/SessionMaterialPicker";
 import { defaultSessionQuantity } from "@shared/sessionMaterialDefaults";
 import SessionCockpitV2 from "@/components/session/SessionCockpitV2";
@@ -769,13 +771,12 @@ export default function PodSession() {
                         disabled={consumeTenantMaterialMutation.isPending}
                         onClick={() => setSelectedMaterials(items => items.filter(item => item.id !== material.id))}><Trash2 className="h-4 w-4" /></Button>
                     </div>
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-end">
-                      <label className="text-xs text-muted-foreground">Quantidade ({material.unit})
-                        <Input className="mt-1 min-h-11 text-base" inputMode="decimal" value={selection.quantity}
-                          disabled={consumeTenantMaterialMutation.isPending || isFinished}
-                          aria-label={`Quantidade de ${material.name}`}
-                          onChange={event => setSelectedMaterials(items => items.map(item => item.id === material.id ? { ...item, quantity: event.target.value.replace(",", ".") } : item))} />
-                      </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-2 items-end">
+                      <SessionMaterialQuantity material={material} value={selection.quantity}
+                        materials={tenantMaterials.filter(m => m.id === material.id || !selectedMaterials.some(i => i.id === m.id))}
+                        onMaterialChange={id => setSelectedMaterials(items => items.map(item => item.id === material.id ? {id: Number(id), quantity: '1'} : item))}
+                        disabled={consumeTenantMaterialMutation.isPending || isFinished}
+                        onChange={quantity => setSelectedMaterials(items => items.map(item => item.id === material.id ? {...item, quantity} : item))} />
                       <Button className="min-h-11" disabled={consumeTenantMaterialMutation.isPending || isFinished || !Number.isFinite(Number(selection.quantity)) || Number(selection.quantity) <= 0}
                         onClick={() => setBatchConsumption({ materialId: material.id, quantity: selection.quantity })}>Confirmar uso</Button>
                     </div>
@@ -784,7 +785,7 @@ export default function PodSession() {
                 <SessionMaterialPicker materials={tenantMaterials.filter(material => !selectedMaterials.some(item => item.id === material.id))}
                   more={selectedMaterials.length > 0 || auditConsumptions.length > 0}
                   disabled={isFinished || consumeTenantMaterialMutation.isPending}
-                  onSelect={material => setSelectedMaterials(items => [...items, { id: material.id, quantity: defaultSessionQuantity(material) }])} />
+                  onSelect={material => setSelectedMaterials(items => [...items, { id: material.id, quantity: isSessionInk(material) ? inkStockQuantity(material.unit, 1, "drops", "M") : defaultSessionQuantity(material) }])} />
                 <p className="text-xs text-muted-foreground">Selecione os materiais e ajuste as quantidades. Confirme o uso de cada item para registrar o lote e baixar o estoque.</p>
               </div>
             )}
