@@ -26,7 +26,7 @@ import {
   transactions,
 } from "../../drizzle/schema";
 import { eq, and, desc, isNotNull, gte, lte, sql, type InferSelectModel } from "drizzle-orm";
-import { storagePut } from "../storage";
+import { storagePut, storageDelete } from "../storage";
 // notifyOwner é importado dinamicamente para compatibilidade com o bundler Vite ESM
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -457,7 +457,10 @@ export const proceduresRouter = router({
       const studioId = ctx.studioId;
       const db = await requireDb();
       const [proc] = await db
-        .select({ studioId: technicalProcedures.studioId })
+        .select({
+          studioId: technicalProcedures.studioId,
+          referenceImageKey: technicalProcedures.referenceImageKey,
+        })
         .from(technicalProcedures)
         .where(eq(technicalProcedures.id, input.procedureId))
         .limit(1);
@@ -468,39 +471,93 @@ export const proceduresRouter = router({
       const key = `procedures/${studioId}/${input.procedureId}/${input.imageType}-${randomSuffix()}.${ext}`;
       const { url } = await storagePut(key, buffer, input.mimeType);
 
-      const [result] = await db.insert(procedureImages).values({
-        procedureId: input.procedureId,
-        imageUrl: url,
-        imageKey: key,
-        imageType: input.imageType,
-        description: input.description ?? null,
-      });
+      let createdId: number | null = null;
+      let previousReferenceKey: string | null = null;
 
-      const insertId = (result as any).insertId as number;
-
-      // Atualizar URL na tabela principal se for imagem de referência ou final
       if (input.imageType === "reference") {
+        previousReferenceKey = proc.referenceImageKey ?? null;
+        const [existing] = await db
+          .select()
+          .from(procedureImages)
+          .where(and(
+            eq(procedureImages.procedureId, input.procedureId),
+            eq(procedureImages.imageType, "reference"),
+          ))
+          .orderBy(desc(procedureImages.id))
+          .limit(1);
+
+        if (existing) {
+          await db
+            .update(procedureImages)
+            .set({
+              imageUrl: url,
+              imageKey: key,
+              description: input.description ?? existing.description,
+            })
+            .where(eq(procedureImages.id, existing.id));
+          createdId = existing.id;
+
+          // Remove referências antigas duplicadas do registro da sessão.
+          await db
+            .delete(procedureImages)
+            .where(and(
+              eq(procedureImages.procedureId, input.procedureId),
+              eq(procedureImages.imageType, "reference"),
+              sql`${procedureImages.id} <> ${existing.id}`,
+            ));
+        } else {
+          const [result] = await db.insert(procedureImages).values({
+            procedureId: input.procedureId,
+            imageUrl: url,
+            imageKey: key,
+            imageType: "reference",
+            description: input.description ?? null,
+          });
+          createdId = (result as any).insertId as number;
+        }
+
         await db.update(technicalProcedures)
           .set({ referenceImageUrl: url, referenceImageKey: key })
           .where(eq(technicalProcedures.id, input.procedureId));
-      } else if (input.imageType === "final") {
-        await db.update(technicalProcedures)
-          .set({ finalImageUrl: url, finalImageKey: key })
-          .where(eq(technicalProcedures.id, input.procedureId));
-      } else if (input.imageType === "healed") {
-        await db.update(technicalProcedures)
-          .set({ healedImageUrl: url, healedImageKey: key })
-          .where(eq(technicalProcedures.id, input.procedureId));
-      } else if (input.imageType === "stencil") {
-        await db.update(technicalProcedures)
-          .set({ stencilImageUrl: url, stencilImageKey: key })
-          .where(eq(technicalProcedures.id, input.procedureId));
+
+        if (previousReferenceKey && previousReferenceKey !== key) {
+          await storageDelete(previousReferenceKey).catch((error) => {
+            console.warn("[Procedure reference] Old object could not be deleted:", error);
+          });
+        }
+      } else {
+        const [result] = await db.insert(procedureImages).values({
+          procedureId: input.procedureId,
+          imageUrl: url,
+          imageKey: key,
+          imageType: input.imageType,
+          description: input.description ?? null,
+        });
+        createdId = (result as any).insertId as number;
+
+        if (input.imageType === "final") {
+          await db.update(technicalProcedures)
+            .set({ finalImageUrl: url, finalImageKey: key })
+            .where(eq(technicalProcedures.id, input.procedureId));
+        } else if (input.imageType === "healed") {
+          await db.update(technicalProcedures)
+            .set({ healedImageUrl: url, healedImageKey: key })
+            .where(eq(technicalProcedures.id, input.procedureId));
+        } else if (input.imageType === "stencil") {
+          await db.update(technicalProcedures)
+            .set({ stencilImageUrl: url, stencilImageKey: key })
+            .where(eq(technicalProcedures.id, input.procedureId));
+        }
+      }
+
+      if (!createdId) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível registrar a imagem." });
       }
 
       const [created] = await db
         .select()
         .from(procedureImages)
-        .where(eq(procedureImages.id, insertId))
+        .where(eq(procedureImages.id, createdId))
         .limit(1);
       return created;
     }),
