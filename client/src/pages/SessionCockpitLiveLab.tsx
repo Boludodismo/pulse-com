@@ -300,6 +300,7 @@ async function uploadReference(file:File){
       description:"Referência principal da sessão",
     });
     await utils.pod.session.get.invalidate({procedureId});
+    await utils.pod.session.listVisualLayers.invalidate({procedureId});
     setRefOn(true);
     setView(V0);
     toast.success("Referência principal atualizada.");
@@ -406,10 +407,21 @@ return <div className="cockpit-lab">
 
 {flash&&<div className="cockpit-toast"><Check size={17} color="#10b981"/><span>{flash}</span><button onClick={()=>void undoStock()}>DESFAZER (5s)</button></div>}
 <input ref={colorPhotoInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const file=e.target.files?.[0];if(file){if(photoSrc)URL.revokeObjectURL(photoSrc);setPhotoSrc(URL.createObjectURL(file))}e.currentTarget.value=""}}/>
+<input ref={layerImageInput} type="file" accept="image/jpeg,image/png,image/webp" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void uploadVisualLayer(f);e.currentTarget.value=""}}/>
 <input ref={referenceInput} type="file" accept="image/jpeg,image/png,image/webp" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void uploadReference(f);e.currentTarget.value=""}}/>
 <input ref={finalInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void finalPhoto(f);e.currentTarget.value=""}}/>
 <footer className="cockpit-bottom"><button onClick={()=>void toggleTimer()}>{run?<Pause size={18}/>:<Play size={18}/>}<span className="button-label">{run?"PAUSAR":"RETOMAR"}</span></button><button onClick={()=>setSheet("materials")}><Package size={18}/><span className="button-label">ESTOQUE</span></button><button onClick={()=>finalInput.current?.click()}><Camera size={18}/><span className="button-label">FOTO</span></button><button className="finish" onClick={()=>{if(!charged&&proc.chargedAmount)setCharged(String(Number(proc.chargedAmount)/100));setSheet("finish")}}><Square size={17}/><span className="button-label">CONCLUIR</span></button></footer>
 
+{sheet==="layerAdd"&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Nova camada visual</h3><p>Adicione uma imagem independente. Ela poderá ser ocultada, ter a opacidade alterada e ser reordenada sem modificar a referência principal.</p>
+<div className="sheet-grid">{[
+  {type:"contrast",name:"Contraste",desc:"Versão preparada para leitura de contraste"},
+  {type:"stencil",name:"Decalque",desc:"Decalque isolado"},
+  {type:"stencil_overlay",name:"Decalque sobre referência",desc:"Sobreposição com opacidade inicial de 65%"},
+  {type:"image",name:"Camada de imagem",desc:"Qualquer outra imagem de apoio"},
+].map((item:any)=><button key={item.type} className={"sheet-option "+(newLayerType===item.type?"selected":"")} onClick={()=>{setNewLayerType(item.type);setNewLayerName(item.name)}}><b>{item.name}</b><small>{item.desc}</small></button>)}</div>
+<label className="layer-name-label">Nome da camada</label><input className="search-input" value={newLayerName} onChange={e=>setNewLayerName(e.target.value)} placeholder="Ex.: Contraste PB, Decalque 2..."/>
+<div className="sheet-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={!newLayerName.trim()||addVisualLayerMutation.isPending||uploadImage.isPending} onClick={()=>layerImageInput.current?.click()}><Plus size={15}/> Selecionar imagem</button></div>
+</section>}
 {sheet==="materials"&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Adicionar material ativo</h3><p>Busca real no estoque de staging. Nenhum material é duplicado.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} onClick={()=>{setActive(a=>[...a,m.id]);setSheet(null);setSearch("")}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section>}
 
 {sheet==="ink"&&ink&&<section className="cockpit-sheet"><button className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{ink.name}</h3><p>Uso direto ou mistura. Conversão padrão: 20 gotas/ml.</p><div className="sheet-grid">{[1,3,5,10].map(n=><button key={n} className="sheet-option" onClick={()=>{try{const q=quantityForDrops(ink,n);void quickConsume(ink,q,ink.name+" · "+n+" gotas");setSheet(null)}catch(e:any){toast.error(e.message)}}}><b>+ {n} gotas</b><small>~ {(n*DROP).toFixed(2)} ml</small></button>)}<button className="sheet-option selected" onClick={()=>recipe(ink)}><b>Criar mistura</b><small>Batoque + proporções + histórico</small></button></div></section>}
