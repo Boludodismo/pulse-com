@@ -141,6 +141,15 @@ export async function ensureSessionCockpitLabSchema() {
       KEY procedure_ink_recipe_results_procedure_idx(studioId,procedureId,id)
     ) ENGINE=InnoDB`);
 
+    const [sampleLabColumns] = await connection.query<RowDataPacket[]>(
+      "SHOW COLUMNS FROM procedure_color_samples LIKE 'labL'"
+    );
+    if (!sampleLabColumns.length) {
+      await connection.query(
+        "ALTER TABLE procedure_color_samples ADD COLUMN labL DECIMAL(7,3) NULL AFTER black, ADD COLUMN labA DECIMAL(7,3) NULL AFTER labL, ADD COLUMN labB DECIMAL(7,3) NULL AFTER labA"
+      );
+    }
+
     const [columns] = await connection.query<RowDataPacket[]>(
       "SHOW COLUMNS FROM procedure_inventory_consumptions LIKE 'recipeId'"
     );
