@@ -27,12 +27,14 @@ import { processPendingIntegrationJobs } from "../messaging/service";
 import { startIntegrationJobWorker } from "../messaging/jobWorker";
 import { receiveBotConversaWebhook } from "../messaging/secureWebhook";
 import { runStartupMigrations } from "./migrations";
+import { ensureSessionCockpitSchema } from "./sessionCockpitSchema";
 import { storageGet, verifyStorageAccessToken, checkS3Storage } from "../storage";
 
 async function startServer() {
   // Keep schema synchronized on controlled standalone deployments.
   // Disabled by default so existing Manus/production behavior is unchanged.
   await runStartupMigrations();
+  await ensureSessionCockpitSchema();
   await ensureStagingInventorySchema();
   await ensureStagingMessagingSchema();
   await ensureStagingIntelligentInboxSchema();
@@ -84,6 +86,32 @@ async function startServer() {
       return res.status(404).json({ error: "Arquivo não encontrado." });
     }
   });
+  // Same-origin storage proxy used for safe canvas pixel sampling on Safari/iOS.
+  app.get("/api/storage-inline", async (req, res) => {
+    try {
+      const key = typeof req.query.key === "string" ? req.query.key : "";
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      if (!key || !token || !verifyStorageAccessToken(key, token)) {
+        return res.status(403).json({ error: "Acesso ao arquivo não autorizado." });
+      }
+      const { url } = await storageGet(key);
+      if (!url) return res.status(404).json({ error: "Arquivo indisponível." });
+      const upstream = await fetch(url);
+      if (!upstream.ok) {
+        return res.status(upstream.status).json({ error: "Imagem indisponível." });
+      }
+      const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      return res.status(200).send(bytes);
+    } catch (error) {
+      console.error("[Storage inline] Failed to proxy object", error);
+      return res.status(404).json({ error: "Arquivo não encontrado." });
+    }
+  });
+
   // Auth routes based on AUTH_MODE
   if (ENV.authMode === "local") {
     console.log("[Auth] Using local authentication mode");

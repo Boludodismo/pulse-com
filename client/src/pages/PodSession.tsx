@@ -1,5 +1,5 @@
 import { defaultSessionQuantity } from "@shared/sessionMaterialDefaults";
-import SessionWorkspace from "@/components/session/SessionWorkspace";
+import SessionCockpitV2 from "@/components/session/SessionCockpitV2";
 import ConsumeMaterialBatch from "@/components/ConsumeMaterialBatch";
 import { useState, useEffect, useRef, useCallback } from "react";
 import React, { type ReactNode } from "react";
@@ -500,7 +500,7 @@ export default function PodSession() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col" inert={referenceFullscreen ? true : undefined}>
-      {referenceFullscreen && <SessionWorkspace procedureId={procedureId} studioId={procedure.studioId} clientId={procedure.clientId} artistId={procedure.artistId ?? undefined} title={procedure.title} elapsed={formatTime(elapsed)} running={isRunning} finished={isFinished} timerBusy={timerMutation.isPending || startPauseMutation.isPending || resumePauseMutation.isPending} onTimer={isNew ? handleStart : isPaused ? handleResume : handlePause} onClose={() => { if (document.fullscreenElement) void document.exitFullscreen(); setReferenceFullscreen(false); }} images={images} originalSrc={referenceImage?.imageUrl} stencilSrc={stencilImage?.imageUrl} /> }
+      {referenceFullscreen && <SessionCockpitV2 procedureId={procedureId} studioId={procedure.studioId} clientId={procedure.clientId} artistId={procedure.artistId ?? undefined} title={procedure.title} elapsed={formatTime(elapsed)} running={isRunning} finished={isFinished} timerBusy={timerMutation.isPending || startPauseMutation.isPending || resumePauseMutation.isPending} onTimer={isNew ? handleStart : isPaused ? handleResume : handlePause} onClose={() => { if (document.fullscreenElement) void document.exitFullscreen(); setReferenceFullscreen(false); }} onFinish={() => { if (document.fullscreenElement) void document.exitFullscreen(); setReferenceFullscreen(false); setFinalizeOpen(true); }} originalSrc={referenceImage?.imageUrl} /> }
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="border-b bg-card px-3 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-3 sticky top-0 z-40">
         <Button

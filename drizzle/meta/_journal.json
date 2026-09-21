@@ -435,6 +435,13 @@
       "when": 1789866000000,
       "tag": "0061_quote_public_links",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "5",
+      "when": 1789952400000,
+      "tag": "0062_session_cockpit_v2",
+      "breakpoints": true
     }
   ]
 }

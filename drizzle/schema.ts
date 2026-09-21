@@ -956,3 +956,5 @@ export const inventoryBatches = mysqlTable("inventory_batches", {
 export { inventoryLoans, inventoryLoanEvents, inventoryNotices, inventoryAlertPreferences } from "./inventoryWorkflowSchema";
 
 export { appointmentMaterialKits, appointmentKitOperations, inventoryMaterialRegistrations } from "./appointmentKitSchema";
+
+export * from "./sessionCockpitSchema";
