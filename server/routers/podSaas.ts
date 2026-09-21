@@ -292,6 +292,109 @@ export const podSaasRouter = router({
         .filter(material => artistId == null || canUseMaterial(material.ownerArtistId, material.suppliedTo, artistId));
     }),
 
+    materialColorSamples: tenantProcedure
+      .input(z.object({ artistId: z.number().int().positive().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        await requireModule(ctx, "stock");
+        const database = await requireDatabase();
+        const artistId = input?.artistId ?? (isInventoryManager(ctx) ? null : ctx.artistId);
+        assertOwnArtist(ctx, artistId);
+        const colors = await database
+          .select()
+          .from(tenantMaterialColorSamples)
+          .where(eq(tenantMaterialColorSamples.studioId, ctx.studioId))
+          .orderBy(asc(tenantMaterialColorSamples.tenantMaterialId));
+        if (artistId == null) return colors;
+
+        const allocations = await database.select().from(studioMaterialArtists)
+          .where(eq(studioMaterialArtists.studioId, ctx.studioId));
+        const materials = await database.select({
+          id: tenantMaterials.id,
+          ownerArtistId: tenantMaterials.ownerArtistId,
+        }).from(tenantMaterials).where(and(
+          eq(tenantMaterials.studioId, ctx.studioId),
+          eq(tenantMaterials.isActive, 1),
+        ));
+        const allowed = new Set(materials
+          .filter(material => canUseMaterial(
+            material.ownerArtistId,
+            allocations.filter(a => a.tenantMaterialId === material.id).map(a => a.artistId),
+            artistId,
+          ))
+          .map(material => material.id));
+        return colors.filter(color => allowed.has(color.tenantMaterialId));
+      }),
+
+    saveMaterialColorSample: tenantProcedure
+      .input(z.object({
+        tenantMaterialId: z.number().int().positive(),
+        artistId: z.number().int().positive().optional(),
+        source: z.enum(["photo", "manual", "catalog"]).default("photo"),
+        color: colorValueSchema,
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "stock", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const material = (await tx.select().from(tenantMaterials).where(and(
+            eq(tenantMaterials.id, input.tenantMaterialId),
+            eq(tenantMaterials.studioId, ctx.studioId),
+            eq(tenantMaterials.isActive, 1),
+          )).limit(1))[0];
+          if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Tinta não encontrada no estoque." });
+
+          const resolvedArtistId = input.artistId ?? ctx.artistId ?? null;
+          await requireMaterialForArtist(
+            tx as unknown as InventoryDatabase,
+            ctx,
+            material,
+            resolvedArtistId,
+          );
+
+          const existing = (await tx.select({ id: tenantMaterialColorSamples.id })
+            .from(tenantMaterialColorSamples)
+            .where(and(
+              eq(tenantMaterialColorSamples.studioId, ctx.studioId),
+              eq(tenantMaterialColorSamples.tenantMaterialId, material.id),
+            )).limit(1))[0];
+
+          const values = {
+            artistId: resolvedArtistId,
+            source: input.source,
+            hex: input.color.hex.toUpperCase(),
+            red: input.color.red,
+            green: input.color.green,
+            blue: input.color.blue,
+            cyan: input.color.cyan,
+            magenta: input.color.magenta,
+            yellow: input.color.yellow,
+            black: input.color.black,
+            labL: input.color.labL.toFixed(3),
+            labA: input.color.labA.toFixed(3),
+            labB: input.color.labB.toFixed(3),
+            createdByUserId: ctx.user.id,
+          };
+
+          if (existing) {
+            await tx.update(tenantMaterialColorSamples).set(values)
+              .where(and(
+                eq(tenantMaterialColorSamples.id, existing.id),
+                eq(tenantMaterialColorSamples.studioId, ctx.studioId),
+              ));
+            return { id: existing.id, tenantMaterialId: material.id, updated: true };
+          }
+
+          const inserted = await tx.insert(tenantMaterialColorSamples).values({
+            studioId: ctx.studioId,
+            tenantMaterialId: material.id,
+            ...values,
+          });
+          const id = insertId(inserted);
+          if (!id) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar a amostra tonal." });
+          return { id, tenantMaterialId: material.id, updated: false };
+        });
+      }),
+
     movements: tenantProcedure.input(z.object({ tenantMaterialId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       await requireModule(ctx, "stock");
       const database = await requireDatabase();
