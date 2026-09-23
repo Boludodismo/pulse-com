@@ -3,7 +3,7 @@ import { clientPatchFromAnamnese } from "../shared/clientPersonal";
 import { parseAnamneseExpiry } from "./anamneseTime";
 import { anamneseExpiryForDatabase } from "./anamneseTime";
 import { appointmentInstant, appointmentsOverlap } from "../shared/appointmentTime";
-import { eq, desc, and, gte, lte, or, like, sql, ne } from "drizzle-orm";
+import { eq, desc, and, gte, lte, or, like, sql, ne, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { 
   InsertUser, 
@@ -17,6 +17,7 @@ import {
   notificationLogs,
   studioSettings,
   artists,
+  artistNotificationSettings,
   auditLogs,
   reportTemplates,
   calendars,
@@ -1469,21 +1470,77 @@ export async function updateStudioSettings(settings: Partial<InsertStudioSetting
 }
 
 // ============ ARTISTS FUNCTIONS ============
+
+type ArtistNotificationSettingsPatch = {
+  whatsappOperationalEnabled?: number;
+  manualClientReminderEnabled?: number;
+  notifyClientActionsEnabled?: number;
+};
+
+async function attachArtistNotificationSettings<T extends { id: number; studioId: number }>(rows: T[]) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return rows.map((row) => ({
+    ...row,
+    whatsappOperationalEnabled: 0,
+    manualClientReminderEnabled: 0,
+    notifyClientActionsEnabled: 1,
+  }));
+  const prefs = await db.select().from(artistNotificationSettings)
+    .where(inArray(artistNotificationSettings.artistId, rows.map((row) => row.id)));
+  const byArtist = new Map(prefs.map((pref) => [`${pref.studioId}:${pref.artistId}`, pref]));
+  return rows.map((row) => {
+    const pref = byArtist.get(`${row.studioId}:${row.id}`);
+    return {
+      ...row,
+      whatsappOperationalEnabled: pref?.whatsappOperationalEnabled ?? 0,
+      manualClientReminderEnabled: pref?.manualClientReminderEnabled ?? 0,
+      notifyClientActionsEnabled: pref?.notifyClientActionsEnabled ?? 1,
+    };
+  });
+}
+
+export async function upsertArtistNotificationSettings(studioId: number, artistId: number, patch: ArtistNotificationSettingsPatch) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = (await db.select().from(artistNotificationSettings).where(and(
+    eq(artistNotificationSettings.studioId, studioId),
+    eq(artistNotificationSettings.artistId, artistId),
+  )).limit(1))[0];
+  const whatsappOperationalEnabled = patch.whatsappOperationalEnabled ?? existing?.whatsappOperationalEnabled ?? 0;
+  const normalized = {
+    whatsappOperationalEnabled: whatsappOperationalEnabled === 1 ? 1 : 0,
+    manualClientReminderEnabled: whatsappOperationalEnabled === 1 && (patch.manualClientReminderEnabled ?? existing?.manualClientReminderEnabled ?? 0) === 1 ? 1 : 0,
+    notifyClientActionsEnabled: (patch.notifyClientActionsEnabled ?? existing?.notifyClientActionsEnabled ?? 1) === 0 ? 0 : 1,
+  };
+  if (existing) {
+    await db.update(artistNotificationSettings).set({ ...normalized, updatedAt: toDateStr(new Date()) }).where(and(
+      eq(artistNotificationSettings.studioId, studioId),
+      eq(artistNotificationSettings.artistId, artistId),
+    ));
+  } else {
+    await db.insert(artistNotificationSettings).values({ studioId, artistId, ...normalized });
+  }
+  return normalized;
+}
+
 export async function listArtists(studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
 
   if (studioId != null && artistId != null) {
-    return await db.select().from(artists)
+    const rows = await db.select().from(artists)
       .where(and(eq(artists.studioId, studioId), eq(artists.id, artistId)))
       .orderBy(artists.name);
+    return attachArtistNotificationSettings(rows);
   }
   if (studioId != null) {
-    return await db.select().from(artists)
+    const rows = await db.select().from(artists)
       .where(eq(artists.studioId, studioId))
       .orderBy(artists.name);
+    return attachArtistNotificationSettings(rows);
   }
-  return await db.select().from(artists).orderBy(artists.name);
+  const rows = await db.select().from(artists).orderBy(artists.name);
+  return attachArtistNotificationSettings(rows);
 }
 
 export async function getArtistById(id: number, studioId?: number | null) {
@@ -1493,7 +1550,8 @@ export async function getArtistById(id: number, studioId?: number | null) {
   const result = await db.select().from(artists)
     .where(studioId != null ? and(eq(artists.id, id), eq(artists.studioId, studioId)) : eq(artists.id, id))
     .limit(1);
-  return result.length > 0 ? result[0] : null;
+  if (!result.length) return null;
+  return (await attachArtistNotificationSettings(result))[0];
 }
 
 export async function createArtist(artist: InsertArtist) {
