@@ -2057,6 +2057,9 @@ export const appRouter = router({
         name: z.string().min(1),
         email: z.string().email().optional().or(z.literal("")),
         phone: z.string().optional(),
+        whatsappOperationalEnabled: z.number().int().min(0).max(1).optional(),
+        manualClientReminderEnabled: z.number().int().min(0).max(1).optional(),
+        notifyClientActionsEnabled: z.number().int().min(0).max(1).optional(),
         instagram: z.string().optional(),
         specialty: z.string().optional(),
         bio: z.string().optional(),
@@ -2068,9 +2071,22 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         if (!isInventoryManager(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode cadastrar artistas." });
-        const { avatar, ...fields } = input;
+        const {
+          avatar,
+          whatsappOperationalEnabled,
+          manualClientReminderEnabled,
+          notifyClientActionsEnabled,
+          ...fields
+        } = input;
         const photo = avatar ? await saveArtistAvatar(ctx.studioId, avatar) : {};
-        return await db.createArtist({ ...fields, ...photo, studioId: ctx.studioId });
+        const created = await db.createArtist({ ...fields, ...photo, studioId: ctx.studioId });
+        if (!created) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível concluir o cadastro do artista." });
+        await db.upsertArtistNotificationSettings(ctx.studioId, created.id, {
+          whatsappOperationalEnabled,
+          manualClientReminderEnabled,
+          notifyClientActionsEnabled,
+        });
+        return await db.getArtistById(created.id, ctx.studioId);
       }),
 
     update: tenantProcedure
@@ -2079,6 +2095,9 @@ export const appRouter = router({
         name: z.string().min(1).optional(),
         email: z.string().email().optional().or(z.literal("")),
         phone: z.string().optional(),
+        whatsappOperationalEnabled: z.number().int().min(0).max(1).optional(),
+        manualClientReminderEnabled: z.number().int().min(0).max(1).optional(),
+        notifyClientActionsEnabled: z.number().int().min(0).max(1).optional(),
         instagram: z.string().optional(),
         specialty: z.string().optional(),
         bio: z.string().optional(),
@@ -2092,10 +2111,25 @@ export const appRouter = router({
         assertOwnArtist(ctx, input.id);
         const artist = await db.getArtistById(input.id, ctx.studioId);
         if (!artist) throw new TRPCError({ code: "NOT_FOUND", message: "Artista não encontrado neste estúdio." });
-        const { id, avatar, ...data } = input;
+        const {
+          id,
+          avatar,
+          whatsappOperationalEnabled,
+          manualClientReminderEnabled,
+          notifyClientActionsEnabled,
+          ...data
+        } = input;
         if (!isInventoryManager(ctx) && data.active !== undefined && data.active !== artist.active) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode alterar o status." });
         const photo = avatar ? await saveArtistAvatar(ctx.studioId, avatar) : {};
-        return await db.updateArtist(id, { ...data, ...photo });
+        await db.updateArtist(id, { ...data, ...photo });
+        if (whatsappOperationalEnabled !== undefined || manualClientReminderEnabled !== undefined || notifyClientActionsEnabled !== undefined) {
+          await db.upsertArtistNotificationSettings(ctx.studioId, id, {
+            whatsappOperationalEnabled,
+            manualClientReminderEnabled,
+            notifyClientActionsEnabled,
+          });
+        }
+        return await db.getArtistById(id, ctx.studioId);
       }),
 
     delete: tenantProcedure
