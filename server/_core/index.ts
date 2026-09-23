@@ -5,6 +5,7 @@ import {ensureInventoryTraceSchema} from "./inventoryTraceSchema";
 import { ensureLegacyStockScope } from "./legacyStockScope";
 import { ensureStudioSettingsScope } from "./studioSettingsScope";
 import { ensureAppointmentCardSchema } from "./appointmentCardSchema";
+import { ensureArtistNotificationSchema } from "./artistNotificationSchema";
 import { ensureContactImportSchema } from "../contactImport/schema";
 import {ensureStagingArtistInvitationSchema} from './stagingArtistInvitationSchema';
 import {ensureStagingIntelligentInboxSchema} from './stagingIntelligentInboxSchema';
@@ -44,6 +45,7 @@ async function startServer() {
   await ensureStudioSettingsScope();
   await ensureLegacyStockScope();
   await ensureAppointmentCardSchema();
+  await ensureArtistNotificationSchema();
   await ensureInventoryTraceSchema();
   await ensureInventoryWorkflowSchema();
   await ensureAppointmentKitSchema();

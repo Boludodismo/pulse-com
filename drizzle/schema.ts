@@ -757,6 +757,22 @@ export type CollaboratorRate = typeof collaboratorRates.$inferSelect;
 export type InsertCollaboratorRate = typeof collaboratorRates.$inferInsert;
 export type InsertPasswordResetToken = typeof passwordResetTokens.$inferInsert;
 
+// ── Preferências de comunicação operacional dos artistas ───────────────────
+
+export const artistNotificationSettings = mysqlTable("artist_notification_settings", {
+  id: int().autoincrement().notNull(),
+  studioId: int("studio_id").notNull(),
+  artistId: int("artist_id").notNull(),
+  whatsappOperationalEnabled: tinyint("whatsapp_operational_enabled").default(0).notNull(),
+  manualClientReminderEnabled: tinyint("manual_client_reminder_enabled").default(0).notNull(),
+  notifyClientActionsEnabled: tinyint("notify_client_actions_enabled").default(1).notNull(),
+  createdAt: timestamp("created_at", { mode: "string" }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { mode: "string" }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("artist_notification_settings_studio_artist_unique").on(table.studioId, table.artistId),
+  index("artist_notification_settings_enabled_idx").on(table.studioId, table.whatsappOperationalEnabled, table.manualClientReminderEnabled),
+]);
+
 // ── Central de Mensagens / WhatsApp Automático ─────────────────────────────
 
 export const whatsappIntegrations = mysqlTable("whatsapp_integrations", {
@@ -922,6 +938,8 @@ export const integrationSchedules = mysqlTable("integration_schedules", {
 ]);
 
 // Types
+export type ArtistNotificationSettings = typeof artistNotificationSettings.$inferSelect;
+export type InsertArtistNotificationSettings = typeof artistNotificationSettings.$inferInsert;
 export type WhatsappIntegration = typeof whatsappIntegrations.$inferSelect;
 export type InsertWhatsappIntegration = typeof whatsappIntegrations.$inferInsert;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
