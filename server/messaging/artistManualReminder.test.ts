@@ -5,7 +5,7 @@ import {
   buildManualClientReminderMessage,
 } from "./automaticReminders";
 
-describe("artist manual WhatsApp reminder", () => {
+// Staging validation marker: reconciled with current base.\ndescribe("artist manual WhatsApp reminder", () => {
   const actionLinks = {
     confirmed: "https://tatuei.com/confirmar?token=confirm&action=confirmed",
     early: "https://tatuei.com/confirmar?token=early&action=early",
