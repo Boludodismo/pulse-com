@@ -1506,10 +1506,11 @@ export async function upsertArtistNotificationSettings(studioId: number, artistI
     eq(artistNotificationSettings.studioId, studioId),
     eq(artistNotificationSettings.artistId, artistId),
   )).limit(1))[0];
+  const whatsappOperationalEnabled = patch.whatsappOperationalEnabled ?? existing?.whatsappOperationalEnabled ?? 0;
   const normalized = {
-    whatsappOperationalEnabled: patch.whatsappOperationalEnabled === 1 ? 1 : 0,
-    manualClientReminderEnabled: patch.manualClientReminderEnabled === 1 ? 1 : 0,
-    notifyClientActionsEnabled: patch.notifyClientActionsEnabled === 0 ? 0 : 1,
+    whatsappOperationalEnabled: whatsappOperationalEnabled === 1 ? 1 : 0,
+    manualClientReminderEnabled: whatsappOperationalEnabled === 1 && (patch.manualClientReminderEnabled ?? existing?.manualClientReminderEnabled ?? 0) === 1 ? 1 : 0,
+    notifyClientActionsEnabled: (patch.notifyClientActionsEnabled ?? existing?.notifyClientActionsEnabled ?? 1) === 0 ? 0 : 1,
   };
   if (existing) {
     await db.update(artistNotificationSettings).set({ ...normalized, updatedAt: toDateStr(new Date()) }).where(and(
