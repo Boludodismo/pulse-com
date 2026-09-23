@@ -1,3 +1,4 @@
+import { TatueiBotIcon } from "./TatueiBotIcon";
 import { InventoryNoticeIndicator } from "./InventoryNotices";
 import {trpc} from '@/lib/trpc';
 import {isInvitedArtist,artistRouteModule} from '@shared/artistInvitations';
@@ -41,6 +42,7 @@ import { Button } from "./ui/button";
 import GlobalSearch from "./GlobalSearch";
 
 const menuItems = [
+  { icon: TatueiBotIcon, label: "Bot Tatuei", path: "/bot-tatuei", roles: ["superadmin", "admin", "collaborator"] },
   { icon: FileText, label: "Históricos anteriores", path: "/historicos-anteriores", roles: ["superadmin"] },
   { icon: MessageSquare, label: "Central Inteligente", path: "/intelligent-inbox", roles: ["superadmin", "admin", "collaborator"] },
   { icon: LayoutDashboard, label: "Dashboard", path: "/", roles: ["superadmin", "admin", "collaborator"] },

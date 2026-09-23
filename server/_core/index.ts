@@ -1,3 +1,6 @@
+import { ensureNativeBotSchema } from "../nativeBot/database";
+import { receiveNativeBotWebhook } from "../nativeBot/webhook";
+import { startNativeBotWorker } from "../nativeBot/worker";
 import { INVENTORY_COLUMNS } from "../../shared/inventorySpreadsheet";
 import { ensureAppointmentKitSchema } from "./appointmentKitSchema";
 import { ensureInventoryWorkflowSchema } from "./inventoryWorkflowSchema";
@@ -50,6 +53,7 @@ async function startServer() {
   await ensureInventoryWorkflowSchema();
   await ensureAppointmentKitSchema();
   await ensureContactImportSchema();
+  await ensureNativeBotSchema();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {
     await checkS3Storage();
@@ -57,6 +61,8 @@ async function startServer() {
   }
   const app = express();
   const server = createServer(app);
+  startNativeBotWorker();
+  app.use("/api/native-bot/webhook", express.json({ limit: "256kb" }));
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({
     limit: "50mb",
@@ -65,6 +71,8 @@ async function startServer() {
     },
   }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  app.post("/api/native-bot/webhook/:key", receiveNativeBotWebhook);
 
   // Lightweight health endpoint for hosting platforms.
   app.get("/api/inventory-template.xlsx", async (_req, res) => {

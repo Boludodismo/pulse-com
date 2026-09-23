@@ -11,6 +11,7 @@ export function isInvitedArtist(user?: { openId?: string; role?: string } | null
 }
 /** Explicit route map: unknown management screens remain inaccessible to invitees. */
 export function artistRouteModule(path: string): ArtistAccessModule | 'self' | null {
+  if (path==='/bot-tatuei') return 'self';
   if (path==='/' || path==='/artists') return 'self';
   if (path==='/clients' || path.startsWith('/clients/')) return 'clients';
   if (path==='/schedule' || path==='/calendar') return 'appointments';

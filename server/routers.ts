@@ -1,3 +1,4 @@
+import { nativeBotRouter } from "./routers/nativeBot";
 import { isPrivateInboxOwner } from "./intelligentInbox/access";
 import { clientBirthDate, clientPersonalPrefill } from "../shared/clientPersonal";
 import { parseAnamneseExpiry } from "./anamneseTime";
@@ -63,6 +64,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  nativeBot: nativeBotRouter,
   legacyArchive: legacyArchiveRouter,
   artistInvitations: artistInvitationsRouter,
   intelligentInbox: intelligentInboxRouter,
