@@ -757,7 +757,7 @@ export type CollaboratorRate = typeof collaboratorRates.$inferSelect;
 export type InsertCollaboratorRate = typeof collaboratorRates.$inferInsert;
 export type InsertPasswordResetToken = typeof passwordResetTokens.$inferInsert;
 
-// ── Central de Mensagens / WhatsApp Automático ─────────────────────────────
+// ── Preferências de comunicação operacional dos artistas ───────────────────\n\nexport const artistNotificationSettings = mysqlTable("artist_notification_settings", {\n  id: int().autoincrement().notNull(),\n  studioId: int("studio_id").notNull(),\n  artistId: int("artist_id").notNull(),\n  whatsappOperationalEnabled: tinyint("whatsapp_operational_enabled").default(0).notNull(),\n  manualClientReminderEnabled: tinyint("manual_client_reminder_enabled").default(0).notNull(),\n  notifyClientActionsEnabled: tinyint("notify_client_actions_enabled").default(1).notNull(),\n  createdAt: timestamp("created_at", { mode: "string" }).default(sql\`CURRENT_TIMESTAMP\`).notNull(),\n  updatedAt: timestamp("updated_at", { mode: "string" }).default(sql\`CURRENT_TIMESTAMP\`).notNull(),\n}, (table) => [\n  uniqueIndex("artist_notification_settings_studio_artist_unique").on(table.studioId, table.artistId),\n  index("artist_notification_settings_enabled_idx").on(table.studioId, table.whatsappOperationalEnabled, table.manualClientReminderEnabled),\n]);\n\n// ── Central de Mensagens / WhatsApp Automático ─────────────────────────────
 
 export const whatsappIntegrations = mysqlTable("whatsapp_integrations", {
   id: int().autoincrement().notNull(),
@@ -922,7 +922,7 @@ export const integrationSchedules = mysqlTable("integration_schedules", {
 ]);
 
 // Types
-export type WhatsappIntegration = typeof whatsappIntegrations.$inferSelect;
+export type ArtistNotificationSettings = typeof artistNotificationSettings.$inferSelect;\nexport type InsertArtistNotificationSettings = typeof artistNotificationSettings.$inferInsert;\nexport type WhatsappIntegration = typeof whatsappIntegrations.$inferSelect;
 export type InsertWhatsappIntegration = typeof whatsappIntegrations.$inferInsert;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type InsertMessageTemplate = typeof messageTemplates.$inferInsert;
