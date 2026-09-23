@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
-import { anamneseRequests, anamneseSubmissions, anamnesisRecords, appointmentActionAlerts, appointmentActionLinks, appointments, artists, clients } from "../drizzle/schema";
+import { anamneseRequests, anamneseSubmissions, anamnesisRecords, appointmentActionAlerts, appointmentActionLinks, appointments, artists, artistNotificationSettings, clients } from "../drizzle/schema";
 import { getDb } from "./db";
 import { firstName } from "./messaging/messagePresentation";
 import { anamneseExpiryForDatabase } from "./anamneseTime";
@@ -216,6 +216,16 @@ export async function queueArtistActionNotification(input: {
     });
     return false;
   }
+  const preference = (await db.select({
+    whatsappOperationalEnabled: artistNotificationSettings.whatsappOperationalEnabled,
+    notifyClientActionsEnabled: artistNotificationSettings.notifyClientActionsEnabled,
+  }).from(artistNotificationSettings).where(and(
+    eq(artistNotificationSettings.studioId, input.studioId),
+    eq(artistNotificationSettings.artistId, artist.id),
+  )).limit(1))[0];
+  if (preference?.whatsappOperationalEnabled !== 1 || preference.notifyClientActionsEnabled !== 1) {
+    return false;
+  }
 
   const actionText: Record<AppointmentAction, string> = {
     confirmed: "confirmou presença",
@@ -238,6 +248,7 @@ export async function queueArtistActionNotification(input: {
     recipientPhone: artist.phone,
     recipientName: firstName(artist.name),
     recipientType: "artist",
+    artistId: artist.id,
     clientId: appointment.clientId,
     appointmentId: appointment.id,
     trigger: `appointment_action_${input.action}`,
