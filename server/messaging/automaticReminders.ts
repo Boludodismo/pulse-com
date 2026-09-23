@@ -1,7 +1,7 @@
 import { careRules } from "../../drizzle/customerCareSchema";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { appointments, artists, clients, integrationContacts, integrationJobs, messageAutomationSettings, appointmentReminders, studios, whatsappIntegrations } from "../../drizzle/schema";
+import { appointments, artists, artistNotificationSettings, clients, integrationContacts, integrationJobs, messageAutomationSettings, appointmentReminders, studios, whatsappIntegrations } from "../../drizzle/schema";
 import { hashIntegrationPayload } from "./crypto";
 import { dispatchTemplateMessage, sendAndLog } from "./service";
 import { interpolateTemplate } from "./provider";
@@ -9,11 +9,12 @@ import { formatAppointmentActionLinks, issueAppointmentActionLinks } from "../ap
 import { firstName, formatStudioAddress, useFirstNameInGreeting } from "./messagePresentation";
 import { appointmentInstant } from "../../shared/appointmentTime";
 import { zonedSqlDateTime } from "../../shared/studioClock";
+import { normalizeBrazilianPhone } from "./phone";
 export { zonedSqlDateTime } from "../../shared/studioClock";
 
 const FALLBACK_BIRTHDAY_TEMPLATE = "Bom dia, {nome_cliente}! 🎉 Feliz aniversário! Desejamos muita alegria e um novo ciclo cheio de boas histórias. Um abraço da equipe {nome_estudio}!";
 
-export function automaticReminderIdempotencyKey(kind: "appointment" | "birthday" | "individual" | "one_hour_client" | "one_hour_artist", integrationId: number, sourceId: number, occurrence: string) {
+export function automaticReminderIdempotencyKey(kind: "appointment" | "birthday" | "individual" | "one_hour_client" | "one_hour_artist" | "artist_manual_reminder", integrationId: number, sourceId: number, occurrence: string) {
   return hashIntegrationPayload(`automatic:${kind}:${integrationId}:${sourceId}:${occurrence}`);
 }
 
@@ -62,6 +63,56 @@ function dateAndTime(value: string) {
   };
 }
 
+export function buildManualClientReminderMessage(input: {
+  clientName: string | null;
+  studioName: string;
+  artistName: string;
+  service: string;
+  date: string;
+  time: string;
+  actionLinks: Awaited<ReturnType<typeof issueAppointmentActionLinks>>;
+}) {
+  return [
+    `Olá, ${firstName(input.clientName)}! 👋`,
+    "",
+    `Passando para confirmar seu horário com ${input.artistName} no ${input.studioName}:`,
+    `📅 ${input.date} às ${input.time}`,
+    `✏️ ${input.service}`,
+    "",
+    "Escolha abaixo a opção que corresponde ao seu horário:",
+    formatAppointmentActionLinks(input.actionLinks),
+    "",
+    "Sua resposta será registrada diretamente no Tatuei.",
+  ].join("\n");
+}
+
+export function buildArtistManualReminderMessage(input: {
+  artistName: string | null;
+  clientName: string | null;
+  service: string;
+  date: string;
+  time: string;
+  clientWhatsAppLink: string;
+}) {
+  return [
+    "🔔 Tatuei • Atendimento próximo",
+    "",
+    `Olá, ${firstName(input.artistName)}!`,
+    `Você tem atendimento com ${input.clientName ?? "cliente"} em ${input.date} às ${input.time}.`,
+    `Serviço: ${input.service}.`,
+    "",
+    "Toque no link abaixo para abrir a conversa do cliente no seu WhatsApp com a mensagem pronta:",
+    input.clientWhatsAppLink,
+    "",
+    "Quando o cliente confirmar, avisar atraso, adiantamento ou pedir remarcação, a resposta volta para o Tatuei e você recebe a atualização.",
+  ].join("\n");
+}
+
+export function buildClientWhatsAppLink(phone: string, message: string) {
+  const normalized = normalizeBrazilianPhone(phone).replace(/\D/g, "");
+  return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
+}
+
 async function hasActiveConsent(studioId: number, integrationId: number, clientId: number) {
   const db = await getDb();
   if (!db) return false;
@@ -91,7 +142,7 @@ async function alreadyQueued(integrationId: number, idempotencyKey: string) {
  */
 export async function runAutomaticMessageCycle() {
   const db = await getDb();
-  if (!db) return { appointmentsQueued: 0, birthdaysQueued: 0, customQueued: 0, oneHourClientQueued: 0, oneHourArtistQueued: 0, skipped: 0 };
+  if (!db) return { appointmentsQueued: 0, artistManualQueued: 0, birthdaysQueued: 0, customQueued: 0, oneHourClientQueued: 0, oneHourArtistQueued: 0, skipped: 0 };
   const active = await db.select({
     id: whatsappIntegrations.id,
     studioId: whatsappIntegrations.studioId,
@@ -100,7 +151,7 @@ export async function runAutomaticMessageCycle() {
     eq(whatsappIntegrations.isEnabled, 1),
   ));
 
-  const result = { appointmentsQueued: 0, birthdaysQueued: 0, customQueued: 0, oneHourClientQueued: 0, oneHourArtistQueued: 0, skipped: 0 };
+  const result = { appointmentsQueued: 0, artistManualQueued: 0, birthdaysQueued: 0, customQueued: 0, oneHourClientQueued: 0, oneHourArtistQueued: 0, skipped: 0 };
   for (const integration of active) {
     if (!integration.studioId) continue;
     const settings = (await db.select().from(messageAutomationSettings)
@@ -115,19 +166,89 @@ export async function runAutomaticMessageCycle() {
       const target = addDays(now.date, Math.max(1, settings.appointmentDaysBefore));
       const due = await db.select({
         id: appointments.id, clientId: appointments.clientId, date: appointments.date,
-        service: appointments.service, artist: appointments.artist,
+        service: appointments.service, artist: appointments.artist, artistId: appointments.artistId,
         clientName: clients.name, clientPhone: clients.phone,
-      }).from(appointments).leftJoin(clients, eq(clients.id, appointments.clientId)).where(and(
-        eq(appointments.studioId, integration.studioId),
-        gte(appointments.date, `${target} 00:00:00`),
-        lte(appointments.date, `${target} 23:59:59`),
-        inArray(appointments.status, ["agendado", "confirmado"]),
-      ));
+        artistName: artists.name, artistPhone: artists.phone,
+        artistWhatsappOperationalEnabled: artistNotificationSettings.whatsappOperationalEnabled,
+        artistManualClientReminderEnabled: artistNotificationSettings.manualClientReminderEnabled,
+      }).from(appointments)
+        .leftJoin(clients, eq(clients.id, appointments.clientId))
+        .leftJoin(artists, and(
+          eq(artists.id, appointments.artistId),
+          eq(artists.studioId, integration.studioId),
+          eq(artists.active, 1),
+        ))
+        .leftJoin(artistNotificationSettings, and(
+          eq(artistNotificationSettings.studioId, integration.studioId),
+          eq(artistNotificationSettings.artistId, appointments.artistId),
+        ))
+        .where(and(
+          eq(appointments.studioId, integration.studioId),
+          gte(appointments.date, `${target} 00:00:00`),
+          lte(appointments.date, `${target} 23:59:59`),
+          inArray(appointments.status, ["agendado", "confirmado"]),
+        ));
       for (const appointment of due) {
+        const when = dateAndTime(appointment.date);
+        const useArtistManualReminder =
+          appointment.artistId != null &&
+          Boolean(appointment.artistPhone) &&
+          appointment.artistWhatsappOperationalEnabled === 1 &&
+          appointment.artistManualClientReminderEnabled === 1;
+
+        if (useArtistManualReminder) {
+          const artistKey = automaticReminderIdempotencyKey("artist_manual_reminder", integration.id, appointment.id, target);
+          if (await alreadyQueued(integration.id, artistKey)) continue;
+          if (appointment.clientPhone) {
+            try {
+              const actionLinks = await issueAppointmentActionLinks({ studioId: integration.studioId, appointmentId: appointment.id });
+              const clientMessage = buildManualClientReminderMessage({
+                clientName: appointment.clientName,
+                studioName,
+                artistName: appointment.artistName ?? appointment.artist,
+                service: appointment.service,
+                date: when.date,
+                time: when.time,
+                actionLinks,
+              });
+              const clientWhatsAppLink = buildClientWhatsAppLink(appointment.clientPhone, clientMessage);
+              const artistDispatch = await sendAndLog({
+                studioId: integration.studioId,
+                integrationId: integration.id,
+                recipientType: "artist",
+                recipientPhone: appointment.artistPhone!,
+                recipientName: appointment.artistName ?? appointment.artist,
+                artistId: appointment.artistId!,
+                clientId: appointment.clientId,
+                appointmentId: appointment.id,
+                trigger: "appointment_reminder_24h_artist_manual",
+                message: buildArtistManualReminderMessage({
+                  artistName: appointment.artistName ?? appointment.artist,
+                  clientName: appointment.clientName,
+                  service: appointment.service,
+                  date: when.date,
+                  time: when.time,
+                  clientWhatsAppLink,
+                }),
+                idempotencyKey: artistKey,
+              });
+              if (artistDispatch.success) {
+                if (artistDispatch.queued) result.artistManualQueued += 1;
+                continue;
+              }
+            } catch (error) {
+              console.warn("[Messaging] Não foi possível preparar o lembrete manual do artista", {
+                studioId: integration.studioId,
+                appointmentId: appointment.id,
+                reason: error instanceof Error ? error.message : "invalid-client-phone",
+              });
+            }
+          }
+        }
+
         if (!appointment.clientPhone || !(await hasActiveConsent(integration.studioId, integration.id, appointment.clientId))) { result.skipped += 1; continue; }
         const idempotencyKey = automaticReminderIdempotencyKey("appointment", integration.id, appointment.id, target);
         if (await alreadyQueued(integration.id, idempotencyKey)) continue;
-        const when = dateAndTime(appointment.date);
         const actionLinks = await issueAppointmentActionLinks({ studioId: integration.studioId, appointmentId: appointment.id });
         const dispatch = await dispatchTemplateMessage({
           studioId: integration.studioId, trigger: "appointment_reminder_24h", recipientType: "client",
@@ -149,9 +270,14 @@ export async function runAutomaticMessageCycle() {
         service: appointments.service, artist: appointments.artist, artistId: appointments.artistId,
         clientName: clients.name, clientPhone: clients.phone,
         artistName: artists.name, artistPhone: artists.phone,
+        artistWhatsappOperationalEnabled: artistNotificationSettings.whatsappOperationalEnabled,
       }).from(appointments)
         .leftJoin(clients, eq(clients.id, appointments.clientId))
         .leftJoin(artists, and(eq(artists.id, appointments.artistId), eq(artists.studioId, integration.studioId), eq(artists.active, 1)))
+        .leftJoin(artistNotificationSettings, and(
+          eq(artistNotificationSettings.studioId, integration.studioId),
+          eq(artistNotificationSettings.artistId, appointments.artistId),
+        ))
         .where(and(
           eq(appointments.studioId, integration.studioId),
           gte(appointments.date, window.startsAt),
@@ -160,31 +286,31 @@ export async function runAutomaticMessageCycle() {
         ));
 
       for (const appointment of dueInOneHour) {
-        if (!appointment.clientPhone || !(await hasActiveConsent(integration.studioId, integration.id, appointment.clientId))) {
-          result.skipped += 1;
-          continue;
-        }
         const when = dateAndTime(appointment.date);
         const occurrence = String(appointment.date);
-        const clientKey = automaticReminderIdempotencyKey("one_hour_client", integration.id, appointment.id, occurrence);
-        if (!(await alreadyQueued(integration.id, clientKey))) {
-          const clientDispatch = await sendAndLog({
-            studioId: integration.studioId,
-            integrationId: integration.id,
-            recipientType: "client",
-            recipientPhone: appointment.clientPhone,
-            recipientName: appointment.clientName ?? undefined,
-            clientId: appointment.clientId,
-            appointmentId: appointment.id,
-            trigger: "appointment_reminder_1h_client",
-            message: `Olá, ${appointment.clientName ?? "cliente"}! ⏰ Seu horário com ${appointment.artist} começa em aproximadamente 1 hora, às ${when.time}. Te esperamos!`,
-            idempotencyKey: clientKey,
-          });
-          if (clientDispatch.success && clientDispatch.queued) result.oneHourClientQueued += 1;
+
+        if (appointment.clientPhone && await hasActiveConsent(integration.studioId, integration.id, appointment.clientId)) {
+          const clientKey = automaticReminderIdempotencyKey("one_hour_client", integration.id, appointment.id, occurrence);
+          if (!(await alreadyQueued(integration.id, clientKey))) {
+            const clientDispatch = await sendAndLog({
+              studioId: integration.studioId,
+              integrationId: integration.id,
+              recipientType: "client",
+              recipientPhone: appointment.clientPhone,
+              recipientName: appointment.clientName ?? undefined,
+              clientId: appointment.clientId,
+              appointmentId: appointment.id,
+              trigger: "appointment_reminder_1h_client",
+              message: `Olá, ${appointment.clientName ?? "cliente"}! ⏰ Seu horário com ${appointment.artist} começa em aproximadamente 1 hora, às ${when.time}. Te esperamos!`,
+              idempotencyKey: clientKey,
+            });
+            if (clientDispatch.success && clientDispatch.queued) result.oneHourClientQueued += 1;
+          }
+        } else {
+          result.skipped += 1;
         }
 
-        if (!appointment.artistPhone || !appointment.artistId) {
-          result.skipped += 1;
+        if (!appointment.artistPhone || !appointment.artistId || appointment.artistWhatsappOperationalEnabled !== 1) {
           continue;
         }
         const artistKey = automaticReminderIdempotencyKey("one_hour_artist", integration.id, appointment.id, occurrence);
@@ -195,6 +321,7 @@ export async function runAutomaticMessageCycle() {
           recipientType: "artist",
           recipientPhone: appointment.artistPhone,
           recipientName: appointment.artistName ?? appointment.artist,
+          artistId: appointment.artistId,
           clientId: appointment.clientId,
           appointmentId: appointment.id,
           trigger: "appointment_reminder_1h_artist",
