@@ -938,7 +938,9 @@ export const integrationSchedules = mysqlTable("integration_schedules", {
 ]);
 
 // Types
-export type ArtistNotificationSettings = typeof artistNotificationSettings.$inferSelect;\nexport type InsertArtistNotificationSettings = typeof artistNotificationSettings.$inferInsert;\nexport type WhatsappIntegration = typeof whatsappIntegrations.$inferSelect;
+export type ArtistNotificationSettings = typeof artistNotificationSettings.$inferSelect;
+export type InsertArtistNotificationSettings = typeof artistNotificationSettings.$inferInsert;
+export type WhatsappIntegration = typeof whatsappIntegrations.$inferSelect;
 export type InsertWhatsappIntegration = typeof whatsappIntegrations.$inferInsert;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type InsertMessageTemplate = typeof messageTemplates.$inferInsert;
