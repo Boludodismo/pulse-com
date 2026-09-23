@@ -1,3 +1,4 @@
+import NativeBot from "./pages/NativeBot";
 import LegacyArchive from './pages/LegacyArchive';
 import {useAuth} from './_core/hooks/useAuth';
 import {isInvitedArtist} from '@shared/artistInvitations';
@@ -58,6 +59,7 @@ function StockEntry(){
 function Router() {
   return (
     <Switch>
+      <Route path="/bot-tatuei" component={() => <DashboardLayout><NativeBot/></DashboardLayout>} />
       <Route path="/historicos-anteriores" component={() => <DashboardLayout><LegacyArchive/></DashboardLayout>} />
       <Route path="/intelligent-inbox" component={() => <DashboardLayout><IntelligentInbox/></DashboardLayout>} />
       <Route path="/artista/:token" component={PublicArtistCard} />

@@ -22,6 +22,8 @@ group('anamnese','anamnesis',['getByClientId','getRequestsByClientId','updateSub
 // These newer routers already perform tenant and object checks. Legacy global
 // dashboards/search/stock/admin routes intentionally are not allowlisted.
 export function invitedRoutePermission(path: string): SaasModule | 'self' | null {
+  // Bot Tatuei performs its own studio, artist and per-action permission checks.
+  if (path.startsWith('nativeBot.')) return 'self';
   if (self.has(path)) return 'self';
   if (path==='messaging.getReminderIndicators' || path==='procedures.listLinkedAppointmentIds' || path==='appointments.reminders.list') return 'appointments';
   if (path.startsWith('intelligentInbox.')) return 'intelligent_inbox';
