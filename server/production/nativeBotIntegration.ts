@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { nativeBotRouter } from "../routers/nativeBot";
+import { router } from "../_core/trpc";
+const testRouter = router({ nativeBot: nativeBotRouter });
 import {
   ensureNativeBotSchema,
   assertBotSchema,
@@ -40,7 +42,7 @@ function passed(name: string) {
   console.log("[Bot integration] PASS " + name);
 }
 function caller(studioId: number, artistId: number | null = null) {
-  return nativeBotRouter.createCaller({
+  return testRouter.createCaller({
     user: {
       id: 1,
       studioId,
@@ -52,7 +54,7 @@ function caller(studioId: number, artistId: number | null = null) {
     } as any,
     req: {} as any,
     res: {} as any,
-  });
+  }).nativeBot;
 }
 async function forbidden(fn: () => Promise<unknown>) {
   await assert.rejects(fn, (e: any) => e.code === "FORBIDDEN");
