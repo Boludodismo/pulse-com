@@ -9,6 +9,7 @@ import { ensureSessionCockpitSchema } from "../server/_core/sessionCockpitSchema
 import { upgradeInventoryTrace } from "../server/_core/inventoryTraceSchema";
 import { upgradeInventoryWorkflow } from "../server/_core/inventoryWorkflowSchema";
 import { upgradeAppointmentKits } from "../server/_core/appointmentKitSchema";
+import { ensureStudioSettingsScope } from "../server/_core/studioSettingsScope";
 import { emptyPreparation } from "../shared/sessionPreparation";
 
 async function main() {
@@ -19,6 +20,7 @@ async function main() {
   const db = await mysql.createConnection({ uri: url.toString(), dateStrings: true });
   await upgradeInventoryTrace(db); await upgradeInventoryWorkflow(db); await upgradeAppointmentKits(db);
   await ensureSessionCockpitSchema(); await ensureSessionCockpitSchema();
+  await ensureStudioSettingsScope();
   await db.query("INSERT INTO artists(id,studioId,name,active) VALUES(9101,101,'Artista de teste',1)");
   await db.query("INSERT INTO clients(id,studioId,name) VALUES(9101,101,'Cliente de teste')");
   const root = router({ pod: podSaasRouter, procedures: proceduresRouter });
