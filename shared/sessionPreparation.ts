@@ -3,6 +3,7 @@ import {
   SESSION_CUP_ML,
   isSessionCup,
   isSessionInk,
+  validateSessionUnit,
 } from "./sessionInkQuantity";
 
 export const preparationQuantity = z
@@ -19,7 +20,7 @@ export const preparationColor = z
   .object({
     name: z.string().trim().min(1).max(80),
     hex: z.string().regex(/^#[0-9a-f]{6}$/i),
-    cupSize: z.enum(["P", "M", "G", "GG"]),
+    cupSize: z.enum(["P", "M", "G", "GG"]).nullable().default(null),
     dropsPerMl: z.number().min(5).max(60),
     ingredients: z
       .array(
@@ -33,7 +34,7 @@ export const preparationColor = z
   })
   .refine(
     c =>
-      c.ingredients.reduce((n, i) => n + i.drops, 0) / c.dropsPerMl <=
+      c.cupSize === null || c.ingredients.reduce((n, i) => n + i.drops, 0) / c.dropsPerMl <=
       SESSION_CUP_ML[c.cupSize],
     "A mistura ultrapassa a capacidade do batoque."
   )
@@ -76,6 +77,7 @@ export function validatePreparationMaterial(
   item: { quantity: string; unit: string },
   material: { name: string; unit: string; category?: string | null }
 ) {
+  validateSessionUnit(material);
   if (item.unit !== material.unit)
     throw new Error(
       `A unidade de ${material.name} mudou. Selecione o material novamente.`
@@ -94,7 +96,7 @@ export function validateRecipeMaterial(material: {
 }) {
   if (
     !isSessionInk(material) ||
-    !/^(ml|gota|gotas|drop|drops|gt)$/.test(material.unit.toLowerCase())
+    !/^(ml|mililitros?|gota|gotas|drop|drops|gt)$/.test(material.unit.trim().toLowerCase())
   )
     throw new Error(
       `Configure ${material.name} como tinta ou diluente em ml ou gotas.`

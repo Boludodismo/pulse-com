@@ -41,7 +41,7 @@ function SessionColors({ procedure }: { procedure: any }) {
       recipe.result
         ? `Resultado registrado: ${recipe.result.hex}`
         : "Resultado de cor não registrado",
-      `Batoque ${recipe.cupSize}: ${recipe.cupCapacityMl} ml · Total ${recipe.totalDrops} gotas / ${recipe.estimatedMl} ml · ${recipe.dropsPerMl} gotas/ml`,
+      `${recipe.cupSize ? `Batoque ${recipe.cupSize}: ${recipe.cupCapacityMl} ml` : "Sem recipiente definido"} · Total ${recipe.totalDrops} gotas / ${recipe.estimatedMl} ml · ${recipe.dropsPerMl} gotas/ml`,
       ...recipe.items.map(
         (i: any) =>
           `${i.nameSnapshot}${i.brandSnapshot ? " · " + i.brandSnapshot : ""}: ${i.drops} gotas (${i.percentage}% / ${i.estimatedMl} ml) · Lote ${i.lotSnapshot || "não registrado"} · Validade ${validity(i.expiresAtSnapshot)}`
@@ -79,7 +79,7 @@ function SessionColors({ procedure }: { procedure: any }) {
           </p>
         )}
         <p className="text-sm">
-          Batoque {r.cupSize} · capacidade {Number(r.cupCapacityMl)} ml ·{" "}
+          {r.cupSize ? `Batoque ${r.cupSize} · capacidade ${Number(r.cupCapacityMl)} ml` : "Sem recipiente definido"} ·{" "}
           {r.totalDrops} gotas · volume estimado {Number(r.estimatedMl)} ml ·
           conversão {Number(r.dropsPerMl)} gotas/ml
         </p>

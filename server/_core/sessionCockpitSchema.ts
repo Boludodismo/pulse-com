@@ -167,6 +167,9 @@ export async function ensureSessionCockpitSchema() {
       );
     }
 
+    const [cupColumn] = await connection.query<RowDataPacket[]>("SHOW COLUMNS FROM procedure_ink_recipes LIKE 'cupSize'");
+    if (cupColumn[0]?.Null === "NO") await connection.query("ALTER TABLE procedure_ink_recipes MODIFY COLUMN cupSize VARCHAR(8) NULL, MODIFY COLUMN cupCapacityMl DECIMAL(8,3) NULL");
+
     console.log("[Session Cockpit V2] Schema ready.");
   } finally {
     await connection

@@ -303,7 +303,7 @@ export default function SessionFinalization({
                           className="rounded border p-3 text-sm space-y-2"
                         >
                           <p className="font-semibold">
-                            Mistura {r.code} · Batoque {r.cupSize} ·{" "}
+                            Mistura {r.code} · {r.cupSize ? `Batoque ${r.cupSize}` : "Sem recipiente definido"} ·{" "}
                             {Number(r.estimatedMl)} ml
                           </p>
                           {data.recipeItems

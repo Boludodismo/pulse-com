@@ -3,7 +3,7 @@ import {
   type PreparationColor,
   preparationColor,
 } from "@shared/sessionPreparation";
-import { isSessionInk, SESSION_CUP_ML } from "@shared/sessionInkQuantity";
+import { isSessionInk, SESSION_CUP_ML, SESSION_DROPS_PER_ML } from "@shared/sessionInkQuantity";
 import SessionMaterialPicker, {
   type SessionMaterialOption,
 } from "./SessionMaterialPicker";
@@ -40,8 +40,8 @@ export default function PreparationPalette({
             {
               name: `Cor ${value.length + 1}`,
               hex: "#808080",
-              cupSize: "M",
-              dropsPerMl: 20,
+              cupSize: null,
+              dropsPerMl: SESSION_DROPS_PER_ML,
               ingredients: [],
             },
           ]);
@@ -104,16 +104,17 @@ export default function PreparationPalette({
                 Batoque da mistura
                 <select
                   className="block w-full rounded border bg-background p-3"
-                  value={color.cupSize}
+                  value={color.cupSize ?? ""}
                   onChange={e =>
                     update(index, {
-                      cupSize: e.target.value as PreparationColor["cupSize"],
+                      cupSize: (e.target.value || null) as PreparationColor["cupSize"],
                     })
                   }
                 >
+                  <option value="">Sem recipiente definido</option>
                   {Object.entries(SESSION_CUP_ML).map(([s, ml]) => (
                     <option key={s} value={s}>
-                      {s} · {ml} ml
+                      {s} · {ml} ml · {Math.floor(ml * color.dropsPerMl)} gotas
                     </option>
                   ))}
                 </select>
@@ -179,7 +180,7 @@ export default function PreparationPalette({
                       })
                     }
                   >
-                    Remover tinta
+                    Remover ingrediente
                   </Button>
                 </div>
               ))}

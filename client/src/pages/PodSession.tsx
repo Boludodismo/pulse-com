@@ -178,6 +178,7 @@ export default function PodSession() {
   const images = procedureQuery.data?.images ?? [];
   const auditConsumptions = podSessionQuery.data?.consumptions ?? [];
   const plannedMaterials = podSessionQuery.data?.plannedMaterials ?? [];
+  const sessionMaterials = podSessionQuery.data?.sessionMaterials ?? [];
   const tenantMaterials = tenantInventoryQuery.data ?? [];
   const [batchConsumption,setBatchConsumption]=useState<{materialId:number;quantity:string;plannedMaterialId?:number}|null>(null);
 
@@ -629,7 +630,7 @@ export default function PodSession() {
                 </Button>
               )}
             </div>
-            {plannedMaterials.some(item => item.status !== "nao_utilizado" && item.tenantMaterialId) && (
+            {sessionMaterials.length > 0 && (
               <div
                 className={referenceFullscreen
                   ? "absolute left-3 top-1/2 z-20 flex max-h-[72%] w-[82px] -translate-y-1/2 flex-col gap-1.5 overflow-y-auto rounded-2xl border border-white/10 bg-black/25 p-1.5 shadow-2xl backdrop-blur-md"
@@ -637,21 +638,20 @@ export default function PodSession() {
                 }
                 aria-label="Materiais utilizados na sessão"
               >
-                {plannedMaterials
-                  .filter(item => item.status !== "nao_utilizado" && item.tenantMaterialId)
+                {sessionMaterials
                   .map(item => {
                     const stock = tenantMaterials.find(material => material.id === item.tenantMaterialId);
                     return (
                       <button
-                        key={item.id}
+                        key={item.tenantMaterialId}
                         type="button"
                         disabled={!stock || isFinished || consumeTenantMaterialMutation.isPending}
-                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,plannedMaterialId:item.status === "planejado" ? item.id : undefined,quantity:defaultSessionQuantity(stock)})}
+                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,quantity:item.quantity})}
                         className={referenceFullscreen
                           ? "group flex min-h-[70px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-black/30 px-1.5 py-2 text-center text-white shadow-lg transition hover:border-white/30 hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                           : "group max-w-[220px] rounded-xl border border-white/20 bg-black/45 px-3 py-2 text-left text-xs text-white shadow-xl backdrop-blur-md transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                         }
-                        title={`Baixar ${defaultSessionQuantity(stock)} ${item.unitSnapshot} de ${item.nameSnapshot}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
+                        title={`Baixar ${item.quantity} ${item.unit} de ${item.name}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
                       >
                         {referenceFullscreen && (
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 text-white">
@@ -662,13 +662,13 @@ export default function PodSession() {
                           ? "line-clamp-2 w-full text-[10px] font-semibold leading-tight"
                           : "block truncate font-semibold"
                         }>
-                          {item.nameSnapshot}
+                          {item.name}
                         </span>
                         <span className={referenceFullscreen
                           ? "block text-[9px] leading-none text-white/70 group-hover:text-white"
                           : "block text-[10px] text-white/75 group-hover:text-white"
                         }>
-                          − {defaultSessionQuantity(stock)} {item.unitSnapshot}
+                          − {item.quantity} {item.unit}
                           {!referenceFullscreen && (stock ? ` · saldo ${stock.currentQuantity}` : " · indisponível")}
                         </span>
                       </button>

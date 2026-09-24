@@ -442,6 +442,13 @@
       "when": 1789952400000,
       "tag": "0062_session_cockpit_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "5",
+      "when": 1790254800000,
+      "tag": "0063_session_optional_cup",
+      "breakpoints": true
     }
   ]
 }

@@ -61,7 +61,7 @@ export default function SessionPreparationSummary({
           {!!color.ingredients.length && (
             <>
               <p className="text-sm">
-                Batoque {color.cupSize} · {color.dropsPerMl} gotas/ml
+                {color.cupSize ? `Batoque ${color.cupSize}` : "Sem recipiente definido"} · {color.dropsPerMl} gotas/ml
               </p>
               {color.ingredients.map(item => (
                 <p className="text-sm" key={item.tenantMaterialId}>

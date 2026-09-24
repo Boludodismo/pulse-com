@@ -1,4 +1,7 @@
-import { SESSION_CUP_ML } from "../../shared/sessionInkQuantity";
+import { readSessionMaterials, snapshotSessionMaterials } from "../sessionMaterials";
+import { defaultSessionQuantity } from "../../shared/sessionMaterialDefaults";
+import { validateRecipeMaterial } from "../../shared/sessionPreparation";
+import { SESSION_CUP_ML, SESSION_DROPS_PER_ML, sessionCupSize, isSessionCup, validateSessionUnit } from "../../shared/sessionInkQuantity";
 import { importTestInventory } from "../inventoryTestImport";
 import { resolveProcedureArtist } from "../procedureArtist";
 import { appointmentKitsRouter } from "./appointmentKits";
@@ -36,6 +39,7 @@ import {
   tenantMaterialColorSamples,
   procedureVisualLayers,
   procedureImages,
+  procedureEvents,
   technicalProcedures,
   tenantInventoryMovements,
   tenantMaterials,
@@ -50,6 +54,21 @@ import { router, superAdminProcedure, tenantProcedure } from "../_core/trpc";
 import { sendAndLog } from "../messaging/service";
 import { normalizeBrazilianPhone } from "../messaging/phone";
 import { storageDelete } from "../storage";
+
+// Lock the session before checking a retry key; event and stock commit atomically.
+async function readStockReplay<T>(tx: any, procedureId: number, kind: string, input: {requestId?:string}) : Promise<T|null> {
+  if (!input.requestId) return null;
+  await tx.select({id:technicalProcedures.id}).from(technicalProcedures).where(eq(technicalProcedures.id,procedureId)).for("update");
+  const eventType=`${kind}:${input.requestId}`;
+  const [event]=await tx.select().from(procedureEvents).where(and(eq(procedureEvents.procedureId,procedureId),eq(procedureEvents.eventType,eventType))).limit(1).for("update");
+  if(!event)return null;
+  const stored=JSON.parse(event.payload||"null");
+  if(stored.hash!==createHash("sha256").update(JSON.stringify(input)).digest("hex"))throw new TRPCError({code:"CONFLICT",message:"Esta operação já foi registrada com outros dados."});
+  return stored.result as T;
+}
+async function saveStockReplay(tx:any,procedureId:number,kind:string,input:{requestId?:string},result:unknown){
+  if(input.requestId)await tx.insert(procedureEvents).values({procedureId,eventType:`${kind}:${input.requestId}`,payload:JSON.stringify({hash:createHash("sha256").update(JSON.stringify(input)).digest("hex"),result})});
+}
 
 const quantitySchema = z.string().regex(/^\d{1,9}(?:\.\d{1,3})?$/, "Informe uma quantidade positiva com até três casas decimais.");
 const costSchema = z.string().regex(/^\d{1,8}(?:\.\d{1,4})?$/, "Informe um custo não negativo com até quatro casas decimais.");
@@ -500,6 +519,7 @@ export const podSaasRouter = router({
       )).limit(1))[0] : null;
       if (input.catalogItemId && !catalogItem) throw new TRPCError({ code: "NOT_FOUND", message: "Item de catálogo não encontrado." });
 
+      validateSessionUnit({ name: technical?.name ?? catalogItem?.name ?? input.name!, unit: technical?.baseUnit ?? input.unit ?? catalogItem?.defaultUnit ?? "unidade" });
       const inserted = await tx.insert(tenantMaterials).values({
         studioId: ctx.studioId,
         ownerArtistId: input.ownerArtistId,
@@ -650,6 +670,7 @@ export const podSaasRouter = router({
         const batches=await tx.select({id:inventoryBatches.id}).from(inventoryBatches).where(and(eq(inventoryBatches.studioId,ctx.studioId),eq(inventoryBatches.tenantMaterialId,existing.id))).limit(1);
         if(Number(existing.currentQuantity)>0||batches.length)throw new TRPCError({code:"BAD_REQUEST",message:"Não altere a unidade de um material com saldo ou lotes recebidos. Cadastre uma variante com a nova unidade."});
       }
+      validateSessionUnit(input);
       const { tenantMaterialId, expiresAt, ...fields } = input;
       const result = await tx.update(tenantMaterials).set({
         ...fields,
@@ -832,7 +853,9 @@ export const podSaasRouter = router({
       referenceImageKey: z.string().trim().max(500).optional(),
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "pod", true);
-      const database = await requireDatabase();
+      const connection = await requireDatabase();
+      return connection.transaction(async tx => {
+      const database = tx as unknown as typeof connection;
       const client = (await database.select({ id: clients.id }).from(clients).where(and(
         eq(clients.id, input.clientId), eq(clients.studioId, ctx.studioId),
       )).limit(1))[0];
@@ -868,7 +891,11 @@ export const podSaasRouter = router({
         referenceImageUrl: appointment?.referenceImageUrl ?? input.referenceImageUrl ?? null,
         referenceImageKey: appointment?.referenceImageKey ?? input.referenceImageKey ?? null,
       });
-      return { id: insertId(inserted) };
+      const id = insertId(inserted);
+      if(!id)throw new TRPCError({code:"INTERNAL_SERVER_ERROR",message:"Não foi possível criar a sessão."});
+      await snapshotSessionMaterials(database, { id, studioId: ctx.studioId, appointmentId: appointment?.id ?? null });
+      return { id };
+      });
     }),
 
     get: tenantProcedure.input(z.object({ procedureId: z.number().int().positive() })).query(async ({ ctx, input }) => {
@@ -884,7 +911,26 @@ export const podSaasRouter = router({
       const plannedMaterials = procedure.appointmentId ? await database.select().from(appointmentPlannedMaterials).where(and(
         eq(appointmentPlannedMaterials.studioId, ctx.studioId), eq(appointmentPlannedMaterials.appointmentId, procedure.appointmentId),
       )) : [];
-      return { procedure, pauses, consumptions, plannedMaterials, timing: calculateTiming(procedure.startedAt, procedure.finishedAt, pauses) };
+      const { materials: sessionMaterials } = await readSessionMaterials(database, procedure);
+      return { procedure, pauses, consumptions, plannedMaterials, sessionMaterials, timing: calculateTiming(procedure.startedAt, procedure.finishedAt, pauses) };
+    }),
+
+    addMaterial: tenantProcedure.input(z.object({ procedureId: z.number().int().positive(), tenantMaterialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      await requireModule(ctx, "pod", true);
+      const database = await requireDatabase();
+      return database.transaction(async tx => {
+        const db = tx as unknown as typeof database;
+        const procedure = await requireProcedure(db, input.procedureId, ctx);
+        await tx.select({ id: technicalProcedures.id }).from(technicalProcedures).where(eq(technicalProcedures.id, procedure.id)).for("update");
+        if (procedure.status === "finalizado") throw new TRPCError({ code: "BAD_REQUEST", message: "Sessão finalizada." });
+        const material = (await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id, input.tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.isActive, 1))).limit(1))[0];
+        if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado." });
+        await requireMaterialForArtist(db, ctx, material, procedure.artistId);
+        validateSessionUnit(material);
+        const materials = await snapshotSessionMaterials(db, procedure);
+        if (!materials.some(m => m.tenantMaterialId === material.id)) await tx.insert(procedureEvents).values({ procedureId: procedure.id, eventType: "session_material_added", payload: JSON.stringify({ tenantMaterialId: material.id, name: material.name, unit: material.unit, quantity: defaultSessionQuantity(material) }) });
+        return { ok: true };
+      });
     }),
 
     listVisualLayers: tenantProcedure
@@ -1305,9 +1351,10 @@ export const podSaasRouter = router({
     saveInkRecipe: tenantProcedure
       .input(z.object({
         procedureId: z.number().int().positive(),
+        requestId: z.string().uuid().optional(),
         sampleId: z.number().int().positive().optional(),
-        cupSize: z.enum(["P", "M", "G", "GG"]),
-        dropsPerMl: z.number().min(5).max(60).default(20),
+        cupSize: z.enum(["P", "M", "G", "GG"]).nullable().default(null),
+        dropsPerMl: z.number().min(5).max(60).default(SESSION_DROPS_PER_ML),
         cupTenantMaterialId: z.number().int().positive().optional(),
         cupBatchId: z.number().int().positive().optional(),
         ingredients: z.array(z.object({
@@ -1326,6 +1373,8 @@ export const podSaasRouter = router({
             input.procedureId,
             ctx,
           );
+          const replay = await readStockReplay<{ id:number;code:string;estimatedMl:string;totalDrops:number;cupSize:SessionCupSize|null;consumptionIds:number[];cupConsumptionId:number|null }>(tx, procedure.id, "recipe", input);
+          if (replay) return replay;
           if (procedure.status === "finalizado")
             throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível registrar mistura em uma sessão finalizada." });
 
@@ -1345,8 +1394,10 @@ export const podSaasRouter = router({
 
           const totalDrops = input.ingredients.reduce((sum, item) => sum + item.drops, 0);
           const estimatedMl = totalDrops / input.dropsPerMl;
-          const cupCapacityMl = SESSION_CUP_CAPACITY_ML[input.cupSize as SessionCupSize];
-          if (estimatedMl > cupCapacityMl + 0.0005) {
+          const cupCapacityMl = input.cupSize ? SESSION_CUP_CAPACITY_ML[input.cupSize] : null;
+          if (input.cupTenantMaterialId && !input.cupSize) throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione o tamanho do recipiente." });
+          if (new Set(input.ingredients.map(i => i.tenantMaterialId)).size !== input.ingredients.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Há ingredientes repetidos." });
+          if (cupCapacityMl !== null && estimatedMl > cupCapacityMl + 0.0005) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: `A mistura estima ${estimatedMl.toFixed(2)} ml e ultrapassa o batoque ${input.cupSize} (${cupCapacityMl.toFixed(2)} ml).`,
@@ -1372,7 +1423,7 @@ export const podSaasRouter = router({
             sampleId: input.sampleId ?? null,
             code,
             cupSize: input.cupSize,
-            cupCapacityMl: cupCapacityMl.toFixed(3),
+            cupCapacityMl: cupCapacityMl?.toFixed(3) ?? null,
             dropsPerMl: input.dropsPerMl.toFixed(3),
             totalDrops,
             estimatedMl: estimatedMl.toFixed(3),
@@ -1534,6 +1585,7 @@ export const podSaasRouter = router({
             if (!material)
               throw new TRPCError({ code: "NOT_FOUND", message: "Pigmento ou diluente não encontrado." });
 
+            validateRecipeMaterial(material);
             const converted = recipeStockQuantity(material.unit, ingredient.drops, input.dropsPerMl);
             const consumed = await consumeOne({
               tenantMaterialId: ingredient.tenantMaterialId,
@@ -1559,6 +1611,8 @@ export const podSaasRouter = router({
 
           let cupConsumptionId: number | null = null;
           if (input.cupTenantMaterialId) {
+            const cupMaterial = (await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id, input.cupTenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId))).limit(1))[0];
+            if (!cupMaterial || !isSessionCup(cupMaterial) || sessionCupSize(cupMaterial) !== input.cupSize) throw new TRPCError({ code: "BAD_REQUEST", message: "O material selecionado não corresponde ao tamanho do batoque." });
             const consumedCup = await consumeOne({
               tenantMaterialId: input.cupTenantMaterialId,
               batchId: input.cupBatchId,
@@ -1572,7 +1626,7 @@ export const podSaasRouter = router({
               .where(eq(procedureInkRecipes.id, recipeId));
           }
 
-          return {
+          const result = {
             id: recipeId,
             code,
             estimatedMl: estimatedMl.toFixed(3),
@@ -1581,6 +1635,8 @@ export const podSaasRouter = router({
             consumptionIds,
             cupConsumptionId,
           };
+          await saveStockReplay(tx, procedure.id, "recipe", input, result);
+          return result;
         });
       }),
 
@@ -1765,6 +1821,8 @@ export const podSaasRouter = router({
 
     consumeAuto: tenantProcedure.input(z.object({
       procedureId: z.number().int().positive(),
+      requestId: z.string().uuid().optional(),
+      expectedUnit: z.string().max(50).optional(),
       tenantMaterialId: z.number().int().positive(),
       quantity: quantitySchema.refine((value) => decimalToScaled(value, 3) > 0, "A quantidade deve ser maior que zero."),
     })).mutation(async ({ ctx, input }) => {
@@ -1777,6 +1835,8 @@ export const podSaasRouter = router({
           input.procedureId,
           ctx,
         );
+        const replay = await readStockReplay<{id:number;remainingQuantity:string;batchId:number|null;lot:string|null}>(tx, procedure.id, "consume", input);
+        if (replay) return replay;
         if (procedure.status === "finalizado")
           throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível consumir materiais em uma sessão finalizada." });
 
@@ -1800,6 +1860,8 @@ export const podSaasRouter = router({
           procedure.artistId,
         );
 
+        if(input.expectedUnit!==undefined&&input.expectedUnit!==material.unit)throw new TRPCError({code:"CONFLICT",message:"A unidade do material mudou. Revise a preparação antes de consumir."});
+        validateSessionUnit(material);
         const quantity = decimalToScaled(input.quantity, 3);
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         if (previousQuantity < quantity)
@@ -1901,12 +1963,14 @@ export const podSaasRouter = router({
           createdByUserId: ctx.user.id,
         });
 
-        return {
+        const result = {
           id: consumptionId,
           remainingQuantity: persistedNext,
           batchId: batch?.id ?? null,
           lot: batch?.lot ?? material.lot ?? null,
         };
+        await saveStockReplay(tx, procedure.id, "consume", input, result);
+        return result;
       });
     }),
 
@@ -1928,6 +1992,7 @@ export const podSaasRouter = router({
         )).limit(1).for("update"))[0];
         if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado nesta empresa." });
         await requireMaterialForArtist(tx as unknown as InventoryDatabase, ctx, material, procedure.artistId);
+        validateSessionUnit(material);
         const quantity = decimalToScaled(input.quantity, 3);
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         if (previousQuantity < quantity) throw new TRPCError({ code: "BAD_REQUEST", message: "Saldo insuficiente para confirmar este consumo." });

@@ -157,7 +157,7 @@ const draftSchema = z.object({
       z.object({
         name: z.string(),
         hex: z.string(),
-        cupSize: z.enum(["P", "M", "G", "GG"]),
+        cupSize: z.enum(["P", "M", "G", "GG"]).nullable().default(null),
         dropsPerMl: z.number(),
         ingredients: z.array(
           z.object({
@@ -1060,7 +1060,7 @@ function NewProcedureForm({
                                       colors.push({
                                         name: `Sessão #${sourceId} · ${c.code}`,
                                         hex: c.hex,
-                                        cupSize: "M",
+                                        cupSize: null,
                                         dropsPerMl: 20,
                                         ingredients: [],
                                       });
@@ -1069,7 +1069,7 @@ function NewProcedureForm({
                                         name: `Sessão #${sourceId} · ${c.code} · ${r.code}`,
                                         hex: c.hex,
                                         cupSize: r.cupSize as
-                                          "P" | "M" | "G" | "GG",
+                                          "P" | "M" | "G" | "GG" | null,
                                         dropsPerMl: Number(r.dropsPerMl),
                                         ingredients: r.items.map(i => ({
                                           tenantMaterialId: i.tenantMaterialId,
@@ -1088,7 +1088,7 @@ function NewProcedureForm({
                                         name: `Sessão #${sourceId} · ${r.code}`,
                                         hex: r.result.hex,
                                         cupSize: r.cupSize as
-                                          "P" | "M" | "G" | "GG",
+                                          "P" | "M" | "G" | "GG" | null,
                                         dropsPerMl: Number(r.dropsPerMl),
                                         ingredients: r.items.map(i => ({
                                           tenantMaterialId: i.tenantMaterialId,
@@ -1383,7 +1383,7 @@ function NewProcedureForm({
                           </p>
                           {c.ingredients.length > 0 && (
                             <p>
-                              Batoque {c.cupSize} ·{" "}
+                              {c.cupSize ? `Batoque ${c.cupSize}` : "Sem recipiente definido"} ·{" "}
                               {c.ingredients
                                 .map(i => `${i.name}: ${i.drops} gotas`)
                                 .join(" + ")}

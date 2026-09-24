@@ -4,9 +4,18 @@ export type SessionCupSize = keyof typeof SESSION_CUP_ML;
 export const SESSION_DROPS_PER_ML = 20;
 export type QuantityMaterial = { id?: string | number; name: string; unit: string; category?: string | null; configuration?: string | null; kind?: string };
 export function isSessionCup(m: QuantityMaterial) { return !/suporte|bandeja|porta.batoque/i.test(m.name) && (m.kind === 'cup' || /batoque|ink\s*cap/i.test(m.name)); }
-export function isSessionInk(m: QuantityMaterial) { return !isSessionCup(m) && (m.kind === 'ink' || m.kind === 'diluent' || /tinta|pigment|diluent|\bink\b/i.test(m.name + ' ' + (m.category || ''))); }
+export function isSessionVaseline(m: QuantityMaterial) { return /vaselin|petroleum jelly/i.test(m.name); }
+export function isSessionOintment(m: QuantityMaterial) { return isSessionVaseline(m) || /butter|pomada|karit|slip/i.test(m.name); }
+export function isSessionDiluent(m: QuantityMaterial) { return m.kind === 'diluent' || /diluent|mixing|solu[cç][aã]o de mistura/i.test(m.name + ' ' + (m.category || '')); }
+export function isSessionInk(m: QuantityMaterial) {
+  return !isSessionCup(m) && !isSessionOintment(m) && (isSessionDiluent(m) || m.kind === 'ink' || /tinta|pigment|\bink\b/i.test(m.name + ' ' + (m.category || '')));
+}
+/** Never reinterpret historic balances in another physical unit. */
+export function validateSessionUnit(m: QuantityMaterial) {
+  if (isSessionVaseline(m) && m.unit !== 'g') throw new Error('A vaselina deve ser cadastrada em gramas (g). Revise o cadastro e o saldo antes de consumir; não há conversão segura de gotas para gramas.');
+}
 export function sessionCupSize(m: QuantityMaterial): SessionCupSize | undefined {
-  return (m.name + ' ' + (m.configuration || '')).toUpperCase().match(/\b(GG|P|M|G)\b/)?.[1] as SessionCupSize | undefined;
+  return sessionCupSizeLabel(m)?.toUpperCase().match(/\b(GG|P|M|G)\b/)?.[1] as SessionCupSize | undefined;
 }
 export function inkStockQuantity(unit: string, count: number, mode: 'drops' | 'cup', size: SessionCupSize | number): string {
   if (!Number.isInteger(count) || count <= 0) return '';

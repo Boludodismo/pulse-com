@@ -1,3 +1,4 @@
+import { snapshotSessionMaterials } from "../sessionMaterials";
 import { sessionMaterialName } from "../../shared/sessionInkQuantity";
 import { finalizationPreview, finalizeSession } from "../sessionFinalization";
 import { finalizeSessionInput, readFinalization } from "../../shared/sessionFinalization";
@@ -321,6 +322,10 @@ export const proceduresRouter = router({
       const updates: Record<string, any> = {};
 
       if (input.action === "start") {
+        await db.transaction(async tx => {
+          await tx.select({ id: technicalProcedures.id }).from(technicalProcedures).where(eq(technicalProcedures.id, existing.id)).for("update");
+          await snapshotSessionMaterials(tx as unknown as typeof db, existing);
+        });
         updates.startedAt = now;
         updates.status = "em_andamento";
       } else if (input.action === "pause") {

@@ -1,6 +1,7 @@
 export const MATERIAL_CATEGORIES = [
   "Luvas",
   "Tintas",
+  "Diluente",
   "Batoques",
   "Vaselina",
   "Cartuchos",
@@ -29,6 +30,7 @@ export function materialCategory(name: string, category?: string | null) {
   if (/cartucho|cartridge/.test(n) || c === "cartuchos") return "Cartuchos";
   if (/agulha|needle/.test(n) || c === "agulhas") return "Agulhas";
   if (c === "cartuchos e agulhas") return "Cartuchos";
+  if (/diluent|mixing|solucao de mistura/.test(n + " " + c)) return "Diluente";
   if (/tinta|pigmento|^ink$/.test(c)) return "Tintas";
   if (/higieni|limpeza|processamento/.test(c)) return "Higienização";
   if (/barreira|descartav|epi/.test(c)) return "Barreiras e descartáveis";
