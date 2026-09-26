@@ -18,7 +18,7 @@ export default function QuoteFollowupActions({ id, clientId, responded = false, 
   const {can} = useArtistAccess();
   disabled = disabled || !can("quotes", true);
   const utils = trpc.useUtils();
-  const info = trpc.quotes.deliveryInfo.useQuery({ id }, { refetchInterval: query => query.state.data?.lastDelivery?.status === "pendente" ? 5000 : false });
+  const info = trpc.quotes.deliveryInfo.useQuery({ id }, { refetchInterval: query => query.state.data?.lastDelivery && (query.state.data.lastDelivery.status === "pendente" || (["enviada", "respondida"].includes(query.state.data.lastDelivery.status) && !query.state.data.sentAt)) ? 5000 : false });
   const [mode, setMode] = useState<"send" | "sent" | "response" | null>(null);
   const [occurredAt, setOccurredAt] = useState(localNow);
   const [text, setText] = useState("");
