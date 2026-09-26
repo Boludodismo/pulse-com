@@ -29,6 +29,7 @@ export function artistInvitationMessage(params: { artistName: string; studioName
 }
 
 /**
+ * Fluxo acionado pelo botão "Gerar e enviar convite" no cadastro do artista.
  * Envia o convite somente por uma integração BotConversa ativa do mesmo estúdio.
  * Para não criar opt-in de WhatsApp em nome do destinatário, o envio automático
  * usa apenas um assinante que já exista no BotConversa. Se ele ainda não existir,
