@@ -1,7 +1,7 @@
 name: Session materials regression
 on:
   push:
-    branches: ['fix/session-materials-20260924', 'fix/session-stock-units-20260926', 'fix/session-layer-stack-20260926', 'fix/session-eyedropper-20260926', 'feat/session-visual-preferences-20260926', 'fix/session-iphone-rotation-20260926']
+    branches: ['fix/session-materials-20260924', 'fix/session-stock-units-20260926', 'fix/session-layer-stack-20260926', 'fix/session-eyedropper-20260926', 'feat/session-visual-preferences-20260926', 'fix/session-iphone-rotation-20260926', 'fix/session-eyedropper-outside-dismiss-20260926']
 permissions:
   contents: read
 jobs:
