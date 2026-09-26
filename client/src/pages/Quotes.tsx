@@ -1,3 +1,5 @@
+import WatermarkControl from "@/components/quotes/WatermarkControl";
+import QuoteFollowupActions from "@/components/quotes/QuoteFollowupActions";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useIsMobile } from "@/hooks/useMobile";
@@ -449,7 +451,7 @@ export default function Quotes() {
 
   async function shareProposalLink() {
     if (!proposalUrl) return;
-    const title = "Proposta " + quoteNumber;
+    const title = "Sua proposta de tatuagem";
     const text = "Olá! Segue sua proposta personalizada.";
     try {
       if (navigator.share) {
@@ -566,6 +568,7 @@ export default function Quotes() {
         </div>
         {renderActionButtons("top")}
       </div>
+      {locked && quoteId && clientId && <QuoteFollowupActions id={quoteId} clientId={clientId} responded={quoteStatus === "approved" || !!quotesQuery.data?.find(q=>q.id === quoteId)?.respondedAt} disabled={quoteStatus === "cancelled"}/>}
       {locked && <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">Proposta finalizada: conteúdo bloqueado para preservar exatamente a versão compartilhada com o cliente.</div>}
       {isMobile && <div className="grid grid-cols-2 rounded-lg border bg-card p-1"><button type="button" onClick={() => setMobileTab("edit")} className={"rounded-md px-3 py-2 text-sm " + (mobileTab === "edit" ? "bg-primary text-primary-foreground" : "")}>Editar</button><button type="button" onClick={() => setMobileTab("preview")} className={"rounded-md px-3 py-2 text-sm " + (mobileTab === "preview" ? "bg-primary text-primary-foreground" : "")}>Visualizar</button></div>}
 
@@ -665,7 +668,7 @@ export default function Quotes() {
               <div className="flex items-center gap-3">{brandingQuery.data?.personalLogoUrl ? <img src={brandingQuery.data.personalLogoUrl} alt="Logo pessoal" className="h-12 w-20 object-contain" /> : <div className="grid h-12 w-20 place-items-center rounded border border-dashed text-xs text-muted-foreground">PNG</div>}<div><strong className="text-sm">Logo pessoal</strong><p className="text-xs text-muted-foreground">Fica salva para novos orçamentos</p></div></div>
               <label className="inline-flex min-h-10 cursor-pointer items-center rounded-md border border-input px-3 text-sm font-medium hover:bg-accent"><Upload className="mr-2 h-4 w-4" />{uploadLogoMutation.isPending ? "Enviando…" : "Enviar PNG"}<input className="sr-only" type="file" accept="image/png" onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadLogo(f); e.currentTarget.value = ""; }} /></label>
             </div>
-            <div className="space-y-2"><Label>Opacidade da marca d’água · {editor.watermarkOpacity}%</Label><input className="w-full accent-orange-500" type="range" min={20} max={100} value={editor.watermarkOpacity} onChange={(e) => setEditor((v) => ({ ...v, watermarkOpacity: Number(e.target.value) }))} /></div>
+            <WatermarkControl editor={editor} artistName={identity.artist.name} onChange={value => setEditor(v => ({...v,watermarkOpacity:value}))}/>
             <Button type="button" variant="outline" onClick={() => void saveBranding()}><Save className="mr-2 h-4 w-4" />Salvar identidade como padrão</Button>
           </section>
           </fieldset>
@@ -678,7 +681,7 @@ export default function Quotes() {
           </section>
         </div>}
 
-        {previewVisible && <aside className="min-w-0 lg:sticky lg:top-20"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Eye className="h-4 w-4 text-primary" />Pré-visualização da proposta</div><div className="quote-preview-stage"><QuotePreview artistCardUrl={brandingQuery.data?.artistCardPath} editor={editor} identity={identity} quoteNumber={quoteNumber} createdDate={createdDate} validUntil={validUntil} /></div></aside>}
+        {previewVisible && <aside className="min-w-0 lg:sticky lg:top-20"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Eye className="h-4 w-4 text-primary" />Pré-visualização da proposta</div><div className="quote-preview-stage"><QuotePreview artistCardUrl={brandingQuery.data?.artistCardPath} editor={editor} identity={identity} createdDate={createdDate} validUntil={validUntil} /></div></aside>}
       </div>
     </div>
 

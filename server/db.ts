@@ -396,6 +396,7 @@ export async function listAppointments(studioId?: number | null, artistId?: numb
     .select({
       id: appointments.id,
       clientId: appointments.clientId,
+      quoteId: appointments.quoteId,
       calendarId: appointments.calendarId,
       date: appointments.date,
       duration: appointments.duration,

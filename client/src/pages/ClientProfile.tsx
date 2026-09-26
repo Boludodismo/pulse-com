@@ -1,3 +1,4 @@
+import ClientQuoteHistory from "@/components/quotes/ClientQuoteHistory";
 import {ClientConsentButton} from "@/components/WhatsappConsentPanel";
 import ClientColorHistory from "@/components/ClientColorHistory";
 import ClientMaterialHistory from "@/components/ClientMaterialHistory";
@@ -640,6 +641,7 @@ export default function ClientProfile() {
       <ClientCare clientId={clientId} />
       <Tabs defaultValue={can("appointments")?"appointments":"gallery"} className="w-full">
         <TabsList className="flex w-full bg-zinc-800 rounded-lg p-1 min-h-[44px] overflow-x-auto">
+          {can("quotes") && <TabsTrigger value="quotes" className="flex-1 min-w-fit text-xs sm:text-sm py-2">Orçamentos</TabsTrigger>}
           {can("appointments") && <TabsTrigger value="appointments" className="flex-1 min-w-fit text-xs sm:text-sm py-2">
             <span className="hidden sm:inline">Agendamentos</span>
             <span className="sm:hidden text-[11px]">Agenda</span>
@@ -687,6 +689,8 @@ export default function ClientProfile() {
             <span className="sm:hidden">Sessões</span>
           </TabsTrigger>}
         </TabsList>
+
+        {can("quotes") && <TabsContent value="quotes"><ClientQuoteHistory clientId={clientId}/></TabsContent>}
 
         {/* Agendamentos Tab */}
         {can("appointments") && <TabsContent value="appointments">

@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, isNull, or } from "drizzle-orm";
+import { and, desc, eq, isNull, isNotNull, ne, not, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { publicProcedure, router, tenantProcedure } from "../_core/trpc";
 import * as dbHelpers from "../db";
@@ -8,6 +8,14 @@ import { storagePut } from "../storage";
 import { prepareProtectedQuoteArtwork, publicQuotePayload } from "../quoteArtworkProtection";
 import { artistQuoteBranding, quotePresets, quoteProposals } from "../../drizzle/quoteProposalSchema";
 import { artistCards } from "../../drizzle/studioRelationsSchema";
+import { appointments, integrationContacts, messageQueue } from "../../drizzle/schema";
+import { quoteHistoryText } from "../../shared/quoteHistory";
+import { quoteHasBooking, quoteHasResponse, recordQuoteInteraction } from "../quoteHistory";
+import { getActiveIntegration, sendAndLog } from "../messaging/service";
+import { assertPrivateConnectionAccess } from "../messaging/privateConnectionAccess";
+import { normalizeBrazilianPhone } from "../messaging/phone";
+import { isOutboundMessagingBlocked, OUTBOUND_BLOCKED_ERROR } from "../messaging/outboundSafety";
+import { quoteDeliveryTrigger, quoteDeliveryMessage, quoteDeliveryError } from "../quoteDelivery";
 import {
   QUOTE_PRESET_CATEGORIES,
   parseQuotePayload,
@@ -16,6 +24,7 @@ import {
   quoteMediaSchema,
   QUOTE_TEXT_LIMIT,
   type QuoteEditorData,
+  quoteClientFirstName,
 } from "../../shared/quoteProposal";
 
 const idSchema = z.number().int().positive();
@@ -159,9 +168,16 @@ async function publicQuoteByToken(token: string) {
   if (!row || row.status === "draft" || row.status === "cancelled") {
     throw new TRPCError({ code: "NOT_FOUND", message: "Proposta não encontrada ou indisponível." });
   }
-  const payload = parseQuotePayload(row.payload);
+  let payload = parseQuotePayload(row.payload);
   if (!payload) {
     throw new TRPCError({ code: "CONFLICT", message: "Esta proposta precisa ser atualizada pelo estúdio." });
+  }
+  // Older copies contained an internal quote number. Regenerate only image protection,
+  // preserving the finalized texts, amounts, token and original artwork.
+  if (payload.protectedMedia.some(copy => copy.markVersion !== 2)) {
+    payload = await prepareProtectedQuoteArtwork(payload, row.studioId, row.artistId, row.quoteNumber);
+    await db.update(quoteProposals).set({payload:JSON.stringify(payload)})
+      .where(and(eq(quoteProposals.id,row.id),eq(quoteProposals.studioId,row.studioId),eq(quoteProposals.payload,row.payload)));
   }
   return { row, payload, expired: proposalExpired(row.validUntil) };
 }
@@ -177,7 +193,121 @@ async function accessibleQuote(ctx: { studioId: number; artistId: number | null 
   return row;
 }
 
+function requireHistoryArtist(ctx: { user: { role: string }; artistId: number | null }) {
+  if (ctx.user.role === "collaborator" && !ctx.artistId) throw new TRPCError({ code: "FORBIDDEN" });
+}
+
+async function deliveryDetails(ctx: Parameters<typeof assertPrivateConnectionAccess>[0] & { studioId: number }, row: typeof quoteProposals.$inferSelect) {
+  await assertPrivateConnectionAccess(ctx, row.studioId);
+  const db = await connection();
+  const [integration, client, deliveries] = await Promise.all([
+    getActiveIntegration(row.studioId), resolveClient(row.studioId, row.clientId),
+    db.select({ id: messageQueue.id, status: messageQueue.status, sentAt: messageQueue.sentAt, error: messageQueue.errorMessage })
+      .from(messageQueue).where(and(eq(messageQueue.studioId, row.studioId), eq(messageQueue.clientId, row.clientId), eq(messageQueue.trigger, quoteDeliveryTrigger(row.id)))).orderBy(desc(messageQueue.id)).limit(1),
+  ]);
+  let reason: string | null = null;
+  let phone = "";
+  try { phone = normalizeBrazilianPhone(client.phone || ""); } catch { reason = "Cadastre um WhatsApp válido com DDD para este cliente."; }
+  if (isOutboundMessagingBlocked()) reason = OUTBOUND_BLOCKED_ERROR;
+  else if (!integration) reason = "Conecte e ative o WhatsApp do CRM em Mensagens.";
+  else if (integration.sandboxMode) reason = "Libere a integração para produção em Mensagens antes de enviar orçamentos.";
+  else if (!reason) {
+    reason = await quoteDeliveryError(row.studioId, row.id, row.clientId, phone, false);
+    const [consent] = await db.select({ enabled: integrationContacts.hasWhatsappOptIn, optedOutAt: integrationContacts.optedOutAt })
+      .from(integrationContacts).where(and(eq(integrationContacts.studioId, row.studioId), eq(integrationContacts.integrationId, integration.id), eq(integrationContacts.clientId, row.clientId))).limit(1);
+    if (!reason && (!consent?.enabled || consent.optedOutAt)) reason = "Registre a autorização de WhatsApp deste cliente em Mensagens antes de enviar.";
+  }
+  return { integration, phone, clientName: quoteClientFirstName(client.name), lastDelivery: deliveries[0] || null, reason, message: row.publicToken ? quoteDeliveryMessage(row) : "" };
+}
+
 export const quotesRouter = router({
+  deliveryInfo: tenantProcedure.input(z.object({ id: idSchema })).query(async ({ ctx, input }) => {
+    requireHistoryArtist(ctx);
+    const row = await accessibleQuote(ctx, input.id);
+    try {
+      const details = await deliveryDetails(ctx.user as typeof ctx.user & { studioId: number }, row);
+      return { available: !details.reason, reason: details.reason, provider: details.integration?.provider || null, phone: details.phone,
+        clientName: details.clientName, lastDelivery: details.lastDelivery, message: details.message, sentAt: row.sentAt, sentSource: row.sentSource };
+    } catch (error) {
+      if (!(error instanceof TRPCError) || error.code !== "FORBIDDEN") throw error;
+      return { available: false, reason: error.message, provider: null, phone: "", clientName: "", lastDelivery: null, message: "", sentAt: row.sentAt, sentSource: row.sentSource };
+    }
+  }),
+  sendViaIntegration: tenantProcedure.input(z.object({ id: idSchema })).mutation(async ({ ctx, input }) => {
+    requireHistoryArtist(ctx);
+    const row = await accessibleQuote(ctx, input.id);
+    const details = await deliveryDetails(ctx.user as typeof ctx.user & { studioId: number }, row);
+    if (details.reason || !details.integration) throw new TRPCError({ code: "PRECONDITION_FAILED", message: details.reason || "Integração indisponível." });
+    // A stable key prevents double-clicks/concurrent sessions from sending this version twice.
+    if (details.lastDelivery) return { queued: details.lastDelivery.status === "pendente", duplicate: true };
+    const result = await sendAndLog({ studioId: ctx.studioId, integrationId: details.integration.id,
+      clientId: row.clientId, artistId: row.artistId, recipientType: "client", recipientPhone: details.phone,
+      recipientName: details.clientName, message: details.message, trigger: quoteDeliveryTrigger(row.id),
+      idempotencyKey: `quote-proposal:${ctx.studioId}:${row.id}:v${row.version}` });
+    if (!result.success) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: result.error });
+    return { queued: result.queued, duplicate: result.duplicate };
+  }),
+  clientHistory: tenantProcedure
+    .input(z.object({ clientId: idSchema, cursor: idSchema.optional(), artistId: idSchema.optional(), filter: z.enum(["all", "sent", "waiting", "responded", "booked"]).default("all") }))
+    .query(async ({ ctx, input }) => {
+      requireHistoryArtist(ctx);
+      await resolveClient(ctx.studioId, input.clientId);
+      const db = await connection();
+      const scope = and(eq(quoteProposals.studioId, ctx.studioId), eq(quoteProposals.clientId, input.clientId), ne(quoteProposals.status, "draft"),
+        ctx.artistId != null ? eq(quoteProposals.artistId, ctx.artistId) : input.artistId ? eq(quoteProposals.artistId, input.artistId) : undefined);
+      const filter = input.filter === "sent" ? isNotNull(quoteProposals.sentAt)
+        : input.filter === "responded" ? quoteHasResponse : input.filter === "booked" ? quoteHasBooking
+        : input.filter === "waiting" ? and(isNotNull(quoteProposals.sentAt), not(quoteHasResponse), not(quoteHasBooking), ne(quoteProposals.status, "cancelled"), ne(quoteProposals.status, "rejected")) : undefined;
+      const [totals] = await db.select({
+        total: sql<number>`COUNT(*)`.mapWith(Number),
+        sent: sql<number>`COALESCE(SUM(${quoteProposals.sentAt} IS NOT NULL),0)`.mapWith(Number),
+        responded: sql<number>`COALESCE(SUM(${quoteHasResponse}),0)`.mapWith(Number),
+        booked: sql<number>`COALESCE(SUM(${quoteHasBooking}),0)`.mapWith(Number),
+      }).from(quoteProposals).where(scope);
+      const rows = await db.select({ id: quoteProposals.id, quoteNumber: quoteProposals.quoteNumber, version: quoteProposals.version,
+        artistId: quoteProposals.artistId, status: quoteProposals.status, createdDate: quoteProposals.createdDate, validUntil: quoteProposals.validUntil,
+        totalAmount: quoteProposals.totalAmount, sentAt: quoteProposals.sentAt, respondedAt: quoteProposals.respondedAt,
+        acceptedAt: quoteProposals.acceptedAt, responseSource: quoteProposals.responseSource, payload: quoteProposals.payload,
+        booked: sql<number>`${quoteHasBooking}`.mapWith(Number),
+      }).from(quoteProposals).where(and(scope, filter, input.cursor ? lt(quoteProposals.id, input.cursor) : undefined)).orderBy(desc(quoteProposals.id)).limit(21);
+      const hasMore = rows.length > 20;
+      const items = rows.slice(0, 20).map(({ payload, ...row }) => {
+        const text = quoteHistoryText(payload);
+        return { ...row, respondedAt: row.respondedAt || row.acceptedAt, artistName: text?.artist.name || "Artista", title: text?.projects[0]?.title || row.quoteNumber };
+      });
+      return { totals, items, nextCursor: hasMore ? items[items.length - 1].id : undefined };
+    }),
+
+  historyDetail: tenantProcedure.input(z.object({ id: idSchema })).query(async ({ ctx, input }) => {
+    requireHistoryArtist(ctx);
+    const row = await accessibleQuote(ctx, input.id);
+    const db = await connection();
+    const bookings = await db.select({ id: appointments.id, date: appointments.date, status: appointments.status, service: appointments.service })
+      .from(appointments).where(and(eq(appointments.quoteId, row.id), eq(appointments.studioId, ctx.studioId), eq(appointments.clientId, row.clientId), eq(appointments.artistId, row.artistId))).orderBy(desc(appointments.date));
+    return { id: row.id, quoteNumber: row.quoteNumber, version: row.version, status: row.status, createdDate: row.createdDate, validUntil: row.validUntil,
+      sentAt: row.sentAt, sentSource: row.sentSource, respondedAt: row.respondedAt || row.acceptedAt, acceptedAt: row.acceptedAt, responseSource: row.responseSource || (row.acceptedAt ? "public_accept" : null),
+      responseText: row.responseText, questionAt: row.questionAt, questionText: row.questionText,
+      text: quoteHistoryText(row.payload), bookings };
+  }),
+
+  schedulingOptions: tenantProcedure.input(z.object({ clientId: idSchema, artistId: idSchema })).query(async ({ ctx, input }) => {
+    requireHistoryArtist(ctx);
+    await resolveArtist(ctx, input.artistId);
+    await resolveClient(ctx.studioId, input.clientId);
+    const db = await connection();
+    return db.select({ id: quoteProposals.id, quoteNumber: quoteProposals.quoteNumber, totalAmount: quoteProposals.totalAmount, validUntil: quoteProposals.validUntil })
+      .from(quoteProposals).where(and(eq(quoteProposals.studioId, ctx.studioId), eq(quoteProposals.clientId, input.clientId), eq(quoteProposals.artistId, input.artistId),
+        ne(quoteProposals.status, "draft"), ne(quoteProposals.status, "cancelled"), ne(quoteProposals.status, "rejected"))).orderBy(desc(quoteProposals.id));
+  }),
+
+  recordSent: tenantProcedure.input(z.object({ id: idSchema, occurredAt: z.string().datetime().optional() })).mutation(async ({ ctx, input }) => {
+    requireHistoryArtist(ctx);
+    return recordQuoteInteraction({ ...input, studioId: ctx.studioId, artistId: ctx.artistId, userId: ctx.user.id, kind: "sent" });
+  }),
+  recordResponse: tenantProcedure.input(z.object({ id: idSchema, text: z.string().trim().min(2).max(2000), occurredAt: z.string().datetime().optional() })).mutation(async ({ ctx, input }) => {
+    requireHistoryArtist(ctx);
+    return recordQuoteInteraction({ ...input, studioId: ctx.studioId, artistId: ctx.artistId, userId: ctx.user.id, kind: "manual_response" });
+  }),
   list: tenantProcedure.query(async ({ ctx }) => {
     const db = await connection();
     const condition = ctx.artistId != null
@@ -320,6 +450,12 @@ export const quotesRouter = router({
       if (current.status === "draft") {
         throw new TRPCError({ code: "CONFLICT", message: "Finalize o orçamento antes de alterar seu status." });
       }
+      if (["sent", "approved", "rejected"].includes(input.status)) {
+        requireHistoryArtist(ctx);
+        await recordQuoteInteraction({ id: current.id, studioId: ctx.studioId, artistId: ctx.artistId, userId: ctx.user.id,
+          kind: input.status === "sent" ? "sent" : "manual_response", status: input.status === "sent" ? undefined : input.status as "approved" | "rejected" });
+        return { ok: true };
+      }
       const db = await connection();
       await db.update(quoteProposals).set({ status: input.status })
         .where(and(eq(quoteProposals.id, current.id), eq(quoteProposals.studioId, ctx.studioId)));
@@ -375,9 +511,9 @@ export const quotesRouter = router({
           totalAmount: row.totalAmount,
           viewedAt: row.viewedAt,
           acceptedAt: row.acceptedAt,
+          questionReceived: Boolean(row.questionAt),
           expired,
           artistCardPath,
-          quoteNumber: row.quoteNumber,
           payload: publicQuotePayload(payload),
         };
       }),
@@ -401,13 +537,14 @@ export const quotesRouter = router({
         const { row, expired } = await publicQuoteByToken(input.token);
         if (expired) throw new TRPCError({ code: "BAD_REQUEST", message: "Esta proposta está vencida. Fale com o estúdio para receber uma nova versão." });
         if (row.status === "rejected") throw new TRPCError({ code: "CONFLICT", message: "Esta proposta já foi recusada." });
-        const acceptedAt = row.acceptedAt || nowSql();
-        const db = await connection();
-        await db.update(quoteProposals)
-          .set({ status: "approved", acceptedAt, viewedAt: row.viewedAt || acceptedAt })
-          .where(eq(quoteProposals.id, row.id));
-        return { ok: true, acceptedAt };
+        const recorded = await recordQuoteInteraction({ id: row.id, studioId: row.studioId, kind: "public_accept" });
+        return { ok: true, acceptedAt: recorded.acceptedAt };
       }),
+    question: publicProcedure.input(z.object({ token: publicTokenSchema, text: z.string().trim().min(2).max(2000) })).mutation(async ({ input }) => {
+      const { row } = await publicQuoteByToken(input.token);
+      await recordQuoteInteraction({ id: row.id, studioId: row.studioId, kind: "public_question", text: input.text });
+      return { ok: true };
+    }),
   }),
 
   presets: router({

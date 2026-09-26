@@ -12,10 +12,13 @@ describe("quote image descriptions in the customer document", () => {
     editor.media.suggestedArtwork = image("artwork");
     editor.media.gallery = [image("gallery")];
     editor.additionalProjects = [{ id: "two", project: editor.project, images: [image("additional")] }];
-    const props = { editor, identity: { client: { name: "Cliente" }, artist: { name: "Artista" }, studio: {} }, quoteNumber: "ORC-1", createdDate: "2026-09-26", validUntil: "2026-10-10" };
+    const props = { editor, identity: { client: { name: "João da Silva" }, artist: { name: "Artista" }, studio: {} }, quoteNumber: "ORC-1", createdDate: "2026-09-26", validUntil: "2026-10-10" };
     const html = renderToStaticMarkup(createElement(QuotePreview, { ...props, artistCardUrl: "/artista/published-token" }));
     for (const id of ["reference", "artwork", "gallery", "additional"]) expect(html).toContain(`${id}: linha 1\n&lt;script&gt;linha 2&lt;/script&gt;`);
     expect(html).not.toContain("<script>");
+    expect(html).toContain("Cliente: João");
+    expect(html).not.toContain("da Silva");
+    expect(html).not.toContain("ORC-1");
     expect(html).toContain('href="/artista/published-token"');
     expect(html).toContain("Acessar cartão virtual do artista");
     props.editor = buildEmptyQuoteEditorData();

@@ -10,6 +10,7 @@ import {intelligentInboxRouter} from './routers/intelligentInbox';
 import {studioRelationsRouter} from './routers/studioRelations';
 import { customerCareRouter } from "./routers/customerCare";
 import { quotesRouter } from "./routers/quotes";
+import { validateAppointmentQuote } from "./quoteHistory";
 import { contactImportRouter } from "./routers/contactImport";
 import { clientMergeRouter } from "./routers/clientMerge";
 import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
@@ -579,6 +580,7 @@ export const appRouter = router({
     create: protectedProcedure
       .input(z.object({
         clientId: z.number(),
+        quoteId: z.number().int().positive().optional(),
         studioId: z.number().int().positive().optional(),
         calendarId: z.number().optional(),
         date: z.string(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
@@ -680,6 +682,11 @@ export const appRouter = router({
               if (found[0]) resolvedArtistId = found[0].id;
             }
           } catch { /* silencioso — artistId é opcional */ }
+        }
+
+        if (input.quoteId) {
+          if (ctx.user.role === "collaborator" && (!ctx.user.artistId || !await hasModulePermission({userId:ctx.user.id,studioId,module:"quotes",write:true}))) throw new TRPCError({code:"FORBIDDEN"});
+          await validateAppointmentQuote({ quoteId: input.quoteId, studioId, clientId: input.clientId, artistId: resolvedArtistId, userArtistId: ctx.user.role === "collaborator" ? ctx.user.artistId : null });
         }
 
         const { autoReminder, recordWhatsAppConsent, ...appointmentInput } = input;
@@ -817,6 +824,7 @@ export const appRouter = router({
         data: z.object({
           calendarId: z.number().nullable().optional(),
           clientId: z.number().int().positive().optional(),
+          quoteId: z.number().int().positive().nullable().optional(),
           date: z.string().optional(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
           duration: z.number().min(1).optional(),
           service: z.string().min(1).optional(),
@@ -870,6 +878,14 @@ export const appRouter = router({
           ...(includeArtistCard !== undefined ? { includeArtistCard: includeArtistCard ? 1 : 0 } : {}),
           ...(depositPaid !== undefined ? { depositPaid: depositPaid ? 1 : 0 } : {}),
         };
+        const identityChanged = (input.data.clientId != null && input.data.clientId !== appointmentBefore.clientId)
+          || (resolvedArtistId != null && resolvedArtistId !== appointmentBefore.artistId)
+          || (input.data.artist != null && input.data.artist !== appointmentBefore.artist);
+        if (input.data.quoteId === undefined && identityChanged) updateData.quoteId = null;
+        if (updateData.quoteId && (updateData.quoteId !== appointmentBefore.quoteId || identityChanged)) {
+          if (ctx.user.role === "collaborator" && (!ctx.user.artistId || !await hasModulePermission({userId:ctx.user.id,studioId:activeStudioId,module:"quotes",write:true}))) throw new TRPCError({code:"FORBIDDEN"});
+          await validateAppointmentQuote({quoteId:updateData.quoteId,studioId:activeStudioId,clientId:input.data.clientId ?? appointmentBefore.clientId,artistId:resolvedArtistId ?? appointmentBefore.artistId,userArtistId:ctx.user.role === "collaborator" ? ctx.user.artistId : null});
+        }
         const result = await db.updateAppointment(input.id, updateData);
 
         // Bug 3: Gerar transação no caixa quando sinal muda de não-pago para pago

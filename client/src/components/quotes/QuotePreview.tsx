@@ -1,4 +1,5 @@
 import type { QuoteEditorData, QuoteMedia } from "@shared/quoteProposal";
+import { quoteClientFirstName } from "@shared/quoteProposal";
 import React, { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
@@ -30,7 +31,6 @@ export type QuotePreviewIdentity = {
 type Props = {
   editor: QuoteEditorData;
   identity: QuotePreviewIdentity;
-  quoteNumber: string;
   createdDate: string;
   validUntil: string;
   artistCardUrl?: string | null;
@@ -121,7 +121,7 @@ function Footer({
       )}
       <div className="quote-footer-copy">
         <strong>{identity.artist.name || "Artista"}</strong>
-        <span>Cliente: {identity.client.name || "—"}</span>
+        <span>Cliente: {quoteClientFirstName(identity.client.name) || "—"}</span>
         <small>{formatDate(createdDate)}</small>
       </div>
       <div className="quote-footer-page">{String(page).padStart(2, "0")}</div>
@@ -150,7 +150,7 @@ function CoverPage(props: Props) {
         <h1>Orçamento</h1>
         <p className="quote-kicker">ARTE QUE PERMANECE</p>
         <div className="quote-client-block">
-          <strong>Cliente: {identity.client.name || "Nome do cliente"}</strong>
+          <strong>Cliente: {quoteClientFirstName(identity.client.name) || "Nome do cliente"}</strong>
           <span>Criado em: {formatDate(createdDate)}</span>
           <span>Válido até: {formatDate(validUntil)}</span>
         </div>
@@ -292,7 +292,7 @@ function ProjectDetails({ project }: { project: QuoteEditorData["project"] }) {
 }
 
 function SummaryPage(props: Props) {
-  const { editor, identity, quoteNumber, createdDate } = props;
+  const { editor, identity, createdDate } = props;
   const logoUrl = activeLogo(editor, identity);
   const balance = Math.max(0, editor.pricing.totalAmount - editor.pricing.depositAmount);
   const contact = editor.contactSource === "artist" ? identity.artist : identity.studio;

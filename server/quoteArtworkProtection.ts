@@ -10,7 +10,8 @@ const escapeXml = (text: string) => text.replace(/[<>&"']/g, c => ({ "<": "&lt;"
 
 // Rasterize the identifying mark into the customer copy. Never return the source
 // URL in the public payload, including when it is reused in an unmarked slot.
-export async function watermarkQuoteArtwork(source: Buffer, artist: string, quoteNumber: string) {
+export async function watermarkQuoteArtwork(source: Buffer, artist: string, _internalQuoteNumber: string, requestedOpacity = 70) {
+  const opacity = Math.max(20, Math.min(100, Number.isFinite(requestedOpacity) ? requestedOpacity : 70)) / 100;
   const image = sharp(source, { limitInputPixels: 40_000_000, animated: false });
   const metadata = await image.metadata();
   if (!["jpeg", "png", "webp"].includes(metadata.format || "")) throw new Error("Formato de imagem não suportado.");
@@ -18,7 +19,7 @@ export async function watermarkQuoteArtwork(source: Buffer, artist: string, quot
     .flatten({ background: "#ffffff" }).png().toBuffer({ resolveWithObject: true });
   const { width, height } = resized.info;
   const fontSize = Math.max(12, Math.round(Math.min(width, height) / 32));
-  const line = escapeXml(`${artist.slice(0, 65)} · ${quoteNumber}`);
+  const line = escapeXml(artist.slice(0, 65));
   const cellWidth = Math.max(240, Math.round(width * 0.72));
   // A bundled font keeps the identifying text visible on hosts without system fonts.
   const stamp = await sharp({ text: {
@@ -28,7 +29,7 @@ export async function watermarkQuoteArtwork(source: Buffer, artist: string, quot
     width: cellWidth - 24, align: "center", rgba: true,
   } }).png().toBuffer({ resolveWithObject: true });
   const cellHeight = Math.max(stamp.info.height + 48, Math.round(height / 5));
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}"><defs><pattern id="mark" width="${cellWidth}" height="${cellHeight}" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)"><rect x="4" y="12" width="${stamp.info.width + 16}" height="${stamp.info.height + 16}" rx="4" fill="black" opacity="0.25"/><image x="12" y="20" width="${stamp.info.width}" height="${stamp.info.height}" opacity="0.65" xlink:href="data:image/png;base64,${stamp.data.toString("base64")}"/></pattern></defs><rect width="100%" height="100%" fill="url(#mark)"/></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}"><defs><pattern id="mark" width="${cellWidth}" height="${cellHeight}" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)"><rect x="4" y="12" width="${stamp.info.width + 16}" height="${stamp.info.height + 16}" rx="4" fill="black" opacity="${opacity * .35}"/><image x="12" y="20" width="${stamp.info.width}" height="${stamp.info.height}" opacity="${opacity}" xlink:href="data:image/png;base64,${stamp.data.toString("base64")}"/></pattern></defs><rect width="100%" height="100%" fill="url(#mark)"/></svg>`;
   return sharp(resized.data).composite([{ input: Buffer.from(svg) }]).jpeg({ quality: 85 }).toBuffer();
 }
 
@@ -65,10 +66,10 @@ export async function prepareProtectedQuoteArtwork(payload: QuoteStoredPayload, 
       const { url } = await storageGet(image.key);
       if (!url) throw new Error("Armazenamento indisponível.");
       const buffer = await readLimitedImage(url);
-      const customerCopy = await watermarkQuoteArtwork(buffer, payload.artist.name, quoteNumber);
+      const customerCopy = await watermarkQuoteArtwork(buffer, payload.artist.name, quoteNumber, payload.editor.watermarkOpacity);
       const uploaded = await storagePut(`quotes/${studioId}/${artistId}/protected/${randomUUID()}.jpg`, customerCopy, "image/jpeg");
       if (!uploaded.url) throw new Error("Armazenamento indisponível.");
-      protectedMedia.push({ sourceKey: image.key, media: { ...image, ...uploaded, protect: true } });
+      protectedMedia.push({ sourceKey: image.key, markVersion: 2, media: { ...image, ...uploaded, protect: true } });
     } catch (error) {
       if (error instanceof TRPCError) throw error;
       throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Não foi possível preparar a cópia protegida. O orçamento continua como rascunho; tente novamente." });
@@ -86,5 +87,5 @@ export function publicQuotePayload(payload: QuoteStoredPayload): QuoteStoredPayl
     if (!copy) throw new TRPCError({ code: "CONFLICT", message: "A cópia protegida desta proposta precisa ser preparada pelo artista." });
     return { ...image, key: copy.key, url: copy.url, protect: true };
   });
-  return { ...payload, editor, protectedMedia: [] };
+  return { ...payload, client: { ...payload.client, name: payload.client.name.trim().split(/\s+/)[0] || "" }, editor, protectedMedia: [] };
 }

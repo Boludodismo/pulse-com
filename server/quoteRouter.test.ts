@@ -18,19 +18,22 @@ describe("real quote router round-trip", () => {
     mocks.client.mockResolvedValue({ id: 3, studioId: 1, name: "Cliente" });
     mocks.settings.mockResolvedValue({ studioName: "Estúdio", phone: "5538999990000" });
     const dialect = new MySqlDialect();
-    mocks.getDb.mockResolvedValue({
+    const database: any = {
       select: () => {
         let table = "";
-        const query: any = { from(t: any) { table = getTableName(t); return query; }, where(c: any) { const sql = dialect.sqlToQuery(c); filters.push(sql.params); if (table === "artist_cards") cardQueries.push(sql); return query; }, orderBy() { return query; }, limit: async () => table === "quote_proposals" && row ? [row] : table === "artist_cards" && card ? [card] : [] };
+        const query: any = { from(t: any) { table = getTableName(t); return query; }, where(c: any) { const sql = dialect.sqlToQuery(c); filters.push(sql.params); if (table === "artist_cards") cardQueries.push(sql); return query; }, orderBy() { return query; }, limit() { return query; }, for() { return query; }, then(resolve:any) { return Promise.resolve(table === "quote_proposals" && row ? [row] : table === "artist_cards" && card ? [card] : []).then(resolve); } };
         return query;
       },
-      insert: (t: any) => ({ values: async (values: any) => {
+      insert: (t: any) => ({ values: (values: any) => {
         const table = getTableName(t); writes.push({ table, values });
         if (table === "quote_proposals") row = { ...values, id: 5, publicToken: null, acceptedAt: null, viewedAt: null };
-        return [{ insertId: 5 }];
+        const inserted = Promise.resolve([{ insertId: 5 }]);
+        return Object.assign(inserted, {onDuplicateKeyUpdate:()=>inserted});
       } }),
       update: (t: any) => ({ set: (values: any) => ({ where: async (c: any) => { filters.push(dialect.sqlToQuery(c).params); writes.push({ table: getTableName(t), values }); row = { ...row, ...values }; return [{ affectedRows: 1 }]; } }) }),
-    });
+    };
+    database.transaction = (fn:any)=>fn(database);
+    mocks.getDb.mockResolvedValue(database);
   });
   it("saves and reloads projects, attachments and payment text, finalizes, exposes and accepts the same version", async () => {
     const caller = quotesRouter.createCaller(ctx); const editor = buildEmptyQuoteEditorData();
@@ -49,12 +52,13 @@ describe("real quote router round-trip", () => {
     const finalized = await caller.finalize({ id: created.id });
     expect(finalized.publicToken).toMatch(/^[a-f0-9]{48}$/);
     const customer = await caller.public.get({ token: finalized.publicToken });
-    expect(customer.payload.editor).toEqual(editor); expect(customer.totalAmount).toBe(250000);
+    expect(customer).not.toHaveProperty("quoteNumber"); expect(customer.payload.editor).toEqual(editor); expect(customer.totalAmount).toBe(250000);
     await expect(caller.update({ id: created.id, validUntil: "2099-10-10", editor })).rejects.toThrow("finalizado");
     const accepted = await caller.public.accept({ token: finalized.publicToken });
     const repeated = await caller.public.accept({ token: finalized.publicToken });
     expect(repeated.acceptedAt).toEqual(accepted.acceptedAt); expect(row.status).toBe("approved");
-    expect(writes.every(w => w.table === "quote_proposals")).toBe(true);
+    expect(writes.every(w => ["quote_proposals", "care_tags"].includes(w.table))).toBe(true);
+    expect(writes.some(w=>w.table==="care_tags" && w.values.label==="orçamento respondido")).toBe(true);
     expect(filters.some(params => params.includes(1) && params.includes(5))).toBe(true);
   });
   it("uses the same published artist card in editor and public quote, scoped to artist and studio", async () => {

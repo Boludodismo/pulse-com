@@ -83,7 +83,7 @@ describe("quote artwork customer copy", () => {
   it("does not touch unprotected legacy media", async () => {
     const p = fixture(); p.editor.media.clientReference = media(1);
     expect(await prepareProtectedQuoteArtwork(p, 1, 2, "ORC-1")).toEqual(p);
-    expect(publicQuotePayload(p)).toEqual(p); expect(storage.get).not.toHaveBeenCalled();
+    expect(publicQuotePayload(p)).toEqual({...p,client:{...p.client,name:p.client.name.split(" ")[0]}}); expect(storage.get).not.toHaveBeenCalled();
   });
   it("rejects cross-tenant, cross-artist and arbitrary source URLs before I/O", async () => {
     for (const key of ["quotes/9/2/media/abc.png", "quotes/1/9/media/abc.png", "quotes/1/2/media/../../abc.png", "https://evil.test/asset"]) {
@@ -95,6 +95,15 @@ describe("quote artwork customer copy", () => {
   it("burns a visible mark into raster pixels and reduces oversized images", async () => {
     const source = await sharp({ create: { width: 2200, height: 1800, channels: 3, background: "#aaa" } }).png().toBuffer();
     const out = await watermarkQuoteArtwork(source, "Artista & <teste>", "ORC-2026-123");
+    // Internal identifiers must have no effect on the pixels sent to a client.
+    const differentInternalNumber = await watermarkQuoteArtwork(source, "Artista & <teste>", "ORC-PRIVATE-999");
+    expect(differentInternalNumber.equals(out)).toBe(true);
+    const subtle = await watermarkQuoteArtwork(source, "Artista & <teste>", "ORC-2026-123", 20);
+    const intense = await watermarkQuoteArtwork(source, "Artista & <teste>", "ORC-2026-123", 100);
+    expect(subtle.equals(intense)).toBe(false);
+    const subtleStats = await sharp(subtle).stats();
+    const intenseStats = await sharp(intense).stats();
+    expect(intenseStats.channels[0].stdev).toBeGreaterThan(subtleStats.channels[0].stdev);
     const meta = await sharp(out).metadata(); const stats = await sharp(out).stats();
     expect(meta.format).toBe("jpeg"); expect(meta.width).toBe(1600);
     expect(stats.channels[0].stdev).toBeGreaterThan(2);
