@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Artist invitation access and delivery
+        run: pnpm exec vitest run server/artistInvitations.test.ts server/artistInvitationDelivery.test.ts
+
       - name: Type check
         run: pnpm check
 

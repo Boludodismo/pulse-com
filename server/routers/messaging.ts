@@ -492,7 +492,7 @@ export const messagingRouter = router({
         .limit(Math.min(input.limit, 100));
     }),
 
-  /** Indicadores compactos de lembretes já entregues, sempre isolados por estúdio. */
+  /** Indicadores compactos de lembretes já entregues, isolados por estúdio e artista. */
   getReminderIndicators: baseTenantProcedure
     .input(z.object({ appointmentIds: z.array(z.number().int().positive()).max(500) }))
     .query(async ({ input, ctx }) => {
@@ -505,11 +505,17 @@ export const messagingRouter = router({
         inArray(messageQueue.trigger, ["appointment_reminder", "appointment_reminder_1h_client"]),
       ];
       if (ctx.studioId != null) filters.push(eq(messageQueue.studioId, ctx.studioId));
+      if (ctx.artistId != null) filters.push(eq(appointments.artistId, ctx.artistId));
       const rows = await db.select({
         appointmentId: messageQueue.appointmentId,
         trigger: messageQueue.trigger,
         sentAt: messageQueue.sentAt,
-      }).from(messageQueue).where(and(...filters)).orderBy(desc(messageQueue.sentAt));
+      }).from(messageQueue)
+        .innerJoin(appointments, and(
+          eq(appointments.id, messageQueue.appointmentId),
+          ctx.studioId != null ? eq(appointments.studioId, ctx.studioId) : undefined,
+        ))
+        .where(and(...filters)).orderBy(desc(messageQueue.sentAt));
       const indicators: Record<number, { sentAt: string | null; types: string[] }> = {};
       for (const row of rows) {
         if (!row.appointmentId) continue;

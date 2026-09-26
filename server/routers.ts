@@ -1107,19 +1107,19 @@ export const appRouter = router({
         }
       }),
 
-    /** Alertas de ação do cliente, sempre limitados ao estúdio da sessão. */
+    /** Alertas de ação do cliente, limitados ao estúdio e ao próprio artista quando colaborador. */
     listActionAlerts: tenantProcedure
       .input(z.object({ limit: z.number().int().min(1).max(20).optional() }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.studioId == null) throw new TRPCError({ code: "FORBIDDEN", message: "Empresa não selecionada." });
-        return listAppointmentActionAlerts(ctx.studioId, input?.limit ?? 8);
+        return listAppointmentActionAlerts(ctx.studioId, input?.limit ?? 8, ctx.artistId);
       }),
 
     markActionAlertViewed: tenantProcedure
       .input(z.object({ alertId: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.studioId == null) throw new TRPCError({ code: "FORBIDDEN", message: "Empresa não selecionada." });
-        await markAppointmentActionAlertViewed(ctx.studioId, input.alertId);
+        await markAppointmentActionAlertViewed(ctx.studioId, input.alertId, ctx.artistId);
         return { success: true };
       }),
 

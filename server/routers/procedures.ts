@@ -878,16 +878,20 @@ export const proceduresRouter = router({
     .query(async ({ ctx }) => {
       const studioId = ctx.studioId;
       const db = await requireDb();
+      const filters = [
+        eq(technicalProcedures.studioId, studioId),
+        isNotNull(technicalProcedures.appointmentId),
+      ];
+      if (ctx.artistId != null) filters.push(eq(appointments.artistId, ctx.artistId));
       const rows = await db
         .select({ appointmentId: technicalProcedures.appointmentId, id: technicalProcedures.id })
         .from(technicalProcedures)
-        .where(
-          and(
-            eq(technicalProcedures.studioId, studioId),
-            isNotNull(technicalProcedures.appointmentId)
-          )
-        );
-      // Retorna mapa appointmentId -> procedureId
+        .innerJoin(appointments, and(
+          eq(appointments.id, technicalProcedures.appointmentId),
+          eq(appointments.studioId, studioId),
+        ))
+        .where(and(...filters));
+      // Retorna mapa appointmentId -> procedureId, já restrito ao próprio artista quando colaborador.
       const map: Record<number, number> = {};
       for (const r of rows) {
         if (r.appointmentId != null) map[r.appointmentId] = r.id;

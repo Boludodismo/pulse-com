@@ -334,20 +334,38 @@ export async function consumeAppointmentActionLink(rawToken: string) {
   return { action, appointmentId: link.appointmentId, anamneseQueued, anamneseUrl, artistQueued };
 }
 
-export async function listAppointmentActionAlerts(studioId: number, limit = 8) {
+export async function listAppointmentActionAlerts(studioId: number, limit = 8, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
+  const artistScope = artistId == null
+    ? sql`1 = 1`
+    : sql`EXISTS (
+        SELECT 1 FROM ${appointments}
+        WHERE ${appointments.id} = ${appointmentActionAlerts.appointmentId}
+          AND ${appointments.studioId} = ${studioId}
+          AND ${appointments.artistId} = ${artistId}
+      )`;
   return db.select().from(appointmentActionAlerts).where(and(
     eq(appointmentActionAlerts.studioId, studioId),
     eq(appointmentActionAlerts.status, "new"),
+    artistScope,
   )).orderBy(sql`${appointmentActionAlerts.createdAt} DESC`).limit(limit);
 }
 
-export async function markAppointmentActionAlertViewed(studioId: number, alertId: number) {
+export async function markAppointmentActionAlertViewed(studioId: number, alertId: number, artistId?: number | null) {
   const db = await getDb();
   if (!db) throw new Error("Banco de dados indisponível");
+  const artistScope = artistId == null
+    ? sql`1 = 1`
+    : sql`EXISTS (
+        SELECT 1 FROM ${appointments}
+        WHERE ${appointments.id} = ${appointmentActionAlerts.appointmentId}
+          AND ${appointments.studioId} = ${studioId}
+          AND ${appointments.artistId} = ${artistId}
+      )`;
   await db.update(appointmentActionAlerts).set({ status: "viewed", viewedAt: sqlDate() }).where(and(
     eq(appointmentActionAlerts.id, alertId),
     eq(appointmentActionAlerts.studioId, studioId),
+    artistScope,
   ));
 }
