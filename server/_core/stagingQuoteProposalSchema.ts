@@ -40,7 +40,7 @@ export async function ensureStagingQuoteProposalSchema() {
       "created_date datetime NOT NULL," +
       "valid_until datetime NOT NULL," +
       "total_amount int NOT NULL DEFAULT 0," +
-      "payload text NOT NULL," +
+      "payload mediumtext NOT NULL," +
       "created_by_user_id int NOT NULL," +
       "finalized_at datetime NULL," +
       "created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
@@ -97,6 +97,14 @@ export async function ensureStagingQuoteProposalSchema() {
     await ensureQuoteColumn("public_token", "public_token varchar(64) NULL AFTER payload");
     await ensureQuoteColumn("viewed_at", "viewed_at datetime NULL AFTER public_token");
     await ensureQuoteColumn("accepted_at", "accepted_at datetime NULL AFTER viewed_at");
+
+    // Widen only the existing quote payload; no data is rewritten or removed.
+    const [payloadColumns] = await connection.query<RowDataPacket[]>(
+      "SHOW COLUMNS FROM quote_proposals LIKE 'payload'",
+    );
+    if (String(payloadColumns[0]?.Type).toLowerCase() === "text") {
+      await connection.query("ALTER TABLE quote_proposals MODIFY COLUMN payload MEDIUMTEXT NOT NULL");
+    }
 
     const [tokenIndexes] = await connection.query<RowDataPacket[]>(
       "SHOW INDEX FROM quote_proposals WHERE Key_name='quote_proposals_public_token_unique'",

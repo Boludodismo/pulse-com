@@ -998,6 +998,98 @@
   gap: 0.55rem;
 }
 
+/* Existing identity, now with a flowing content area for long proposals. */
+.quote-summary-page,
+.quote-artist-page {
+  aspect-ratio: auto;
+  min-height: 0;
+  padding: 24px;
+}
+.quote-summary-page > .quote-topline,
+.quote-summary-page > h2,
+.quote-summary-page > .quote-accent-line,
+.quote-summary-page .quote-project-overview,
+.quote-summary-page .quote-details,
+.quote-summary-page .quote-investment,
+.quote-summary-page .quote-summary-bottom,
+.quote-summary-page > .quote-doc-footer,
+.quote-artist-page > .quote-topline,
+.quote-artist-page > .quote-doc-footer {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.quote-summary-page > .quote-topline,
+.quote-artist-page > .quote-topline { margin-bottom: 2rem; padding-bottom: 1rem; }
+.quote-summary-page > h2 { font-size: clamp(25px, 6cqw, 42px); line-height: 1.1; }
+.quote-summary-page > .quote-accent-line { width: 12%; margin: 1rem 0 1.6rem; }
+.quote-summary-page .quote-project-title { font-size: clamp(18px, 3.5cqw, 25px); margin: 1rem 0; color: #f97316; overflow-wrap: anywhere; }
+.quote-summary-page .quote-project-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.quote-summary-page .quote-concept { grid-column: 1 / -1; margin: 1rem 0; }
+.quote-summary-page h3 { font-size: clamp(14px, 2.6cqw, 20px); }
+.quote-summary-page h4 { font-size: 13px; margin-bottom: 0.6rem; }
+.quote-summary-page .quote-concept p,
+.quote-summary-page .quote-summary-bottom p,
+.quote-summary-page .quote-payment-info p { font-size: 16px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.quote-summary-page .quote-details { margin: 1.5rem 0; }
+.quote-summary-page .quote-details li { font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.quote-summary-page .quote-details ul { gap: 0.45rem 1rem; }
+.quote-summary-page .quote-investment { margin: 2rem 0 0; border-top: 1px solid #333; padding-top: 1.5rem; }
+.quote-summary-page .quote-money-row { font-size: 15px; padding: 0.4rem 0; }
+.quote-summary-page .quote-installments { font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.quote-payment-info { margin: 1.5rem 0; color: #d8d8d8; }
+.quote-summary-page .quote-total { margin-top: 1.5rem; padding-top: 1rem; }
+.quote-summary-page .quote-total span { font-size: 14px; }
+.quote-summary-page .quote-total strong { font-size: clamp(22px, 5cqw, 36px); }
+.quote-summary-page .quote-summary-bottom { margin: 2rem 0; padding-top: 1.5rem; grid-template-columns: 1fr; gap: 1.5rem; }
+.quote-summary-page .quote-contact { padding-left: 1rem; }
+.quote-summary-page .quote-contact span { font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.quote-extra-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.quote-extra-gallery figure { margin: 0; min-width: 0; }
+.quote-extra-gallery figcaption { font-size: 13px; color: #bfbfbf; margin-top: 0.5rem; overflow-wrap: anywhere; }
+.quote-summary-page .quote-media-frame { width: 100%; display: block; padding: 0; cursor: zoom-in; aspect-ratio: 4 / 5; flex: none; }
+.quote-summary-page .quote-media-main { display: block; height: 100%; max-height: none; object-fit: contain; }
+.quote-additional-project { border-top: 1px solid #333; margin-top: 2rem; padding-top: 1rem; }
+.quote-summary-page .quote-doc-footer,
+.quote-artist-page .quote-doc-footer { margin-top: 2rem; padding-top: 1rem; min-height: 54px; }
+.quote-page .quote-footer-copy { font-size: max(10px, 1.8cqw); }
+.quote-page .quote-footer-copy small { font-size: max(10px, 1.55cqw); }
+.quote-page .quote-topline b { font-size: max(12px, 2.25cqw); }
+.quote-page .quote-topline span,
+.quote-page .quote-topline-tag { font-size: max(10px, 1.75cqw); }
+.quote-page .quote-client-block span { font-size: max(11px, 2.05cqw); }
+.quote-artist-page { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 1rem; }
+.quote-artist-page > .quote-topline,
+.quote-artist-page > .quote-doc-footer { grid-column: 1 / -1; }
+.quote-artist-page .quote-artist-copy { position: relative; inset: auto; width: auto; min-width: 0; }
+.quote-artist-page .quote-artist-copy h2 { font-size: clamp(28px, 7cqw, 52px); }
+.quote-artist-page .quote-artist-copy p { font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.quote-artist-page .quote-artist-copy h3 { font-size: 14px; }
+.quote-artist-page .quote-artist-copy li { font-size: 14px; }
+.quote-artist-page .quote-artist-photo { position: relative; inset: auto; width: 100%; min-height: 260px; max-height: 600px; aspect-ratio: 4 / 5; align-self: start; }
+.quote-artist-page .quote-artist-photo > img { position: absolute; inset: 0; }
+.quote-artist-page .quote-artist-card-link { position: relative; inset: auto; max-width: none; grid-column: 1 / -1; justify-self: start; font-size: 13px; }
+.quote-artist-page blockquote { position: relative; inset: auto; width: auto; grid-column: 1 / -1; margin-top: 1rem; }
+.quote-artist-page blockquote p { font-size: 16px; }
+.proposal-public-document .quote-page { width: min(calc(100% - 1rem), 680px); }
+.proposal-public-header,
+.proposal-status-card,
+.proposal-public-message,
+.proposal-public-legal { width: min(calc(100% - 2rem), 680px); }
+.proposal-public-actions { position: relative; inset: auto; transform: none; margin: 1.5rem auto; width: min(calc(100% - 2rem), 680px); grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.proposal-public-shell { padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
+@container (max-width: 480px) {
+  .quote-artist-page .quote-artist-copy { grid-column: 1 / -1; }
+  .quote-artist-page .quote-artist-photo { grid-column: 1 / -1; grid-row: 2; }
+  .quote-summary-page .quote-project-overview,
+  .quote-extra-gallery,
+  .quote-summary-page .quote-details ul { grid-template-columns: 1fr; }
+  .quote-summary-page .quote-total { grid-template-columns: 1fr; gap: 0.5rem; }
+  .quote-page .quote-topline-tag { max-width: 42%; }
+}
+
 @media (max-width: 767px) {
   .quote-editor-actions {
     display: grid;
