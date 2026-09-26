@@ -26,6 +26,7 @@ import {
   procedureColorSamples,
   technicalProcedures,
   procedureConsumables,
+  procedureInventoryConsumptions,
   procedureImages,
   procedureEvents,
   appointments,
@@ -33,7 +34,7 @@ import {
   clients,
   transactions,
 } from "../../drizzle/schema";
-import { eq, and, desc, isNotNull, gte, lte, sql, type InferSelectModel } from "drizzle-orm";
+import { eq, and, desc, inArray, isNotNull, gte, lte, sql, type InferSelectModel } from "drizzle-orm";
 import { storagePut, storageDelete, storageGet } from "../storage";
 // notifyOwner é importado dinamicamente para compatibilidade com o bundler Vite ESM
 
@@ -139,7 +140,8 @@ export const proceduresRouter = router({
       const preparationEvent = (await db.select({ payload: procedureEvents.payload }).from(procedureEvents)
         .where(and(eq(procedureEvents.procedureId, input.id), sql`${procedureEvents.eventType} LIKE 'prepared:%'`)).limit(1))[0];
       const closure = (await db.select({ payload: procedureEvents.payload }).from(procedureEvents).where(and(eq(procedureEvents.procedureId, input.id), eq(procedureEvents.eventType, "finalization"))).limit(1))[0];
-      return { procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images, preparation: readPreparation(preparationEvent?.payload), finalization: readFinalization(closure?.payload) };
+      const inventoryConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),eq(procedureInventoryConsumptions.procedureId,input.id),eq(procedureInventoryConsumptions.status,"consumido")));
+      return { inventoryConsumptions, procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images, preparation: readPreparation(preparationEvent?.payload), finalization: readFinalization(closure?.payload) };
     }),
 
   // ── Criar novo procedimento ──────────────────────────────────────────────
@@ -688,6 +690,9 @@ export const proceduresRouter = router({
         totalMaterialCost += cost;
       }
 
+      const inventoryConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),eq(procedureInventoryConsumptions.procedureId,input.id),eq(procedureInventoryConsumptions.status,"consumido")));
+      const confirmedInventoryCost = inventoryConsumptions.reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0);
+      totalMaterialCost += confirmedInventoryCost;
       const chargedAmount = (procedure.chargedAmount ?? 0) / 100; // converter centavos para reais
       const grossMargin = chargedAmount - totalMaterialCost;
 
@@ -695,6 +700,8 @@ export const proceduresRouter = router({
         procedure,
         consumables,
         byCategory,
+        inventoryConsumptions,
+        confirmedInventoryCost,
         totalMaterialCost,
         chargedAmount,
         grossMargin,
@@ -753,6 +760,7 @@ export const proceduresRouter = router({
         .from(procedureConsumables);
 
       const filteredConsumables = consumablesAll.filter(c => procIds.includes(c.procedureId));
+      const stockConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),inArray(procedureInventoryConsumptions.procedureId,procIds),eq(procedureInventoryConsumptions.status,"consumido")));
 
       // Agrupar por artista
       const artistMap: Record<string, {
@@ -772,6 +780,13 @@ export const proceduresRouter = router({
         // chargedAmount está em centavos → converter para reais
         artistMap[artist].totalRevenue += (proc.chargedAmount ?? 0) / 100;
 
+        for (const c of stockConsumptions.filter(c=>c.procedureId===proc.id)) {
+          const cost=Number(c.totalCostSnapshot), cat=`Estoque (${c.unitSnapshot})`;
+          artistMap[artist].totalCost += cost;
+          const group=artistMap[artist].consumablesByCategory[cat]??{qty:0,cost:0};
+          group.qty+=Number(c.quantity);group.cost+=cost;
+          artistMap[artist].consumablesByCategory[cat]=group;
+        }
         const procConsumables = filteredConsumables.filter(c => c.procedureId === proc.id);
         for (const c of procConsumables) {
           const unitCost = parseFloat(c.estimatedUnitCost ?? '0');
@@ -821,7 +836,8 @@ export const proceduresRouter = router({
         const procIds = procs.map(p => p.id);
         const allConsumables = await db.select().from(procedureConsumables);
         const filtered = allConsumables.filter(c => procIds.includes(c.procedureId));
-        let totalCost = 0;
+        const stockConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),inArray(procedureInventoryConsumptions.procedureId,procIds),eq(procedureInventoryConsumptions.status,"consumido")));
+        let totalCost = stockConsumptions.reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0);
         for (const c of filtered) {
           totalCost += parseFloat(c.estimatedUnitCost ?? '0') * parseFloat(c.quantity ?? '0');
         }

@@ -86,9 +86,14 @@ async function main() {
   assert.equal(await stock(cartridge.id),97);
   const audit=(await api.pod.session.get({procedureId:created.id})).consumptions.find(row=>row.id===c.id)!;
   assert.equal(audit.unitSnapshot,"un");assert.equal(Number(audit.totalCostSnapshot),6);
+  const summary=await api.procedures.getSummary({id:created.id});
+  assert.ok(summary.confirmedInventoryCost>=6);
+  assert.equal(summary.inventoryConsumptions.find(row=>row.id===c.id)?.unitSnapshot,"un");
   assert.equal(audit.clientId,9101);assert.equal(audit.tenantMaterialId,cartridge.id);
   await api.pod.session.revertConsumption({consumptionId:c.id,reason:"Teste de unidade"});
   assert.equal(await stock(cartridge.id),100);
+  const afterReversal=await api.procedures.getSummary({id:created.id});
+  assert.equal(Number((summary.totalMaterialCost-afterReversal.totalMaterialCost).toFixed(4)),6);
   await assert.rejects(createMaterial("Cartucho incorreto", "g", "Cartuchos"));
   console.log("PASS: persisted selection, quantities, start without consumption, explicit additions, independent diluent, recipes, stock, concurrent retries, rollback and reversal");
 

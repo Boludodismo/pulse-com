@@ -91,6 +91,7 @@ export default function ProcedureSummary() {
 
   const procedure = procedureQuery.data?.procedure;
   const consumables = procedureQuery.data?.consumables ?? [];
+  const inventoryConsumptions = procedureQuery.data?.inventoryConsumptions ?? [];
   const images = procedureQuery.data?.images ?? [];
 
   if (procedureQuery.isLoading) {
@@ -112,13 +113,13 @@ export default function ProcedureSummary() {
   // ── Cálculos financeiros ─────────────────────────────────────────────────
   const totalMaterialCost = consumables.reduce(
     (sum, c) => sum + Number(c.estimatedTotalCost ?? 0),
-    0
+    inventoryConsumptions.reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0)
   );
   const chargedAmount = Number(procedure.chargedAmount ?? 0);
   const durationMinutes = procedure.totalDurationMinutes ?? 0;
   const durationHours = durationMinutes / 60;
-  const grossMargin = chargedAmount - totalMaterialCost;
-  const grossMarginPercent = chargedAmount > 0 ? (grossMargin / chargedAmount) * 100 : 0;
+  const grossMargin = chargedAmount / 100 - totalMaterialCost;
+  const grossMarginPercent = chargedAmount > 0 ? (grossMargin / (chargedAmount / 100)) * 100 : 0;
   const hourlyRate = durationHours > 0 ? grossMargin / durationHours : 0;
 
   // ── Agrupar insumos por categoria ────────────────────────────────────────
@@ -351,6 +352,7 @@ export default function ProcedureSummary() {
           </CardContent>
         </Card>
 
+        {inventoryConsumptions.length>0&&<Card><CardHeader><CardTitle>Materiais baixados do estoque</CardTitle></CardHeader><CardContent>{inventoryConsumptions.map(c=><div key={c.id} className="border-b py-2 text-sm break-words"><p>{c.nameSnapshot} · {Number(c.quantity).toLocaleString('pt-BR')} {c.unitSnapshot}</p><p>Lote: {c.lotSnapshot||'não informado'} · Custo registrado: {Number(c.totalCostSnapshot).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</p></div>)}</CardContent></Card>}
         {/* ── Detalhamento de insumos ────────────────────────────────────── */}
         {consumables.length > 0 && (
           <Card>
