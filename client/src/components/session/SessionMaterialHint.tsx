@@ -22,12 +22,14 @@ export default function SessionMaterialHint({children,title,description,opacity=
     if(!open)return;
     const esc=(e:KeyboardEvent)=>{if(e.key==="Escape")setOpen(false);};
     const dismiss=()=>setOpen(false);
+    const outside=(e:PointerEvent)=>{if(!anchor.current?.contains(e.target as Node)&&!tip.current?.contains(e.target as Node))setOpen(false);};
     document.addEventListener("keydown",esc);window.addEventListener("resize",dismiss);window.addEventListener("scroll",dismiss,true);
-    return()=>{document.removeEventListener("keydown",esc);window.removeEventListener("resize",dismiss);window.removeEventListener("scroll",dismiss,true);};
+    document.addEventListener("pointerdown",outside);
+    return()=>{document.removeEventListener("keydown",esc);document.removeEventListener("pointerdown",outside);window.removeEventListener("resize",dismiss);window.removeEventListener("scroll",dismiss,true);};
   },[open]);
   useEffect(()=>()=>{clearHold();clearClose();},[]);
   return <div className="material-hint-anchor" ref={anchor} aria-describedby={open?id:undefined}
-    onPointerEnter={e=>{if(e.pointerType!=="touch")show();}} onPointerLeave={()=>{clearHold();pointer.current=null;later();}}
+    onPointerEnter={e=>{if(e.pointerType!=="touch")show();}} onPointerLeave={e=>{clearHold();pointer.current=null;if(e.pointerType!=="touch")later();}}
     onFocus={show} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))later();}}
     onPointerDown={e=>{suppress.current=false;clearHold();if(e.pointerType!=="touch"&&e.pointerType!=="pen")return;pointer.current={x:e.clientX,y:e.clientY};hold.current=setTimeout(()=>{suppress.current=true;show();},450);}}
     onPointerMove={e=>{const p=pointer.current;if(p&&Math.hypot(e.clientX-p.x,e.clientY-p.y)>8){clearHold();pointer.current=null;setOpen(false);}}}
