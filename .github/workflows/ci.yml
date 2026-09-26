@@ -32,6 +32,9 @@ jobs:
       - name: Type check
         run: pnpm check
 
+      - name: Artist invitation access and delivery
+        run: pnpm exec vitest run server/artistInvitations.test.ts server/artistInvitationDelivery.test.ts
+
       - name: Contact import matching
         run: pnpm exec vitest run server/contactImport/matching.test.ts
 
