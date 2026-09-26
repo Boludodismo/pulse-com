@@ -27,7 +27,7 @@ export async function runCustomerCareCycle() {
   const procedures=await db.select().from(technicalProcedures).where(and(eq(technicalProcedures.studioId,studioId),eq(technicalProcedures.status,'finalizado')));
   for(const p of procedures){const key=p.appointmentId?`appointment:${p.appointmentId}`:`procedure:${p.id}`;await db.insert(careSessions).values({studioId,clientId:p.clientId,artistId:p.artistId,appointmentId:p.appointmentId,sourceKey:key,completedAt:p.finishedAt||p.updatedAt}).onDuplicateKeyUpdate({set:{sourceKey:key}});}
   const sessions=await db.select().from(careSessions).where(eq(careSessions.studioId,studioId));
-  const studioClients=await db.select().from(clients).where(eq(clients.studioId,studioId));
+  const studioClients=await db.select().from(clients).where(and(eq(clients.studioId,studioId),eq(clients.isArchived,0)));
   const studioArtists=await db.select().from(artists).where(eq(artists.studioId,studioId));
   const origin=process.env.PUBLIC_URL||process.env.APP_BASE_URL||(process.env.RAILWAY_PUBLIC_DOMAIN?`https://${process.env.RAILWAY_PUBLIC_DOMAIN}`:'');if(!origin)continue;
   for(const rule of studioRules){

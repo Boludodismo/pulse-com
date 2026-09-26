@@ -1,3 +1,10 @@
+import SessionFinalization from "@/components/SessionFinalization";
+import SessionPreparationSummary from "@/components/SessionPreparationSummary";
+import { isSessionInk, inkStockQuantity } from "@shared/sessionInkQuantity";
+import SessionMaterialQuantity from "@/components/SessionMaterialQuantity";
+import SessionMaterialPicker, { formatMaterialQuantity } from "@/components/SessionMaterialPicker";
+import { defaultSessionQuantity } from "@shared/sessionMaterialDefaults";
+import SessionCockpitV2 from "@/components/session/SessionCockpitV2";
 import ConsumeMaterialBatch from "@/components/ConsumeMaterialBatch";
 import { useState, useEffect, useRef, useCallback } from "react";
 import React, { type ReactNode } from "react";
@@ -143,9 +150,8 @@ export default function PodSession() {
     estimatedUnitCost: 0,
     notes: "",
   });
-  const [tenantMaterialId, setTenantMaterialId] = useState<string | undefined>();
-  const [tenantConsumptionQuantity, setTenantConsumptionQuantity] = useState("1");
-  const [referenceFullscreen, setReferenceFullscreen] = useState(false);
+  const [selectedMaterials, setSelectedMaterials] = useState<{ id: number; quantity: string }[]>([]);
+  const [referenceFullscreen, setReferenceFullscreen] = useState(() => new URLSearchParams(window.location.search).get("session") === "1");
 
   // ── Estado do upload de imagem ───────────────────────────────────────────
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -154,12 +160,6 @@ export default function PodSession() {
 
   // ── Estado do modal de finalização ──────────────────────────────────────
   const [finalizeOpen, setFinalizeOpen] = useState(false);
-  const [finalizeForm, setFinalizeForm] = useState({
-    chargedAmount: "",
-    paymentMethod: "pix" as "pix" | "dinheiro" | "credito" | "debito" | "transferencia",
-    notes: "",
-  });
-
   // ── Queries ──────────────────────────────────────────────────────────────
   const procedureQuery = trpc.procedures.getById.useQuery(
     { id: procedureId },
@@ -169,7 +169,7 @@ export default function PodSession() {
     { procedureId },
     { enabled: procedureId > 0, refetchInterval: 30_000 }
   );
-  const tenantInventoryQuery = trpc.pod.inventory.list.useQuery({ artistId: procedureQuery.data?.procedure?.artistId ?? undefined }, { enabled: procedureId > 0 && !!procedureQuery.data?.procedure?.artistId });
+  const tenantInventoryQuery = trpc.pod.inventory.list.useQuery({ artistId: procedureQuery.data?.procedure?.artistId ?? undefined }, { enabled: procedureId > 0 && !!procedureQuery.data?.procedure });
 
   const utils = trpc.useUtils();
 
@@ -178,6 +178,7 @@ export default function PodSession() {
   const images = procedureQuery.data?.images ?? [];
   const auditConsumptions = podSessionQuery.data?.consumptions ?? [];
   const plannedMaterials = podSessionQuery.data?.plannedMaterials ?? [];
+  const sessionMaterials = podSessionQuery.data?.sessionMaterials ?? [];
   const tenantMaterials = tenantInventoryQuery.data ?? [];
   const [batchConsumption,setBatchConsumption]=useState<{materialId:number;quantity:string;plannedMaterialId?:number}|null>(null);
 
@@ -219,7 +220,7 @@ export default function PodSession() {
       utils.pod.inventory.batches.invalidate();
       utils.pod.session.get.invalidate({ procedureId });
       utils.pod.inventory.list.invalidate();
-      setTenantConsumptionQuantity("1");
+      setSelectedMaterials(items => items.filter(item => item.id !== batchConsumption?.materialId));
       toast.success("Consumo confirmado e saldo atualizado.");
     },
     onError: (err) => toast.error("Não foi possível confirmar o consumo: " + err.message),
@@ -254,20 +255,6 @@ export default function PodSession() {
   const removeConsumableMutation = trpc.procedures.removeConsumable.useMutation({
     onSuccess: () => utils.procedures.getById.invalidate({ id: procedureId }),
     onError: (err) => toast.error("Erro: " + err.message),
-  });
-
-  const finalizeMutation = trpc.procedures.finalize.useMutation({
-    onSuccess: (data) => {
-      utils.procedures.getById.invalidate({ id: procedureId });
-      utils.appointments.list.invalidate();
-      setFinalizeOpen(false);
-      const msgs: string[] = ["Sessão finalizada com sucesso!"];
-      if (data.appointmentUpdated) msgs.push("Agendamento marcado como concluído.");
-      if (data.transactionCreated) msgs.push("Valor registrado no financeiro.");
-      toast.success(msgs.join(" "));
-      navigate(`/procedures/${procedureId}/summary`);
-    },
-    onError: (err) => toast.error("Erro ao finalizar: " + err.message),
   });
 
   const uploadImageMutation = trpc.procedures.uploadImage.useMutation({
@@ -323,7 +310,7 @@ export default function PodSession() {
 
   useEffect(() => {
     if (!referenceFullscreen) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setReferenceFullscreen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[role="dialog"]')) setReferenceFullscreen(false); };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [referenceFullscreen]);
@@ -339,39 +326,18 @@ export default function PodSession() {
 
   // ── Controles do timer ───────────────────────────────────────────────────
   const handleStart = () => {
-    startTimeRef.current = Date.now();
-    timerMutation.mutate({ id: procedureId, action: "start" });
-    setIsRunning(true);
+    timerMutation.mutate({ id: procedureId, action: "start" }, { onSuccess: () => { startTimeRef.current = Date.now(); setIsRunning(true); } });
   };
 
   const handlePause = () => {
-    setIsRunning(false);
-    startPauseMutation.mutate({ procedureId });
+    startPauseMutation.mutate({ procedureId }, { onSuccess: () => setIsRunning(false) });
   };
 
   const handleResume = () => {
     resumePauseMutation.mutate({ procedureId });
   };
 
-  const handleFinish = () => {
-    // Abre modal de confirmação antes de finalizar
-    setIsRunning(false);
-    // Pré-preencher valor cobrado com o valor do procedimento, se existir
-    if (procedure?.chargedAmount) {
-      setFinalizeForm((f) => ({ ...f, chargedAmount: String(procedure.chargedAmount) }));
-    }
-    setFinalizeOpen(true);
-  };
-
-  const handleConfirmFinalize = () => {
-    const charged = finalizeForm.chargedAmount ? parseFloat(finalizeForm.chargedAmount) : 0;
-    finalizeMutation.mutate({
-      procedureId,
-      chargedAmount: charged,
-      paymentMethod: finalizeForm.paymentMethod as "pix" | "dinheiro" | "credito" | "debito" | "transferencia",
-      notes: finalizeForm.notes || undefined,
-    });
-  };
+  const handleFinish = () => setFinalizeOpen(true);
 
   // ── Upload de imagem ─────────────────────────────────────────────────────
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, imageType: "reference" | "progress" | "final" | "stencil") => {
@@ -474,7 +440,7 @@ export default function PodSession() {
 
   const isFinished = procedure.status === "finalizado";
   const isPaused = procedure.status === "pausado";
-  const isActive = procedure.status === "em_andamento";
+  const isActive = procedure.status === "em_andamento" && !!procedure.startedAt;
   const isNew = !procedure.startedAt;
 
   // Agrupar insumos por categoria
@@ -500,7 +466,8 @@ export default function PodSession() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col" inert={referenceFullscreen ? true : undefined}>
+      {referenceFullscreen && <SessionCockpitV2 procedureId={procedureId} studioId={procedure.studioId} clientId={procedure.clientId} artistId={procedure.artistId ?? undefined} title={procedure.title} elapsed={formatTime(elapsed)} running={isRunning} started={!isNew} finished={isFinished} timerBusy={timerMutation.isPending || startPauseMutation.isPending || resumePauseMutation.isPending} onTimer={isNew ? handleStart : isPaused ? handleResume : handlePause} onClose={() => { if (document.fullscreenElement) void document.exitFullscreen(); setReferenceFullscreen(false); }} onFinish={() => { if (document.fullscreenElement) void document.exitFullscreen(); setReferenceFullscreen(false); setFinalizeOpen(true); }} originalSrc={referenceImage?.imageUrl} /> }
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="border-b bg-card px-3 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-3 sticky top-0 z-40">
         <Button
@@ -580,10 +547,10 @@ export default function PodSession() {
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
 
         {/* ── Coluna esquerda: imagem + timer ──────────────────────────── */}
-        <div className={referenceFullscreen ? "fixed inset-0 z-[100] flex flex-col bg-background" : "lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r"}>
+        <div className="lg:w-1/2 xl:w-3/5 flex flex-col border-b lg:border-b-0 lg:border-r">
 
           {/* Timer */}
-          <div className="bg-card border-b px-4 py-3 flex items-center justify-between gap-3">
+          <div className="bg-card border-b px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Clock className={`w-5 h-5 ${isRunning ? "text-green-500 animate-pulse" : "text-muted-foreground"}`} />
               <span className={`font-mono text-2xl font-bold tabular-nums ${isRunning ? "text-green-500" : isFinished ? "text-muted-foreground" : "text-foreground"}`}>
@@ -597,8 +564,8 @@ export default function PodSession() {
               )}
             </div>
 
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span className="hidden sm:inline">{referenceFullscreen ? "Sair da tela cheia" : "Tela cheia"}</span></Button>
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+              <Button size="sm" variant="default" className="gap-1.5 w-full sm:w-auto" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span>{referenceFullscreen ? "Sair do painel" : "Abrir painel da sessão"}</span></Button>
               {isNew && (
                 <Button size="sm" onClick={handleStart} className="gap-1.5 bg-green-600 hover:bg-green-700">
                   <Play className="w-4 h-4" />
@@ -663,7 +630,7 @@ export default function PodSession() {
                 </Button>
               )}
             </div>
-            {plannedMaterials.some(item => item.status !== "nao_utilizado" && item.tenantMaterialId) && (
+            {sessionMaterials.length > 0 && (
               <div
                 className={referenceFullscreen
                   ? "absolute left-3 top-1/2 z-20 flex max-h-[72%] w-[82px] -translate-y-1/2 flex-col gap-1.5 overflow-y-auto rounded-2xl border border-white/10 bg-black/25 p-1.5 shadow-2xl backdrop-blur-md"
@@ -671,21 +638,20 @@ export default function PodSession() {
                 }
                 aria-label="Materiais utilizados na sessão"
               >
-                {plannedMaterials
-                  .filter(item => item.status !== "nao_utilizado" && item.tenantMaterialId)
+                {sessionMaterials
                   .map(item => {
                     const stock = tenantMaterials.find(material => material.id === item.tenantMaterialId);
                     return (
                       <button
-                        key={item.id}
+                        key={item.tenantMaterialId}
                         type="button"
                         disabled={!stock || isFinished || consumeTenantMaterialMutation.isPending}
-                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,plannedMaterialId:item.id,quantity:item.quantityPlanned})}
+                        onClick={() => setBatchConsumption({materialId:item.tenantMaterialId!,quantity:item.quantity})}
                         className={referenceFullscreen
                           ? "group flex min-h-[70px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-black/30 px-1.5 py-2 text-center text-white shadow-lg transition hover:border-white/30 hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                           : "group max-w-[220px] rounded-xl border border-white/20 bg-black/45 px-3 py-2 text-left text-xs text-white shadow-xl backdrop-blur-md transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-45"
                         }
-                        title={`Baixar ${item.quantityPlanned} ${item.unitSnapshot} de ${item.nameSnapshot}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
+                        title={`Baixar ${item.quantity} ${item.unit} de ${item.name}${stock ? ` (saldo: ${stock.currentQuantity})` : ""}`}
                       >
                         {referenceFullscreen && (
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 text-white">
@@ -696,13 +662,13 @@ export default function PodSession() {
                           ? "line-clamp-2 w-full text-[10px] font-semibold leading-tight"
                           : "block truncate font-semibold"
                         }>
-                          {item.nameSnapshot}
+                          {item.name}
                         </span>
                         <span className={referenceFullscreen
                           ? "block text-[9px] leading-none text-white/70 group-hover:text-white"
                           : "block text-[10px] text-white/75 group-hover:text-white"
                         }>
-                          − {item.quantityPlanned} {item.unitSnapshot}
+                          − {item.quantity} {item.unit}
                           {!referenceFullscreen && (stock ? ` · saldo ${stock.currentQuantity}` : " · indisponível")}
                         </span>
                       </button>
@@ -741,8 +707,12 @@ export default function PodSession() {
         {/* ── Coluna direita: insumos ──────────────────────────────────── */}
         <div className="lg:w-1/2 xl:w-2/5 flex flex-col overflow-hidden">
 
+          <SessionPreparationSummary preparation={procedureQuery.data?.preparation} onMaterial={procedure?.status !== "finalizado" ? (id, quantity, unit) => {
+            if (!tenantMaterials.some(m => m.id === id && m.unit === unit)) return toast.error("Material indisponível no estoque deste artista.");
+            setBatchConsumption({ materialId: id, quantity });
+          } : undefined} />
           {/* Consumo real do estoque isolado. Não altera os lançamentos legados abaixo. */}
-          <div className="border-b bg-primary/[0.03] p-3 space-y-2.5">
+          <div id="session-stock" className="border-b bg-primary/[0.03] p-3 space-y-2.5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-primary">Consumo do estoque</p>
@@ -753,44 +723,48 @@ export default function PodSession() {
             {tenantInventoryQuery.isLoading ? (
               <p className="text-xs text-muted-foreground">Carregando estoque...</p>
             ) : tenantMaterials.length === 0 ? (
-              <p className="rounded-md border border-dashed bg-background/60 p-2 text-xs text-muted-foreground">Nenhum material do estoque isolado foi cadastrado ainda. Os materiais legados permanecem sem associação automática.</p>
+              <p className="rounded-md border border-dashed bg-background/60 p-2 text-xs text-muted-foreground">Nenhum material disponível para o artista desta sessão. Abra o painel para conferir o responsável e os materiais.</p>
             ) : (
-              <div className="grid grid-cols-[minmax(0,1fr)_84px_auto] gap-2">
-                <Select value={tenantMaterialId} onValueChange={setTenantMaterialId}>
-                  <SelectTrigger className="h-9 min-w-0 text-xs"><SelectValue placeholder="Selecionar material" /></SelectTrigger>
-                  <SelectContent>
-                    {tenantMaterials.map((material) => (
-                      <SelectItem key={material.id} value={String(material.id)}>
-                        {material.name} ({material.ownerArtistId == null ? "Estúdio" : "Artista"}) · {material.currentQuantity} {material.unit}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  className="h-9 min-w-0 text-xs"
-                  inputMode="decimal"
-                  value={tenantConsumptionQuantity}
-                  onChange={(event) => setTenantConsumptionQuantity(event.target.value.replace(",", "."))}
-                  aria-label="Quantidade consumida"
-                />
-                <Button
-                  size="sm"
-                  className="h-9 text-xs"
-                  disabled={!tenantMaterialId || consumeTenantMaterialMutation.isPending || isFinished}
-                  onClick={() => setBatchConsumption({materialId:Number(tenantMaterialId),quantity:tenantConsumptionQuantity})}
-                >
-                  Baixar
-                </Button>
+              <div className="space-y-3">
+                {selectedMaterials.map(selection => {
+                  const material = tenantMaterials.find(item => item.id === selection.id);
+                  if (!material) return null;
+                  return <div key={material.id} className="rounded-lg border bg-background p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium break-words">{material.name}</p>
+                        <p className="text-xs text-muted-foreground">{material.ownerArtistId == null ? "Estúdio" : "Artista"} · Saldo: {formatMaterialQuantity(material.currentQuantity)} {material.unit}</p>
+                      </div>
+                      <Button type="button" size="icon" variant="ghost" aria-label={`Remover ${material.name} da seleção`}
+                        disabled={consumeTenantMaterialMutation.isPending}
+                        onClick={() => setSelectedMaterials(items => items.filter(item => item.id !== material.id))}><Trash2 className="h-4 w-4" /></Button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-2 items-end">
+                      <SessionMaterialQuantity material={material} value={selection.quantity}
+                        materials={tenantMaterials.filter(m => m.id === material.id || !selectedMaterials.some(i => i.id === m.id))}
+                        onMaterialChange={id => setSelectedMaterials(items => items.map(item => item.id === material.id ? {id: Number(id), quantity: '1'} : item))}
+                        disabled={consumeTenantMaterialMutation.isPending || isFinished}
+                        onChange={quantity => setSelectedMaterials(items => items.map(item => item.id === material.id ? {...item, quantity} : item))} />
+                      <Button className="min-h-11" disabled={consumeTenantMaterialMutation.isPending || isFinished || !Number.isFinite(Number(selection.quantity)) || Number(selection.quantity) <= 0}
+                        onClick={() => setBatchConsumption({ materialId: material.id, quantity: selection.quantity })}>Confirmar uso</Button>
+                    </div>
+                  </div>;
+                })}
+                <SessionMaterialPicker materials={tenantMaterials.filter(material => !selectedMaterials.some(item => item.id === material.id))}
+                  more={selectedMaterials.length > 0 || auditConsumptions.length > 0}
+                  disabled={isFinished || consumeTenantMaterialMutation.isPending}
+                  onSelect={material => setSelectedMaterials(items => [...items, { id: material.id, quantity: isSessionInk(material) ? inkStockQuantity(material.unit, 1, "drops", "M") : defaultSessionQuantity(material) }])} />
+                <p className="text-xs text-muted-foreground">Selecione os materiais e ajuste as quantidades. Confirme o uso de cada item para registrar o lote e baixar o estoque.</p>
               </div>
             )}
             {plannedMaterials.length > 0 && (
               <p className="text-[11px] text-muted-foreground">Previstos: {plannedMaterials.filter((item) => item.status === "planejado").map((item) => `${item.nameSnapshot} (${item.quantityPlanned} ${item.unitSnapshot})`).join(" · ") || "todos tratados"}.</p>
             )}
             {auditConsumptions.length > 0 && (
-              <div className="max-h-24 space-y-1 overflow-y-auto pr-1">
+              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
                 {auditConsumptions.map((consumption) => (
-                  <div key={consumption.id} className="flex items-center gap-2 rounded-md bg-background/75 px-2 py-1.5 text-xs">
-                    <span className="min-w-0 flex-1 break-words">{consumption.nameSnapshot} · {consumption.quantity} {consumption.unitSnapshot}<br/>Lote: {consumption.lotSnapshot||"não registrado"} · {consumption.supplierNameSnapshot||"fornecedor não registrado"} · Validade: {consumption.expiresAtSnapshot?.slice(0,10).split("-").reverse().join("/")||"não registrada"}</span>
+                  <div key={consumption.id} className="flex flex-wrap items-center gap-2 rounded-md bg-background/75 p-3 text-xs">
+                    <span className="min-w-0 flex-1 break-words">{consumption.nameSnapshot} · {formatMaterialQuantity(consumption.quantity)} {consumption.unitSnapshot}<br/>Custo registrado: {Number(consumption.totalCostSnapshot).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}<br/>Lote: {consumption.lotSnapshot||"não registrado"} · {consumption.supplierNameSnapshot||"fornecedor não registrado"} · Validade: {consumption.expiresAtSnapshot?.slice(0,10).split("-").reverse().join("/")||"não registrada"}</span>
                     <span className={consumption.status === "revertido" ? "text-muted-foreground" : "text-emerald-600"}>{consumption.status === "revertido" ? "Revertido" : "Confirmado"}</span>
                     {consumption.status === "consumido" && !isFinished && (
                       <Button
@@ -816,7 +790,7 @@ export default function PodSession() {
           {batchConsumption&&tenantMaterials.find(m=>m.id===batchConsumption.materialId)&&<ConsumeMaterialBatch material={tenantMaterials.find(m=>m.id===batchConsumption.materialId)!} artistId={procedureQuery.data?.procedure?.artistId??undefined} initialQuantity={batchConsumption.quantity} busy={consumeTenantMaterialMutation.isPending} onClose={()=>setBatchConsumption(null)} onConfirm={(quantity,batchId)=>consumeTenantMaterialMutation.mutate({procedureId,tenantMaterialId:batchConsumption.materialId,plannedMaterialId:batchConsumption.plannedMaterialId,quantity,batchId})}/>}
           {/* Insumos rápidos */}
           <div className="border-b p-3">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Lançamento rápido</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Lançamentos avulsos (sem baixa de estoque)</p><p className="text-xs text-muted-foreground mb-2">Para movimentar saldo, lote e custo, use Consumo do estoque acima.</p>
             <div className="flex flex-wrap gap-1.5">
               {QUICK_CONSUMABLES.map((item) => (
                 <Button
@@ -1029,104 +1003,8 @@ export default function PodSession() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Modal de Finalização ─────────────────────────────────────────────── */}
-      <Dialog open={finalizeOpen} onOpenChange={(open) => {
-        if (!open && !finalizeMutation.isPending) setFinalizeOpen(false);
-      }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-green-500" />
-              Finalizar Sessão POD
-            </DialogTitle>
-          </DialogHeader>
+      <SessionFinalization key={procedureId} procedureId={procedureId} open={finalizeOpen} onClose={() => setFinalizeOpen(false)} uploading={uploadingImage || uploadImageMutation.isPending} onPhoto={() => openImagePicker("final")} onMaterials={() => { setFinalizeOpen(false); requestAnimationFrame(() => document.getElementById("session-stock")?.scrollIntoView({ behavior: "smooth", block: "start" })); }} onColors={() => { setFinalizeOpen(false); setReferenceFullscreen(true); }} onSuccess={() => { setFinalizeOpen(false); navigate(`/procedures/${procedureId}/summary`); }} />
 
-          <div className="space-y-4 py-2">
-            {/* Resumo de insumos */}
-            <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
-              <p className="font-medium">Resumo da sessão</p>
-              <p className="text-muted-foreground">
-                Insumos registrados: <span className="font-medium text-foreground">{consumables.length}</span>
-              </p>
-              <p className="text-muted-foreground">
-                Duração: <span className="font-medium text-foreground">{formatTime(elapsed)}</span>
-              </p>
-              {linkedAppointment && (
-                <p className="text-muted-foreground">
-                  Agendamento: <span className="font-medium text-foreground">{linkedAppointment.service} — {linkedAppointment.artist}</span>
-                  <span className="ml-1 text-xs text-green-600">✓ será marcado como concluído</span>
-                </p>
-              )}
-            </div>
-
-            {/* Valor cobrado */}
-            <div className="space-y-1.5">
-              <Label htmlFor="charged-amount">Valor cobrado (R$)</Label>
-              <Input
-                id="charged-amount"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Ex: 350.00"
-                value={finalizeForm.chargedAmount}
-                onChange={(e) => setFinalizeForm((f) => ({ ...f, chargedAmount: e.target.value }))}
-              />
-              {linkedAppointment && finalizeForm.chargedAmount && (
-                <p className="text-xs text-green-600">✓ Será registrado no financeiro do cliente</p>
-              )}
-            </div>
-
-            {/* Método de pagamento */}
-            <div className="space-y-1.5">
-              <Label>Método de pagamento</Label>
-              <Select
-                value={finalizeForm.paymentMethod}
-                onValueChange={(v) => setFinalizeForm((f) => ({ ...f, paymentMethod: v as typeof f.paymentMethod }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pix">PIX</SelectItem>
-                  <SelectItem value="dinheiro">Dinheiro</SelectItem>
-                  <SelectItem value="credito">Cartão de crédito</SelectItem>
-                  <SelectItem value="debito">Cartão de débito</SelectItem>
-                  <SelectItem value="transferencia">Transferência</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Observações finais */}
-            <div className="space-y-1.5">
-              <Label htmlFor="finalize-notes">Observações finais (opcional)</Label>
-              <Textarea
-                id="finalize-notes"
-                placeholder="Cuidados pós-sessão, próxima etapa..."
-                rows={3}
-                value={finalizeForm.notes}
-                onChange={(e) => setFinalizeForm((f) => ({ ...f, notes: e.target.value }))}
-              />
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setFinalizeOpen(false)}
-              disabled={finalizeMutation.isPending}
-            >
-              Cancelar
-            </Button>
-            <Button
-              className="bg-green-600 hover:bg-green-700 text-white"
-              onClick={handleConfirmFinalize}
-              disabled={finalizeMutation.isPending}
-            >
-              {finalizeMutation.isPending ? "Finalizando..." : "Confirmar e Finalizar"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

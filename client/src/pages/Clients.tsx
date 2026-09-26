@@ -1,3 +1,5 @@
+import {QUOTE_AUTOMATIC_TAGS} from "@shared/quoteHistory";
+import {ClientConsentButton} from "@/components/WhatsappConsentPanel";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -103,7 +105,8 @@ export default function Clients() {
             Gerencie todos os seus clientes em um só lugar
           </p>
         </div>
-        <div className="flex gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+          {['admin','superadmin'].includes(currentUser?.role||'')&&<Button variant="outline" size={isMobile ? "sm" : "default"} onClick={()=>setLocation('/clients/duplicates')}>Revisar duplicados</Button>}
           <Button variant="outline" size={isMobile ? "sm" : "default"} onClick={() => setLocation("/contacts/import-export")}>
             <ArrowUpDown className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Importar / Exportar</span>
@@ -141,6 +144,8 @@ export default function Clients() {
           disabled={!canLoadClients}
         />
       </div>
+
+      <div className="flex flex-wrap gap-2" aria-label="Consultar clientes por orçamento">{QUOTE_AUTOMATIC_TAGS.map(label=><Button key={label} size="sm" variant={searchTerm===label?"default":"outline"} disabled={!canLoadClients} onClick={()=>setSearchTerm(searchTerm===label?"":label)}>{label}</Button>)}</div>
 
       {/* Clients List */}
       <Card>
@@ -201,6 +206,7 @@ export default function Clients() {
                         <span className="font-medium text-foreground">{formatCurrency(client.totalSpent)}</span>
                       </div>
                     </div>
+                    <ClientConsentButton clientId={client.id} name={client.name} />
                     <Eye className="h-4 w-4 text-muted-foreground shrink-0" />
                   </div>
                 ))}
@@ -252,6 +258,7 @@ export default function Clients() {
                           <Badge variant="secondary">{client.appointmentCount}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
+                          <ClientConsentButton clientId={client.id} name={client.name} />
                           <Button
                             variant="ghost"
                             size="sm"

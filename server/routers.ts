@@ -1,3 +1,4 @@
+import { nativeBotRouter } from "./routers/nativeBot";
 import { isPrivateInboxOwner } from "./intelligentInbox/access";
 import { clientBirthDate, clientPersonalPrefill } from "../shared/clientPersonal";
 import { parseAnamneseExpiry } from "./anamneseTime";
@@ -8,7 +9,10 @@ import {artistInvitationsRouter} from './routers/artistInvitations';
 import {intelligentInboxRouter} from './routers/intelligentInbox';
 import {studioRelationsRouter} from './routers/studioRelations';
 import { customerCareRouter } from "./routers/customerCare";
+import { quotesRouter } from "./routers/quotes";
+import { validateAppointmentQuote } from "./quoteHistory";
 import { contactImportRouter } from "./routers/contactImport";
+import { clientMergeRouter } from "./routers/clientMerge";
 import { avatarSchema, saveArtistAvatar } from "./artistAvatar";
 import { assertOwnArtist, isInventoryManager } from "./inventoryAccess";
 import { z } from "zod";
@@ -61,10 +65,12 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  nativeBot: nativeBotRouter,
   legacyArchive: legacyArchiveRouter,
   artistInvitations: artistInvitationsRouter,
   intelligentInbox: intelligentInboxRouter,
   customerCare: customerCareRouter,
+  quotes: quotesRouter,
   studioRelations: studioRelationsRouter,
   system: systemRouter,
   
@@ -339,8 +345,16 @@ export const appRouter = router({
 
     getById: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
-        return await db.getClientById(input.id);
+      .query(async ({ ctx,input }) => {
+        const client=await db.getClientById(input.id);
+        if(client && ctx.user.role!=='superadmin' && client.studioId!==ctx.user.studioId) throw new TRPCError({code:'FORBIDDEN'});
+        if(!client)return null;
+        let mergedIntoId:number|null=null;
+        if(client.isArchived) {
+          const {findMergeDestination}=await import('./clientMerge/destination');
+          mergedIntoId=await findMergeDestination(client.id,client.studioId);
+        }
+        return {...client,mergedIntoId};
       }),
 
     create: protectedProcedure
@@ -463,6 +477,7 @@ export const appRouter = router({
         const clientBefore = await db.getClientById(input.id);
         
         if (!clientBefore) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+        if (clientBefore.isArchived) throw new TRPCError({code:'CONFLICT',message:'Este cadastro está arquivado. Abra o cadastro principal para editar.'});
         if (ctx.user.role !== "superadmin" && clientBefore.studioId !== ctx.user.studioId)
           throw new TRPCError({ code: "FORBIDDEN", message: "Cliente de outro estúdio" });
         if (ctx.user.role === "collaborator" && (!ctx.user.artistId || clientBefore.artistId !== ctx.user.artistId))
@@ -565,6 +580,7 @@ export const appRouter = router({
     create: protectedProcedure
       .input(z.object({
         clientId: z.number(),
+        quoteId: z.number().int().positive().optional(),
         studioId: z.number().int().positive().optional(),
         calendarId: z.number().optional(),
         date: z.string(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
@@ -666,6 +682,11 @@ export const appRouter = router({
               if (found[0]) resolvedArtistId = found[0].id;
             }
           } catch { /* silencioso — artistId é opcional */ }
+        }
+
+        if (input.quoteId) {
+          if (ctx.user.role === "collaborator" && (!ctx.user.artistId || !await hasModulePermission({userId:ctx.user.id,studioId,module:"quotes",write:true}))) throw new TRPCError({code:"FORBIDDEN"});
+          await validateAppointmentQuote({ quoteId: input.quoteId, studioId, clientId: input.clientId, artistId: resolvedArtistId, userArtistId: ctx.user.role === "collaborator" ? ctx.user.artistId : null });
         }
 
         const { autoReminder, recordWhatsAppConsent, ...appointmentInput } = input;
@@ -803,6 +824,7 @@ export const appRouter = router({
         data: z.object({
           calendarId: z.number().nullable().optional(),
           clientId: z.number().int().positive().optional(),
+          quoteId: z.number().int().positive().nullable().optional(),
           date: z.string().optional(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
           duration: z.number().min(1).optional(),
           service: z.string().min(1).optional(),
@@ -856,6 +878,14 @@ export const appRouter = router({
           ...(includeArtistCard !== undefined ? { includeArtistCard: includeArtistCard ? 1 : 0 } : {}),
           ...(depositPaid !== undefined ? { depositPaid: depositPaid ? 1 : 0 } : {}),
         };
+        const identityChanged = (input.data.clientId != null && input.data.clientId !== appointmentBefore.clientId)
+          || (resolvedArtistId != null && resolvedArtistId !== appointmentBefore.artistId)
+          || (input.data.artist != null && input.data.artist !== appointmentBefore.artist);
+        if (input.data.quoteId === undefined && identityChanged) updateData.quoteId = null;
+        if (updateData.quoteId && (updateData.quoteId !== appointmentBefore.quoteId || identityChanged)) {
+          if (ctx.user.role === "collaborator" && (!ctx.user.artistId || !await hasModulePermission({userId:ctx.user.id,studioId:activeStudioId,module:"quotes",write:true}))) throw new TRPCError({code:"FORBIDDEN"});
+          await validateAppointmentQuote({quoteId:updateData.quoteId,studioId:activeStudioId,clientId:input.data.clientId ?? appointmentBefore.clientId,artistId:resolvedArtistId ?? appointmentBefore.artistId,userArtistId:ctx.user.role === "collaborator" ? ctx.user.artistId : null});
+        }
         const result = await db.updateAppointment(input.id, updateData);
 
         // Bug 3: Gerar transação no caixa quando sinal muda de não-pago para pago
@@ -1077,19 +1107,19 @@ export const appRouter = router({
         }
       }),
 
-    /** Alertas de ação do cliente, sempre limitados ao estúdio da sessão. */
+    /** Alertas de ação do cliente, limitados ao estúdio e ao próprio artista quando colaborador. */
     listActionAlerts: tenantProcedure
       .input(z.object({ limit: z.number().int().min(1).max(20).optional() }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.studioId == null) throw new TRPCError({ code: "FORBIDDEN", message: "Empresa não selecionada." });
-        return listAppointmentActionAlerts(ctx.studioId, input?.limit ?? 8);
+        return listAppointmentActionAlerts(ctx.studioId, input?.limit ?? 8, ctx.artistId);
       }),
 
     markActionAlertViewed: tenantProcedure
       .input(z.object({ alertId: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.studioId == null) throw new TRPCError({ code: "FORBIDDEN", message: "Empresa não selecionada." });
-        await markAppointmentActionAlertViewed(ctx.studioId, input.alertId);
+        await markAppointmentActionAlertViewed(ctx.studioId, input.alertId, ctx.artistId);
         return { success: true };
       }),
 
@@ -2055,6 +2085,9 @@ export const appRouter = router({
         name: z.string().min(1),
         email: z.string().email().optional().or(z.literal("")),
         phone: z.string().optional(),
+        whatsappOperationalEnabled: z.number().int().min(0).max(1).optional(),
+        manualClientReminderEnabled: z.number().int().min(0).max(1).optional(),
+        notifyClientActionsEnabled: z.number().int().min(0).max(1).optional(),
         instagram: z.string().optional(),
         specialty: z.string().optional(),
         bio: z.string().optional(),
@@ -2066,9 +2099,22 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         if (!isInventoryManager(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode cadastrar artistas." });
-        const { avatar, ...fields } = input;
+        const {
+          avatar,
+          whatsappOperationalEnabled,
+          manualClientReminderEnabled,
+          notifyClientActionsEnabled,
+          ...fields
+        } = input;
         const photo = avatar ? await saveArtistAvatar(ctx.studioId, avatar) : {};
-        return await db.createArtist({ ...fields, ...photo, studioId: ctx.studioId });
+        const created = await db.createArtist({ ...fields, ...photo, studioId: ctx.studioId });
+        if (!created) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível concluir o cadastro do artista." });
+        await db.upsertArtistNotificationSettings(ctx.studioId, created.id, {
+          whatsappOperationalEnabled,
+          manualClientReminderEnabled,
+          notifyClientActionsEnabled,
+        });
+        return await db.getArtistById(created.id, ctx.studioId);
       }),
 
     update: tenantProcedure
@@ -2077,6 +2123,9 @@ export const appRouter = router({
         name: z.string().min(1).optional(),
         email: z.string().email().optional().or(z.literal("")),
         phone: z.string().optional(),
+        whatsappOperationalEnabled: z.number().int().min(0).max(1).optional(),
+        manualClientReminderEnabled: z.number().int().min(0).max(1).optional(),
+        notifyClientActionsEnabled: z.number().int().min(0).max(1).optional(),
         instagram: z.string().optional(),
         specialty: z.string().optional(),
         bio: z.string().optional(),
@@ -2090,10 +2139,25 @@ export const appRouter = router({
         assertOwnArtist(ctx, input.id);
         const artist = await db.getArtistById(input.id, ctx.studioId);
         if (!artist) throw new TRPCError({ code: "NOT_FOUND", message: "Artista não encontrado neste estúdio." });
-        const { id, avatar, ...data } = input;
+        const {
+          id,
+          avatar,
+          whatsappOperationalEnabled,
+          manualClientReminderEnabled,
+          notifyClientActionsEnabled,
+          ...data
+        } = input;
         if (!isInventoryManager(ctx) && data.active !== undefined && data.active !== artist.active) throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode alterar o status." });
         const photo = avatar ? await saveArtistAvatar(ctx.studioId, avatar) : {};
-        return await db.updateArtist(id, { ...data, ...photo });
+        await db.updateArtist(id, { ...data, ...photo });
+        if (whatsappOperationalEnabled !== undefined || manualClientReminderEnabled !== undefined || notifyClientActionsEnabled !== undefined) {
+          await db.upsertArtistNotificationSettings(ctx.studioId, id, {
+            whatsappOperationalEnabled,
+            manualClientReminderEnabled,
+            notifyClientActionsEnabled,
+          });
+        }
+        return await db.getArtistById(id, ctx.studioId);
       }),
 
     delete: tenantProcedure
@@ -3152,6 +3216,7 @@ export const appRouter = router({
    // ============ CONTACTS IMPORT/EXPORT ROUTER ============
   contacts: contactsRouter,
   contactImport: contactImportRouter,
+  clientMerge: clientMergeRouter,
   // ============ POD SESSION — EXECUÇÃO TÉCNICA ============
   procedures: proceduresRouter,
   // ============ POD SESSION SaaS — CATÁLOGO, ESTOQUE E AUDITORIA ============

@@ -1,3 +1,10 @@
+import { snapshotSessionMaterials } from "../sessionMaterials";
+import { sessionMaterialName } from "../../shared/sessionInkQuantity";
+import { finalizationPreview, finalizeSession } from "../sessionFinalization";
+import { finalizeSessionInput, readFinalization } from "../../shared/sessionFinalization";
+import { preparationSchema, preparationRgb, readPreparation, validatePreparationMaterial, validateRecipeMaterial } from "../../shared/sessionPreparation";
+import { assertOwnArtist, requireMaterialForArtist } from "../inventoryAccess";
+import { resolveProcedureArtist } from "../procedureArtist";
 /**
  * POD Session — Módulo de Execução Técnica da Tatuagem
  * Router tRPC isolado. Não altera nenhum router existente.
@@ -15,8 +22,11 @@ async function requireDb(): Promise<ReturnType<typeof drizzle>> {
   return db as ReturnType<typeof drizzle>;
 }
 import {
+  tenantMaterials,
+  procedureColorSamples,
   technicalProcedures,
   procedureConsumables,
+  procedureInventoryConsumptions,
   procedureImages,
   procedureEvents,
   appointments,
@@ -24,8 +34,8 @@ import {
   clients,
   transactions,
 } from "../../drizzle/schema";
-import { eq, and, desc, isNotNull, gte, lte, sql, type InferSelectModel } from "drizzle-orm";
-import { storagePut } from "../storage";
+import { eq, and, desc, inArray, isNotNull, gte, lte, sql, type InferSelectModel } from "drizzle-orm";
+import { storagePut, storageDelete, storageGet } from "../storage";
 // notifyOwner é importado dinamicamente para compatibilidade com o bundler Vite ESM
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -54,6 +64,7 @@ async function assertProcedureLinks(
   const [client] = await db.select({ id: clients.id }).from(clients).where(and(
     eq(clients.id, input.clientId),
     eq(clients.studioId, input.studioId),
+    eq(clients.isArchived, 0),
   )).limit(1);
   if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado nesta empresa." });
 
@@ -126,7 +137,11 @@ export const proceduresRouter = router({
         .where(eq(procedureImages.procedureId, input.id))
         .orderBy(procedureImages.createdAt);
 
-      return { procedure, consumables, images };
+      const preparationEvent = (await db.select({ payload: procedureEvents.payload }).from(procedureEvents)
+        .where(and(eq(procedureEvents.procedureId, input.id), sql`${procedureEvents.eventType} LIKE 'prepared:%'`)).limit(1))[0];
+      const closure = (await db.select({ payload: procedureEvents.payload }).from(procedureEvents).where(and(eq(procedureEvents.procedureId, input.id), eq(procedureEvents.eventType, "finalization"))).limit(1))[0];
+      const inventoryConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),eq(procedureInventoryConsumptions.procedureId,input.id),eq(procedureInventoryConsumptions.status,"consumido")));
+      return { inventoryConsumptions, procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images, preparation: readPreparation(preparationEvent?.payload), finalization: readFinalization(closure?.payload) };
     }),
 
   // ── Criar novo procedimento ──────────────────────────────────────────────
@@ -143,60 +158,100 @@ export const proceduresRouter = router({
       chargedAmount: z.number().int().min(0).optional(), // centavos
       notes: z.string().optional(),
       // Imagem de referência em base64 (opcional na criação)
-      referenceImageBase64: z.string().optional(),
-      referenceImageMime: z.string().optional(),
-    }))
+      referenceImageBase64: z.string().max(24 * 1024 * 1024).optional(),
+      referenceImageMime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
+      referenceFromProcedureId: z.number().int().positive().optional(),
+      preparation: preparationSchema.optional(),
+      requestId: z.string().uuid().optional(),
+    }).refine(v => !v.preparation || !!v.requestId, "Informe o identificador da preparação."))
     .mutation(async ({ ctx, input }) => {
       const studioId = ctx.studioId;
       const db = await requireDb();
-      await assertProcedureLinks(db, { studioId, clientId: input.clientId, appointmentId: input.appointmentId, artistId: input.artistId });
-      let referenceImageUrl: string | undefined;
-      let referenceImageKey: string | undefined;
-
-      if (input.referenceImageBase64 && input.referenceImageMime) {
-        const buffer = Buffer.from(input.referenceImageBase64, "base64");
-        const ext = input.referenceImageMime.split("/")[1] || "jpg";
-        const key = `procedures/${studioId}/ref-${randomSuffix()}.${ext}`;
-        const { url } = await storagePut(key, buffer, input.referenceImageMime);
-        referenceImageUrl = url;
-        referenceImageKey = key;
-      }
-
-      const [result] = await db
-        .insert(technicalProcedures)
-        .values({
-          studioId,
-          clientId: input.clientId,
-          appointmentId: input.appointmentId ?? null,
-          artistId: input.artistId ?? null,
-          artistName: input.artistName ?? null,
-          title: input.title,
-          description: input.description ?? null,
-          bodyLocation: input.bodyLocation ?? null,
-          tattooStyle: input.tattooStyle ?? null,
-          chargedAmount: input.chargedAmount ?? 0,
-          notes: input.notes ?? null,
-          referenceImageUrl: referenceImageUrl ?? null,
-          referenceImageKey: referenceImageKey ?? null,
+      return db.transaction(async tx => {
+        // Serialize retries for this client. The request token and all session rows
+        // commit together, so a lost HTTP response cannot create a second session.
+        const lockedClient = (await tx.select({ id: clients.id }).from(clients).where(and(
+          eq(clients.id, input.clientId), eq(clients.studioId, studioId), eq(clients.isArchived, 0),
+        )).limit(1).for("update"))[0];
+        if (!lockedClient) throw new TRPCError({ code: "NOT_FOUND", message: "Selecione um cliente ativo deste estúdio." });
+        const eventType = input.requestId ? `prepared:${input.requestId}` : "created";
+        if (input.requestId) {
+          const replay = (await tx.select({ procedure: technicalProcedures }).from(technicalProcedures)
+            .innerJoin(procedureEvents, eq(procedureEvents.procedureId, technicalProcedures.id))
+            .where(and(eq(technicalProcedures.studioId, studioId), eq(technicalProcedures.clientId, input.clientId), eq(procedureEvents.eventType, eventType))).limit(1))[0];
+          if (replay) return replay.procedure;
+        }
+        const database = tx as unknown as Awaited<ReturnType<typeof requireDb>>;
+        await assertProcedureLinks(database, { studioId, clientId: input.clientId, appointmentId: input.appointmentId, artistId: input.artistId });
+        const resolvedArtist = await resolveProcedureArtist(database, { ...input, studioId });
+        if (input.preparation) assertOwnArtist(ctx, resolvedArtist.artistId ?? null);
+        const preparation = input.preparation ? preparationSchema.parse(input.preparation) : null;
+        if (preparation) {
+          const ids = new Set([...preparation.materials.map(i => i.tenantMaterialId), ...preparation.colors.flatMap(c => c.ingredients.map(i => i.tenantMaterialId))]);
+          const materials = new Map<number, typeof tenantMaterials.$inferSelect>();
+          for (const id of Array.from(ids)) {
+            const material = (await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id, id), eq(tenantMaterials.studioId, studioId), eq(tenantMaterials.isActive, 1))).limit(1).for("share"))[0];
+            if (!material) throw new TRPCError({ code: "BAD_REQUEST", message: "Um material foi arquivado ou não está disponível. Revise o planejamento." });
+            await requireMaterialForArtist(database, ctx, material, resolvedArtist.artistId ?? null);
+            materials.set(id, material);
+          }
+          try {
+            for (const item of preparation.materials) {
+              const material = materials.get(item.tenantMaterialId)!;
+              validatePreparationMaterial(item, material);
+              item.name = sessionMaterialName(material); item.unit = material.unit;
+            }
+            for (const color of preparation.colors) for (const item of color.ingredients) {
+              const material = materials.get(item.tenantMaterialId)!;
+              validateRecipeMaterial(material); item.name = material.name;
+            }
+          } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: (error as Error).message }); }
+          if (Buffer.byteLength(JSON.stringify(preparation), "utf8") > 55000) throw new TRPCError({ code: "BAD_REQUEST", message: "O planejamento está muito grande. Reduza os materiais ou as misturas." });
+        }
+        let referenceImageUrl: string | undefined, referenceImageKey: string | undefined;
+        let imageBuffer: Buffer | undefined, imageMime = input.referenceImageMime;
+        if (input.referenceImageBase64) {
+          if (!imageMime) throw new TRPCError({ code: "BAD_REQUEST", message: "Informe o formato da imagem." });
+          imageBuffer = Buffer.from(input.referenceImageBase64, "base64");
+        } else if (input.referenceFromProcedureId) {
+          const source = (await tx.select().from(technicalProcedures).where(and(eq(technicalProcedures.id, input.referenceFromProcedureId), eq(technicalProcedures.studioId, studioId), eq(technicalProcedures.clientId, input.clientId))).limit(1))[0];
+          if (!source?.referenceImageKey) throw new TRPCError({ code: "BAD_REQUEST", message: "A referência anterior não está disponível. Selecione uma imagem." });
+          const { url } = await storageGet(source.referenceImageKey);
+          const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          if (!response.ok) throw new TRPCError({ code: "BAD_REQUEST", message: "Não foi possível recuperar a referência anterior." });
+          const mime = response.headers.get("content-type")?.split(";")[0];
+          if (!["image/jpeg", "image/png", "image/webp"].includes(mime || "")) throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione a referência em JPG, PNG ou WebP." });
+          imageMime = mime as typeof imageMime;
+          imageBuffer = Buffer.from(await response.arrayBuffer());
+        }
+        if (imageBuffer) {
+          if (!imageBuffer.length || imageBuffer.length > 16 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "A referência deve ter até 16 MB." });
+          const key = `procedures/${studioId}/ref-${randomSuffix()}.${imageMime!.split("/")[1]}`;
+          const uploaded = await storagePut(key, imageBuffer, imageMime);
+          if (!uploaded.url) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar a referência." });
+          referenceImageUrl = uploaded.url; referenceImageKey = key;
+        }
+        const [result] = await tx.insert(technicalProcedures).values({
+          studioId, clientId: input.clientId, appointmentId: input.appointmentId ?? null,
+          artistId: resolvedArtist.artistId ?? null, artistName: resolvedArtist.artistName ?? null,
+          title: input.title, description: input.description ?? null,
+          bodyLocation: input.bodyLocation ?? null, tattooStyle: input.tattooStyle ?? null,
+          chargedAmount: input.chargedAmount ?? 0, notes: input.notes ?? null,
+          referenceImageUrl: referenceImageUrl ?? null, referenceImageKey: referenceImageKey ?? null,
           status: "em_andamento",
         });
-
-      const insertId = (result as any).insertId as number;
-
-      // Registrar evento de criação
-      await db.insert(procedureEvents).values({
-        procedureId: insertId,
-        eventType: "created",
-        payload: JSON.stringify({ createdBy: ctx.user.id, artistName: input.artistName }),
+        const id = (result as any).insertId as number;
+        await tx.insert(procedureEvents).values({ procedureId: id, eventType, payload: preparation ? JSON.stringify(preparation) : JSON.stringify({ createdBy: ctx.user.id }) });
+        // P codes identify prepared colors, which have no sampled image position.
+        if (preparation?.colors.length) await tx.insert(procedureColorSamples).values(preparation.colors.map((c, i) => ({
+          studioId, procedureId: id, clientId: input.clientId, artistId: resolvedArtist.artistId ?? null,
+          code: `P${String(i + 1).padStart(2, "0")}`, hex: c.hex.toUpperCase(), ...preparationRgb(c.hex),
+          xPct: "0", yPct: "0", sampleSize: 0, createdByUserId: ctx.user.id,
+        })));
+        if (input.requestId) await tx.insert(procedureEvents).values({ procedureId: id, eventType: "created", payload: JSON.stringify({ createdBy: ctx.user.id, artistName: input.artistName }) });
+        const [created] = await tx.select().from(technicalProcedures).where(eq(technicalProcedures.id, id)).limit(1);
+        return created;
       });
-
-      const [created] = await db
-        .select()
-        .from(technicalProcedures)
-        .where(eq(technicalProcedures.id, insertId))
-        .limit(1);
-
-      return created;
     }),
 
   // ── Atualizar dados gerais do procedimento ───────────────────────────────
@@ -269,6 +324,10 @@ export const proceduresRouter = router({
       const updates: Record<string, any> = {};
 
       if (input.action === "start") {
+        await db.transaction(async tx => {
+          await tx.select({ id: technicalProcedures.id }).from(technicalProcedures).where(eq(technicalProcedures.id, existing.id)).for("update");
+          await snapshotSessionMaterials(tx as unknown as typeof db, existing);
+        });
         updates.startedAt = now;
         updates.status = "em_andamento";
       } else if (input.action === "pause") {
@@ -455,7 +514,10 @@ export const proceduresRouter = router({
       const studioId = ctx.studioId;
       const db = await requireDb();
       const [proc] = await db
-        .select({ studioId: technicalProcedures.studioId })
+        .select({
+          studioId: technicalProcedures.studioId,
+          referenceImageKey: technicalProcedures.referenceImageKey,
+        })
         .from(technicalProcedures)
         .where(eq(technicalProcedures.id, input.procedureId))
         .limit(1);
@@ -466,39 +528,93 @@ export const proceduresRouter = router({
       const key = `procedures/${studioId}/${input.procedureId}/${input.imageType}-${randomSuffix()}.${ext}`;
       const { url } = await storagePut(key, buffer, input.mimeType);
 
-      const [result] = await db.insert(procedureImages).values({
-        procedureId: input.procedureId,
-        imageUrl: url,
-        imageKey: key,
-        imageType: input.imageType,
-        description: input.description ?? null,
-      });
+      let createdId: number | null = null;
+      let previousReferenceKey: string | null = null;
 
-      const insertId = (result as any).insertId as number;
-
-      // Atualizar URL na tabela principal se for imagem de referência ou final
       if (input.imageType === "reference") {
+        previousReferenceKey = proc.referenceImageKey ?? null;
+        const [existing] = await db
+          .select()
+          .from(procedureImages)
+          .where(and(
+            eq(procedureImages.procedureId, input.procedureId),
+            eq(procedureImages.imageType, "reference"),
+          ))
+          .orderBy(desc(procedureImages.id))
+          .limit(1);
+
+        if (existing) {
+          await db
+            .update(procedureImages)
+            .set({
+              imageUrl: url,
+              imageKey: key,
+              description: input.description ?? existing.description,
+            })
+            .where(eq(procedureImages.id, existing.id));
+          createdId = existing.id;
+
+          // Remove referências antigas duplicadas do registro da sessão.
+          await db
+            .delete(procedureImages)
+            .where(and(
+              eq(procedureImages.procedureId, input.procedureId),
+              eq(procedureImages.imageType, "reference"),
+              sql`${procedureImages.id} <> ${existing.id}`,
+            ));
+        } else {
+          const [result] = await db.insert(procedureImages).values({
+            procedureId: input.procedureId,
+            imageUrl: url,
+            imageKey: key,
+            imageType: "reference",
+            description: input.description ?? null,
+          });
+          createdId = (result as any).insertId as number;
+        }
+
         await db.update(technicalProcedures)
           .set({ referenceImageUrl: url, referenceImageKey: key })
           .where(eq(technicalProcedures.id, input.procedureId));
-      } else if (input.imageType === "final") {
-        await db.update(technicalProcedures)
-          .set({ finalImageUrl: url, finalImageKey: key })
-          .where(eq(technicalProcedures.id, input.procedureId));
-      } else if (input.imageType === "healed") {
-        await db.update(technicalProcedures)
-          .set({ healedImageUrl: url, healedImageKey: key })
-          .where(eq(technicalProcedures.id, input.procedureId));
-      } else if (input.imageType === "stencil") {
-        await db.update(technicalProcedures)
-          .set({ stencilImageUrl: url, stencilImageKey: key })
-          .where(eq(technicalProcedures.id, input.procedureId));
+
+        if (previousReferenceKey && previousReferenceKey !== key) {
+          await storageDelete(previousReferenceKey).catch((error) => {
+            console.warn("[Procedure reference] Old object could not be deleted:", error);
+          });
+        }
+      } else {
+        const [result] = await db.insert(procedureImages).values({
+          procedureId: input.procedureId,
+          imageUrl: url,
+          imageKey: key,
+          imageType: input.imageType,
+          description: input.description ?? null,
+        });
+        createdId = (result as any).insertId as number;
+
+        if (input.imageType === "final") {
+          await db.update(technicalProcedures)
+            .set({ finalImageUrl: url, finalImageKey: key })
+            .where(eq(technicalProcedures.id, input.procedureId));
+        } else if (input.imageType === "healed") {
+          await db.update(technicalProcedures)
+            .set({ healedImageUrl: url, healedImageKey: key })
+            .where(eq(technicalProcedures.id, input.procedureId));
+        } else if (input.imageType === "stencil") {
+          await db.update(technicalProcedures)
+            .set({ stencilImageUrl: url, stencilImageKey: key })
+            .where(eq(technicalProcedures.id, input.procedureId));
+        }
+      }
+
+      if (!createdId) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível registrar a imagem." });
       }
 
       const [created] = await db
         .select()
         .from(procedureImages)
-        .where(eq(procedureImages.id, insertId))
+        .where(eq(procedureImages.id, createdId))
         .limit(1);
       return created;
     }),
@@ -574,6 +690,9 @@ export const proceduresRouter = router({
         totalMaterialCost += cost;
       }
 
+      const inventoryConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),eq(procedureInventoryConsumptions.procedureId,input.id),eq(procedureInventoryConsumptions.status,"consumido")));
+      const confirmedInventoryCost = inventoryConsumptions.reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0);
+      totalMaterialCost += confirmedInventoryCost;
       const chargedAmount = (procedure.chargedAmount ?? 0) / 100; // converter centavos para reais
       const grossMargin = chargedAmount - totalMaterialCost;
 
@@ -581,6 +700,8 @@ export const proceduresRouter = router({
         procedure,
         consumables,
         byCategory,
+        inventoryConsumptions,
+        confirmedInventoryCost,
         totalMaterialCost,
         chargedAmount,
         grossMargin,
@@ -589,96 +710,17 @@ export const proceduresRouter = router({
     }),
 
   // ── Finalizar sessão POD: fechar procedimento + concluir agendamento + registrar transação ──────────────────
-  finalize: tenantProcedure
-    .input(z.object({
-      procedureId: z.number(),
-      chargedAmount: z.number().min(0),
-      paymentMethod: z.enum(["dinheiro", "pix", "credito", "debito", "transferencia"]),
-      notes: z.string().optional(),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      const studioId = ctx.studioId;
-      const db = await requireDb();
-
-      // 1. Buscar o procedimento e verificar ownership
-      const [proc] = await db
-        .select()
-        .from(technicalProcedures)
-        .where(and(eq(technicalProcedures.id, input.procedureId), eq(technicalProcedures.studioId, studioId)))
-        .limit(1);
-
-      if (!proc) throw new TRPCError({ code: "NOT_FOUND", message: "Procedimento não encontrado." });
-      if (proc.status === "finalizado") throw new TRPCError({ code: "BAD_REQUEST", message: "Procedimento já finalizado." });
-
-      const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-
-      // 2. Fechar o procedimento
-      await db
-        .update(technicalProcedures)
-        .set({
-          status: "finalizado",
-          finishedAt: now,
-          chargedAmount: input.chargedAmount,
-          notes: input.notes ?? proc.notes,
-          updatedAt: now,
-        })
-        .where(eq(technicalProcedures.id, input.procedureId));
-
-      // 3. Marcar agendamento vinculado como concluído (se houver)
-      if (proc.appointmentId) {
-        await db
-          .update(appointments)
-          .set({ status: "concluido", updatedAt: now })
-          .where(and(eq(appointments.id, proc.appointmentId), eq(appointments.studioId, studioId)));
-      }
-
-      // 4. Registrar transação financeira
-      const amountCents = Math.round(input.chargedAmount * 100);
-      if (amountCents > 0) {
-        await db.insert(transactions).values({
-          studioId,
-          clientId: proc.clientId ?? null,
-          appointmentId: proc.appointmentId ?? null,
-          type: "entrada",
-          category: "servico",
-          description: `Sessão POD: ${proc.title}`,
-          amount: amountCents,
-          paymentMethod: input.paymentMethod,
-          date: now,
-        });
-      }
-
-      // 5. Notificar o dono do estúdio
+  finalizationPreview: tenantProcedure.input(z.object({ procedureId: z.number().int().positive() })).query(async ({ ctx, input }) => finalizationPreview(await requireDb(), ctx, input.procedureId)),
+  finalize: tenantProcedure.input(finalizeSessionInput).mutation(async ({ ctx, input }) => {
+    const result = await finalizeSession(await requireDb(), ctx, input);
+    if (!result.replayed) {
       try {
-        const duracaoMin = proc.startedAt && proc.finishedAt
-          ? Math.round((new Date(proc.finishedAt.replace(' ', 'T')).getTime() - new Date(proc.startedAt.replace(' ', 'T')).getTime()) / 60000)
-          : null;
-        const valorFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(input.chargedAmount);
-        const duracaoFmt = duracaoMin != null ? `${duracaoMin} min` : 'n/d';
         const { notifyOwner } = await import("../_core/notification");
-        await notifyOwner({
-          title: `✅ Sessão POD Finalizada: ${proc.title}`,
-          content: [
-            `**Procedimento:** ${proc.title}`,
-            `**Artista:** ${proc.artistName || 'N/A'}`,
-            `**Duração:** ${duracaoFmt}`,
-            `**Valor cobrado:** ${valorFmt}`,
-            `**Método:** ${input.paymentMethod}`,
-            proc.appointmentId ? `**Agendamento #${proc.appointmentId}:** marcado como concluído` : '',
-            amountCents > 0 ? `**Transação registrada:** ${valorFmt}` : '',
-            input.notes ? `**Obs:** ${input.notes}` : '',
-          ].filter(Boolean).join('\n'),
-        });
-      } catch (_e) {
-        // Não bloquear a finalização se a notificação falhar
-      }
-
-      return {
-        success: true,
-        appointmentUpdated: !!proc.appointmentId,
-        transactionCreated: amountCents > 0,
-      };
-    }),
+        await notifyOwner({ title: `Sessão POD #${input.procedureId} concluída`, content: `Valor da sessão: R$ ${(input.totalCents / 100).toFixed(2)}. Recebido agora: R$ ${(input.receivedCents / 100).toFixed(2)}. Saldo na conclusão: R$ ${(result.outstandingCents / 100).toFixed(2)}.` });
+      } catch { /* Notification failure must not retry the financial writes. */ }
+    }
+    return result;
+  }),
 
   // ── Listar todos os appointmentIds que têm sessão POD vinculada ────────────────────────────────────────────────
   // ── Relatório de insumos por artista/período ─────────────────────────────────────────────────────────────────
@@ -718,6 +760,7 @@ export const proceduresRouter = router({
         .from(procedureConsumables);
 
       const filteredConsumables = consumablesAll.filter(c => procIds.includes(c.procedureId));
+      const stockConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),inArray(procedureInventoryConsumptions.procedureId,procIds),eq(procedureInventoryConsumptions.status,"consumido")));
 
       // Agrupar por artista
       const artistMap: Record<string, {
@@ -737,6 +780,13 @@ export const proceduresRouter = router({
         // chargedAmount está em centavos → converter para reais
         artistMap[artist].totalRevenue += (proc.chargedAmount ?? 0) / 100;
 
+        for (const c of stockConsumptions.filter(c=>c.procedureId===proc.id)) {
+          const cost=Number(c.totalCostSnapshot), cat=`Estoque (${c.unitSnapshot})`;
+          artistMap[artist].totalCost += cost;
+          const group=artistMap[artist].consumablesByCategory[cat]??{qty:0,cost:0};
+          group.qty+=Number(c.quantity);group.cost+=cost;
+          artistMap[artist].consumablesByCategory[cat]=group;
+        }
         const procConsumables = filteredConsumables.filter(c => c.procedureId === proc.id);
         for (const c of procConsumables) {
           const unitCost = parseFloat(c.estimatedUnitCost ?? '0');
@@ -786,7 +836,8 @@ export const proceduresRouter = router({
         const procIds = procs.map(p => p.id);
         const allConsumables = await db.select().from(procedureConsumables);
         const filtered = allConsumables.filter(c => procIds.includes(c.procedureId));
-        let totalCost = 0;
+        const stockConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),inArray(procedureInventoryConsumptions.procedureId,procIds),eq(procedureInventoryConsumptions.status,"consumido")));
+        let totalCost = stockConsumptions.reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0);
         for (const c of filtered) {
           totalCost += parseFloat(c.estimatedUnitCost ?? '0') * parseFloat(c.quantity ?? '0');
         }
@@ -827,16 +878,20 @@ export const proceduresRouter = router({
     .query(async ({ ctx }) => {
       const studioId = ctx.studioId;
       const db = await requireDb();
+      const filters = [
+        eq(technicalProcedures.studioId, studioId),
+        isNotNull(technicalProcedures.appointmentId),
+      ];
+      if (ctx.artistId != null) filters.push(eq(appointments.artistId, ctx.artistId));
       const rows = await db
         .select({ appointmentId: technicalProcedures.appointmentId, id: technicalProcedures.id })
         .from(technicalProcedures)
-        .where(
-          and(
-            eq(technicalProcedures.studioId, studioId),
-            isNotNull(technicalProcedures.appointmentId)
-          )
-        );
-      // Retorna mapa appointmentId -> procedureId
+        .innerJoin(appointments, and(
+          eq(appointments.id, technicalProcedures.appointmentId),
+          eq(appointments.studioId, studioId),
+        ))
+        .where(and(...filters));
+      // Retorna mapa appointmentId -> procedureId, já restrito ao próprio artista quando colaborador.
       const map: Record<number, number> = {};
       for (const r of rows) {
         if (r.appointmentId != null) map[r.appointmentId] = r.id;

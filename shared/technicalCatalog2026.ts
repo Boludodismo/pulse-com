@@ -21144,7 +21144,7 @@ export const TECHNICAL_CATALOG_2026: TechnicalCatalogSeedItem[] = [
   {
     "brandName": "Genérico",
     "lineName": "Batoques e acessórios",
-    "name": "Anel batoque descartável — 100 un",
+    "name": "Batoque descartável",
     "sku": "GEN-RING-CAP-100",
     "category": "Batoques e acessórios",
     "format": null,

@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import {
   ChevronLeft,
+  Play,
   Clock,
   DollarSign,
   Package,
@@ -62,6 +63,22 @@ export default function ProcedureSummary() {
 
   const utils = trpc.useUtils();
 
+  const openStartedSession = async () => {
+    await Promise.all([
+      utils.procedures.getById.invalidate({ id: procedureId }),
+      utils.pod.session.get.invalidate({ procedureId }),
+    ]);
+    navigate(`/procedures/${procedureId}`);
+  };
+  const startSession = trpc.procedures.timerAction.useMutation({
+    onSuccess: openStartedSession,
+    onError: err => toast.error(err.message),
+  });
+  const resumeSession = trpc.pod.session.resumePause.useMutation({
+    onSuccess: openStartedSession,
+    onError: err => toast.error(err.message),
+  });
+
   const updateMutation = trpc.procedures.update.useMutation({
     onSuccess: () => {
       utils.procedures.getById.invalidate({ id: procedureId });
@@ -74,6 +91,7 @@ export default function ProcedureSummary() {
 
   const procedure = procedureQuery.data?.procedure;
   const consumables = procedureQuery.data?.consumables ?? [];
+  const inventoryConsumptions = procedureQuery.data?.inventoryConsumptions ?? [];
   const images = procedureQuery.data?.images ?? [];
 
   if (procedureQuery.isLoading) {
@@ -95,13 +113,13 @@ export default function ProcedureSummary() {
   // ── Cálculos financeiros ─────────────────────────────────────────────────
   const totalMaterialCost = consumables.reduce(
     (sum, c) => sum + Number(c.estimatedTotalCost ?? 0),
-    0
+    inventoryConsumptions.reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0)
   );
   const chargedAmount = Number(procedure.chargedAmount ?? 0);
   const durationMinutes = procedure.totalDurationMinutes ?? 0;
   const durationHours = durationMinutes / 60;
-  const grossMargin = chargedAmount - totalMaterialCost;
-  const grossMarginPercent = chargedAmount > 0 ? (grossMargin / chargedAmount) * 100 : 0;
+  const grossMargin = chargedAmount / 100 - totalMaterialCost;
+  const grossMarginPercent = chargedAmount > 0 ? (grossMargin / (chargedAmount / 100)) * 100 : 0;
   const hourlyRate = durationHours > 0 ? grossMargin / durationHours : 0;
 
   // ── Agrupar insumos por categoria ────────────────────────────────────────
@@ -111,7 +129,7 @@ export default function ProcedureSummary() {
     return acc;
   }, {});
 
-  const statusInfo = STATUS_LABELS[procedure.status] ?? STATUS_LABELS.em_andamento;
+  const statusInfo = !procedure.startedAt && procedure.status !== "finalizado" ? { label: "Não iniciada", color: "bg-blue-500/20 text-blue-400 border-blue-500/30" } : STATUS_LABELS[procedure.status] ?? STATUS_LABELS.em_andamento;
 
   const formatDuration = (minutes: number) => {
     const h = Math.floor(minutes / 60);
@@ -142,6 +160,19 @@ export default function ProcedureSummary() {
       </header>
 
       <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
+
+        {procedure.status !== "finalizado" && (
+          <Button className="w-full min-h-11 h-auto py-3 whitespace-normal gap-2 bg-green-600 hover:bg-green-700"
+            disabled={startSession.isPending || resumeSession.isPending}
+            onClick={() => {
+              if (!procedure.startedAt) startSession.mutate({ id: procedureId, action: "start" });
+              else if (procedure.status === "pausado" || procedure.pausedAt) resumeSession.mutate({ procedureId });
+              else navigate(`/procedures/${procedureId}`);
+            }}>
+            <Play className="w-4 h-4 shrink-0" />
+            {startSession.isPending || resumeSession.isPending ? "Aguarde…" : !procedure.startedAt ? "Iniciar sessão" : procedure.status === "pausado" || procedure.pausedAt ? "Retomar sessão" : "Voltar à sessão em andamento"}
+          </Button>
+        )}
 
         {/* ── Informações gerais ─────────────────────────────────────────── */}
         <Card>
@@ -321,6 +352,7 @@ export default function ProcedureSummary() {
           </CardContent>
         </Card>
 
+        {inventoryConsumptions.length>0&&<Card><CardHeader><CardTitle>Materiais baixados do estoque</CardTitle></CardHeader><CardContent>{inventoryConsumptions.map(c=><div key={c.id} className="border-b py-2 text-sm break-words"><p>{c.nameSnapshot} · {Number(c.quantity).toLocaleString('pt-BR')} {c.unitSnapshot}</p><p>Lote: {c.lotSnapshot||'não informado'} · Custo registrado: {Number(c.totalCostSnapshot).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</p></div>)}</CardContent></Card>}
         {/* ── Detalhamento de insumos ────────────────────────────────────── */}
         {consumables.length > 0 && (
           <Card>
@@ -395,6 +427,15 @@ export default function ProcedureSummary() {
             </CardContent>
           </Card>
         )}
+
+        {procedureQuery.data?.finalization && <Card><CardHeader><CardTitle className="text-base">Pagamento na conclusão</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
+          <p>Valor da sessão: {(procedureQuery.data.finalization.totalCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+          <p>Recebimentos anteriores: {(procedureQuery.data.finalization.previousCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+          <p>Recebido ao concluir: {(procedureQuery.data.finalization.receivedCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+          <p className="font-semibold">Saldo pendente na conclusão: {(procedureQuery.data.finalization.outstandingCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+          <p className="text-muted-foreground">Registro do fechamento. Recebimentos posteriores devem ser consultados no financeiro.</p>
+          {procedureQuery.data.finalization.nextSteps && <p className="whitespace-pre-wrap">Próxima sessão: {procedureQuery.data.finalization.nextSteps}</p>}
+        </CardContent></Card>}
 
         {/* ── Observações ────────────────────────────────────────────────── */}
         <Card>

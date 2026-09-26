@@ -14,6 +14,7 @@ import {
   messageAutomationSettings,
   integrationContacts,
   clients,
+  careTags,
   appointments,
 } from "../../drizzle/schema";
 import { eq, desc, and, inArray } from "drizzle-orm";
@@ -88,13 +89,13 @@ export function assertRetryableMessage<T extends { status: string; clientId: num
 export const messagingRouter = router({
   /** Lista clientes do estúdio e seu opt-in na integração selecionada. */
   listWhatsappConsents: tenantProcedure
-    .input(z.object({ integrationId: z.number().int().positive() }))
+    .input(z.object({ integrationId: z.number().int().positive(), clientId:z.number().int().positive().optional() }))
     .query(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const integration = await findScopedIntegration(db, input.integrationId, ctx.studioId);
       if (!integration.studioId) throw new TRPCError({ code: "BAD_REQUEST", message: "A integração não está vinculada a uma empresa." });
-      return await db.select({
+      const contacts = await db.select({
         clientId: clients.id, clientName: clients.name, phone: clients.phone,
         hasWhatsappOptIn: integrationContacts.hasWhatsappOptIn,
         optInAt: integrationContacts.optInAt, optInSource: integrationContacts.optInSource,
@@ -103,7 +104,10 @@ export const messagingRouter = router({
         eq(integrationContacts.clientId, clients.id),
         eq(integrationContacts.studioId, integration.studioId),
         eq(integrationContacts.integrationId, integration.id),
-      )).where(and(eq(clients.studioId, integration.studioId),eq(clients.isArchived,0))).limit(200);
+      )).where(and(eq(clients.studioId, integration.studioId),eq(clients.isArchived,0),input.clientId?eq(clients.id,input.clientId):undefined)).orderBy(clients.name,clients.id);
+      const labels=await db.select({clientId:careTags.clientId,label:careTags.label}).from(careTags).where(and(eq(careTags.studioId,integration.studioId),input.clientId?eq(careTags.clientId,input.clientId):undefined));
+      const tagsByClient=new Map<number,string[]>();for(const row of labels)tagsByClient.set(row.clientId,[...(tagsByClient.get(row.clientId)||[]),row.label]);
+      return contacts.map(c=>({...c,tags:tagsByClient.get(c.clientId)||[]}));
     }),
 
   /** Registra revogação ou opt-in informado pelo gestor; não envia mensagens. */
@@ -488,7 +492,7 @@ export const messagingRouter = router({
         .limit(Math.min(input.limit, 100));
     }),
 
-  /** Indicadores compactos de lembretes já entregues, sempre isolados por estúdio. */
+  /** Indicadores compactos de lembretes já entregues, isolados por estúdio e artista. */
   getReminderIndicators: baseTenantProcedure
     .input(z.object({ appointmentIds: z.array(z.number().int().positive()).max(500) }))
     .query(async ({ input, ctx }) => {
@@ -501,11 +505,17 @@ export const messagingRouter = router({
         inArray(messageQueue.trigger, ["appointment_reminder", "appointment_reminder_1h_client"]),
       ];
       if (ctx.studioId != null) filters.push(eq(messageQueue.studioId, ctx.studioId));
+      if (ctx.artistId != null) filters.push(eq(appointments.artistId, ctx.artistId));
       const rows = await db.select({
         appointmentId: messageQueue.appointmentId,
         trigger: messageQueue.trigger,
         sentAt: messageQueue.sentAt,
-      }).from(messageQueue).where(and(...filters)).orderBy(desc(messageQueue.sentAt));
+      }).from(messageQueue)
+        .innerJoin(appointments, and(
+          eq(appointments.id, messageQueue.appointmentId),
+          ctx.studioId != null ? eq(appointments.studioId, ctx.studioId) : undefined,
+        ))
+        .where(and(...filters)).orderBy(desc(messageQueue.sentAt));
       const indicators: Record<number, { sentAt: string | null; types: string[] }> = {};
       for (const row of rows) {
         if (!row.appointmentId) continue;

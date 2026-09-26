@@ -1,3 +1,4 @@
+import {interpolateMessage} from './messageTemplate';
 export const CARE_DEFAULTS = [
  { name: "Aniversário", kind: "birthday", amount: 0, unit: "days", body: "Bom dia, {primeiro_nome}! 🎉 Feliz aniversário! Desejamos muita alegria e um novo ciclo cheio de boas histórias. Um abraço da equipe {nome_estudio}!" },
  { name: "Cicatrização — uma semana", kind: "session", amount: 7, unit: "days", body: "Bom dia, {primeiro_nome}! Aqui é da equipe {nome_estudio}. Faz uma semana da sua sessão com {nome_artista}. Como está sendo a cicatrização? Ficou alguma dúvida sobre os cuidados? Conte para a gente: {link_feedback}" },
@@ -12,7 +13,7 @@ export function careDueDate(date: string, amount: number, unit: string) {
  target.setUTCDate(Math.min(d,last)); return target.toISOString().slice(0,10);
 }
 export function renderCareMessage(body: string, vars: Record<string,string>) {
- return body.replace(/\{([a-z_]+)\}/g, (match,key) => vars[key] ?? match);
+ return interpolateMessage(body,vars);
 }
 export function normalizeCareTags(tags: string[]) {
  return Array.from(new Set(tags.map(t=>t.trim().replace(/\s+/g,' ').toLocaleLowerCase('pt-BR')).filter(Boolean))).slice(0,30);

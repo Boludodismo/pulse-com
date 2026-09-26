@@ -1,8 +1,10 @@
 import { isOutboundMessagingBlocked } from "./outboundSafety";
+import {clients} from '../../drizzle/schema';
+import {hasClientNamePlaceholder,personalizeClientPlaceholders} from '../../shared/messageTemplate';
 import { getDb } from "../db";
 import { inventoryNotices } from "../../drizzle/inventoryWorkflowSchema";
 import { inventoryNoticeDeliveryError } from "../inventoryNoticeDelivery";
-import { whatsappIntegrations, messageQueue, messageTemplates, integrationContacts, integrationEvents, integrationJobs, appointmentReminders, appointments, messageAutomationSettings } from "../../drizzle/schema";
+import { whatsappIntegrations, messageQueue, messageTemplates, integrationContacts, integrationEvents, integrationJobs, appointmentReminders, appointments, messageAutomationSettings, artists, artistNotificationSettings } from "../../drizzle/schema";
 import { appointmentInstant } from "../../shared/appointmentTime";
 import { DEFAULT_STUDIO_TIMEZONE, zonedSqlDateTime } from "../../shared/studioClock";
 import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
@@ -15,6 +17,7 @@ import { decryptIntegrationSecret, encryptIntegrationSecret, hashIntegrationPayl
 import { normalizeBrazilianPhone } from "./phone";
 import { formatAppointmentActionLinks, type AppointmentActionLinks } from "../appointmentActions";
 import { removeLegacyNumericReplyInstruction } from "./messagePresentation";
+import { quoteIdFromTrigger, quoteDeliveryError, recordDeliveredQuote, reconcileDeliveredQuotes } from "../quoteDelivery";
 
 /** Instancia o provedor correto com base na configuração salva */
 export function getProvider(config: ProviderConfig): WhatsAppProvider {
@@ -81,9 +84,11 @@ export async function getProviderForIntegration(integration: typeof whatsappInte
 type MessageDeliveryPayload = {
   messageQueueId?: number;
   clientId?: number;
+  artistId?: number;
   appointmentReminderId?: number;
   recipientPhone: string;
   recipientName?: string;
+  recipientType?: "client" | "artist";
   message: string;
 };
 
@@ -143,6 +148,7 @@ export async function sendAndLog(params: {
   trigger?: string;
   appointmentId?: number;
   clientId?: number;
+  artistId?: number;
   integrationId?: number;
   retryOfQueueId?: number;
   appointmentReminderId?: number;
@@ -160,6 +166,11 @@ export async function sendAndLog(params: {
 
   const studioId = (params.studioId ?? integration.studioId) as number;
   try {
+    if(hasClientNamePlaceholder(params.message)) {
+      if(!params.clientId) return {success:false,error:'Identifique o cliente antes de enviar uma mensagem com o nome dele.'};
+      const [client]=await db.select({name:clients.name}).from(clients).where(and(eq(clients.id,params.clientId),eq(clients.studioId,studioId),eq(clients.isArchived,0))).limit(1);
+      params.message=personalizeClientPlaceholders(params.message,client?.name);
+    }
     return await db.transaction(async (tx) => {
       // A verificação e a escrita ocorrem na mesma transação. A restrição única
       // da fila de jobs cobre uma segunda execução concorrente do Heartbeat.
@@ -187,9 +198,11 @@ export async function sendAndLog(params: {
       const payload: MessageDeliveryPayload = {
         messageQueueId: queueId,
         clientId: params.clientId,
+        artistId: params.artistId,
         appointmentReminderId: params.appointmentReminderId,
         recipientPhone: params.recipientPhone,
         recipientName: params.recipientName,
+        recipientType: params.recipientType,
         message: params.message,
       };
       const payloadJson = JSON.stringify(payload);
@@ -263,9 +276,20 @@ export async function processPendingIntegrationJobs(limit = 10) {
         const reason = await inventoryNoticeDeliveryError(db, job.studioId, Number(inventoryNoticeId), payload.recipientPhone, payload.message);
         if (reason) throw new PermanentDeliveryError(reason);
       }
+      let queueItem: { trigger: string | null; appointmentId: number | null; recipientType: "client" | "artist" } | undefined;
       if (payload.messageQueueId) {
-        const queueItem = (await db.select({ trigger: messageQueue.trigger, appointmentId: messageQueue.appointmentId }).from(messageQueue)
+        queueItem = (await db.select({
+          trigger: messageQueue.trigger,
+          appointmentId: messageQueue.appointmentId,
+          recipientType: messageQueue.recipientType,
+        }).from(messageQueue)
           .where(and(eq(messageQueue.id, payload.messageQueueId), eq(messageQueue.studioId, job.studioId))).limit(1))[0];
+        payload.recipientType ??= queueItem?.recipientType;
+        if (payload.recipientType === "artist" && !payload.artistId && queueItem?.appointmentId) {
+          const linkedAppointment = (await db.select({ artistId: appointments.artistId }).from(appointments)
+            .where(and(eq(appointments.id, queueItem.appointmentId), eq(appointments.studioId, job.studioId))).limit(1))[0];
+          payload.artistId = linkedAppointment?.artistId ?? undefined;
+        }
         if (queueItem?.trigger?.startsWith("appointment_reminder_") && queueItem.appointmentId) {
           const appointment = (await db.select({ date: appointments.date, status: appointments.status }).from(appointments)
             .where(and(eq(appointments.id, queueItem.appointmentId), eq(appointments.studioId, job.studioId))).limit(1))[0];
@@ -276,21 +300,55 @@ export async function processPendingIntegrationJobs(limit = 10) {
           }
         }
       }
+      const quoteId = quoteIdFromTrigger(queueItem?.trigger);
+      if (quoteId) {
+        const reason = await quoteDeliveryError(job.studioId, quoteId, payload.clientId, payload.recipientPhone, Boolean(integration.sandboxMode));
+        if (reason) throw new PermanentDeliveryError(reason);
+      }
       if (integration.sandboxMode) {
         if (!integration.sandboxTestPhone) throw new Error("Defina o telefone de teste antes de ativar a homologação.");
         if (normalizeBrazilianPhone(payload.recipientPhone) !== integration.sandboxTestPhone) {
           throw new Error("Modo de teste: o destinatário não corresponde ao telefone de homologação.");
         }
       } else if (!inventoryNoticeId) {
-        if (!payload.clientId) throw new Error("Envios em produção exigem um cliente identificado e com consentimento de WhatsApp.");
-        const consent = (await db.select().from(integrationContacts).where(and(
-          eq(integrationContacts.studioId, job.studioId),
-          eq(integrationContacts.clientId, payload.clientId),
-          eq(integrationContacts.integrationId, integration.id),
-        )).limit(1))[0];
-        if (!consent?.hasWhatsappOptIn || consent.optedOutAt) {
-          throw new Error("O cliente não possui consentimento ativo para receber WhatsApp.");
+        if (payload.recipientType === "artist") {
+          if (!payload.artistId) throw new PermanentDeliveryError("Aviso ao artista sem profissional identificado.");
+          const artist = (await db.select({ id: artists.id, phone: artists.phone, active: artists.active }).from(artists).where(and(
+            eq(artists.id, payload.artistId),
+            eq(artists.studioId, job.studioId),
+          )).limit(1))[0];
+          const preference = (await db.select({
+            enabled: artistNotificationSettings.whatsappOperationalEnabled,
+          }).from(artistNotificationSettings).where(and(
+            eq(artistNotificationSettings.studioId, job.studioId),
+            eq(artistNotificationSettings.artistId, payload.artistId),
+          )).limit(1))[0];
+          if (!artist || artist.active !== 1 || !artist.phone || preference?.enabled !== 1) {
+            throw new PermanentDeliveryError("O artista não autorizou avisos operacionais por WhatsApp.");
+          }
+          if (normalizeBrazilianPhone(artist.phone) !== normalizeBrazilianPhone(payload.recipientPhone)) {
+            throw new PermanentDeliveryError("O telefone do aviso não corresponde ao WhatsApp cadastrado do artista.");
+          }
+        } else {
+          if (!payload.clientId) throw new Error("Envios em produção exigem um cliente identificado e com consentimento de WhatsApp.");
+          const consent = (await db.select().from(integrationContacts).where(and(
+            eq(integrationContacts.studioId, job.studioId),
+            eq(integrationContacts.clientId, payload.clientId),
+            eq(integrationContacts.integrationId, integration.id),
+          )).limit(1))[0];
+          if (!consent?.hasWhatsappOptIn || consent.optedOutAt) {
+            throw new Error("O cliente não possui consentimento ativo para receber WhatsApp.");
+          }
         }
+      }
+      // Also repair unresolved name tokens in messages queued before this release.
+      // Resolve by the actual client id and tenant, never by a shared telephone.
+      if(hasClientNamePlaceholder(payload.message)) {
+        if(!payload.clientId)throw new PermanentDeliveryError('Mensagem sem cliente identificado para preencher o nome.');
+        const [client]=await db.select({name:clients.name}).from(clients).where(and(eq(clients.id,payload.clientId),eq(clients.studioId,job.studioId),eq(clients.isArchived,0))).limit(1);
+        try{payload.message=personalizeClientPlaceholders(payload.message,client?.name);}catch(error){throw new PermanentDeliveryError(error instanceof Error?error.message:'Nome do cliente indisponível.');}
+        await db.update(integrationJobs).set({payload:JSON.stringify(payload)}).where(and(eq(integrationJobs.id,job.id),eq(integrationJobs.studioId,job.studioId)));
+        if(payload.messageQueueId)await db.update(messageQueue).set({message:payload.message}).where(and(eq(messageQueue.id,payload.messageQueueId),eq(messageQueue.studioId,job.studioId)));
       }
       const provider = await getProviderForIntegration(integration);
       const sent = await provider.sendMessage(payload.recipientPhone, payload.message);
@@ -302,6 +360,10 @@ export async function processPendingIntegrationJobs(limit = 10) {
         .where(eq(messageQueue.id, payload.messageQueueId));
       if (payload.appointmentReminderId) await db.update(appointmentReminders).set({ status: "sent", sentAt: sqlDate() })
         .where(eq(appointmentReminders.id, payload.appointmentReminderId));
+      if (quoteId) {
+        await recordDeliveredQuote(quoteId, job.studioId, sqlDate())
+          .catch(() => console.warn("[Quotes] Message sent; history will be repaired without resending."));
+      }
       await db.update(integrationEvents).set({ status: "processed", processedAt: sqlDate(), errorMessage: null })
         .where(and(
           eq(integrationEvents.studioId, job.studioId),
@@ -344,6 +406,7 @@ export async function processPendingIntegrationJobs(limit = 10) {
       } else result.retried += 1;
     }
   }
+  await reconcileDeliveredQuotes().catch(() => console.warn("[Quotes] Delivery history repair will be retried without resending messages."));
   return result;
 }
 

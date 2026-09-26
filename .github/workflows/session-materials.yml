@@ -1,0 +1,40 @@
+name: Session materials regression
+on:
+  push:
+    branches: ['fix/session-materials-20260924', 'fix/session-stock-units-20260926', 'fix/session-layer-stack-20260926', 'fix/session-eyedropper-20260926', 'feat/session-visual-preferences-20260926', 'fix/session-iphone-rotation-20260926']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: supplier_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -prootpass"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      DATABASE_URL: mysql://root:rootpass@127.0.0.1:3306/supplier_test
+      RUN_DB_MIGRATIONS: 'true'
+      MIGRATION_BASELINE_INDEX: '0'
+      AUTH_MODE: local
+      VITE_AUTH_MODE: local
+      OUTBOUND_MESSAGING_DISABLED: 'true'
+      SCHEDULER_MODE: disabled
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable && corepack prepare pnpm@10.4.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit --target ES2022 --incremental false
+      - run: pnpm exec vitest run server/inventoryAccess.test.ts server/sessionMaterials.test.ts server/sessionPreparation.test.ts server/sessionInkQuantity.test.ts server/sessionMaterialDefaults.test.ts server/sessionFinalization.test.ts server/sessionVisualLayers.test.ts server/sessionColorSampling.test.ts server/sessionAppearance.test.ts client/src/lib/sessionImageGesture.test.ts
+      - run: pnpm tsx scripts/test-supplier-isolation.ts
+      - run: pnpm tsx scripts/test-session-materials.ts
+      - run: pnpm build

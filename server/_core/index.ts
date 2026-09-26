@@ -1,12 +1,18 @@
+import { ensureNativeBotSchema } from "../nativeBot/database";
+import { receiveNativeBotWebhook } from "../nativeBot/webhook";
+import { startNativeBotWorker } from "../nativeBot/worker";
+import { INVENTORY_COLUMNS } from "../../shared/inventorySpreadsheet";
 import { ensureAppointmentKitSchema } from "./appointmentKitSchema";
 import { ensureInventoryWorkflowSchema } from "./inventoryWorkflowSchema";
 import {ensureInventoryTraceSchema} from "./inventoryTraceSchema";
 import { ensureLegacyStockScope } from "./legacyStockScope";
 import { ensureStudioSettingsScope } from "./studioSettingsScope";
 import { ensureAppointmentCardSchema } from "./appointmentCardSchema";
+import { ensureArtistNotificationSchema } from "./artistNotificationSchema";
 import { ensureContactImportSchema } from "../contactImport/schema";
 import {ensureStagingArtistInvitationSchema} from './stagingArtistInvitationSchema';
 import {ensureStagingIntelligentInboxSchema} from './stagingIntelligentInboxSchema';
+import { ensureStagingQuoteProposalSchema } from "./stagingQuoteProposalSchema";
 import { ensureStagingMessagingSchema } from "./stagingMessagingSchema";
 import { ensureStagingInventorySchema } from "./stagingInventorySchema";
 import "dotenv/config";
@@ -26,23 +32,28 @@ import { processPendingIntegrationJobs } from "../messaging/service";
 import { startIntegrationJobWorker } from "../messaging/jobWorker";
 import { receiveBotConversaWebhook } from "../messaging/secureWebhook";
 import { runStartupMigrations } from "./migrations";
+import { ensureSessionCockpitSchema } from "./sessionCockpitSchema";
 import { storageGet, verifyStorageAccessToken, checkS3Storage } from "../storage";
 
 async function startServer() {
   // Keep schema synchronized on controlled standalone deployments.
   // Disabled by default so existing Manus/production behavior is unchanged.
   await runStartupMigrations();
+  await ensureSessionCockpitSchema();
   await ensureStagingInventorySchema();
   await ensureStagingMessagingSchema();
   await ensureStagingIntelligentInboxSchema();
   await ensureStagingArtistInvitationSchema();
+  await ensureStagingQuoteProposalSchema();
   await ensureStudioSettingsScope();
   await ensureLegacyStockScope();
   await ensureAppointmentCardSchema();
+  await ensureArtistNotificationSchema();
   await ensureInventoryTraceSchema();
   await ensureInventoryWorkflowSchema();
   await ensureAppointmentKitSchema();
   await ensureContactImportSchema();
+  await ensureNativeBotSchema();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {
     await checkS3Storage();
@@ -50,6 +61,8 @@ async function startServer() {
   }
   const app = express();
   const server = createServer(app);
+  startNativeBotWorker();
+  app.use("/api/native-bot/webhook", express.json({ limit: "256kb" }));
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({
     limit: "50mb",
@@ -59,7 +72,19 @@ async function startServer() {
   }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+  app.post("/api/native-bot/webhook/:key", receiveNativeBotWebhook);
+
   // Lightweight health endpoint for hosting platforms.
+  app.get("/api/inventory-template.xlsx", async (_req, res) => {
+    try {
+      const XLSX = await import("xlsx");
+      const book = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([INVENTORY_COLUMNS]), "Leitura");
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", 'attachment; filename="Tatuei_Modelo_Materiais.xlsx"');
+      res.send(XLSX.write(book, {type:"buffer", bookType:"xlsx"}));
+    } catch { res.status(500).send("Não foi possível gerar o modelo."); }
+  });
   app.get("/api/health", (_req, res) => {
     res.status(200).json({ ok: true, service: "pod-crm", timestamp: new Date().toISOString() });
   });
@@ -82,6 +107,32 @@ async function startServer() {
       return res.status(404).json({ error: "Arquivo não encontrado." });
     }
   });
+  // Same-origin storage proxy used for safe canvas pixel sampling on Safari/iOS.
+  app.get("/api/storage-inline", async (req, res) => {
+    try {
+      const key = typeof req.query.key === "string" ? req.query.key : "";
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      if (!key || !token || !verifyStorageAccessToken(key, token)) {
+        return res.status(403).json({ error: "Acesso ao arquivo não autorizado." });
+      }
+      const { url } = await storageGet(key);
+      if (!url) return res.status(404).json({ error: "Arquivo indisponível." });
+      const upstream = await fetch(url);
+      if (!upstream.ok) {
+        return res.status(upstream.status).json({ error: "Imagem indisponível." });
+      }
+      const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      return res.status(200).send(bytes);
+    } catch (error) {
+      console.error("[Storage inline] Failed to proxy object", error);
+      return res.status(404).json({ error: "Arquivo não encontrado." });
+    }
+  });
+
   // Auth routes based on AUTH_MODE
   if (ENV.authMode === "local") {
     console.log("[Auth] Using local authentication mode");

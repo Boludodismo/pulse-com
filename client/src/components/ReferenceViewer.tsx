@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { sessionImageSource } from "@/lib/sessionImageSource";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Eye, Layers, Minus, Move, RotateCcw, RotateCw, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -19,22 +20,27 @@ const MAX_ZOOM = 5;
 
 export function ReferenceViewer({ originalSrc, contrastSrc, stencilSrc, alt, className = "" }: ReferenceViewerProps) {
   const [activeLayer, setActiveLayer] = useState<Layer>("original");
-  const [transform, setTransform] = useState<Transform>({ zoom: 1, panX: 0, panY: 0, rotation: 0, overlayOpacity: 0.55 });
+  const [transform, setTransform] = useState<Transform>({ zoom: 1, panX: 0, panY: 0, rotation: 0, overlayOpacity: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
-  const displayedSource = activeLayer === "stencil"
+  const [imageError, setImageError] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const selectedSource = activeLayer === "stencil"
     ? stencilSrc
     : activeLayer === "contrast"
-      ? contrastSrc ?? originalSrc
+      ? contrastSrc
       : originalSrc;
+
+  const displayedSource = sessionImageSource(selectedSource);
+  useEffect(() => { setImageError(false); setRetry(0); }, [displayedSource]);
 
   const updateZoom = useCallback((amount: number) => {
     setTransform((current) => ({ ...current, zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.zoom + amount)) }));
   }, []);
 
   const reset = useCallback(() => {
-    setTransform({ zoom: 1, panX: 0, panY: 0, rotation: 0, overlayOpacity: 0.55 });
+    setTransform({ zoom: 1, panX: 0, panY: 0, rotation: 0, overlayOpacity: 0 });
   }, []);
 
   const onWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
@@ -71,7 +77,7 @@ export function ReferenceViewer({ originalSrc, contrastSrc, stencilSrc, alt, cla
   return (
     <section className={`relative flex min-h-[300px] flex-1 flex-col overflow-hidden bg-black/90 ${className}`} aria-label="Visualizador de referência">
       <div
-        className={`relative min-h-[250px] flex-1 touch-none select-none overflow-hidden ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+        className={`relative h-[55vh] min-h-[280px] lg:h-auto flex-1 touch-none select-none overflow-hidden ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -80,10 +86,13 @@ export function ReferenceViewer({ originalSrc, contrastSrc, stencilSrc, alt, cla
       >
         {displayedSource ? (
           <img
+            key={`${displayedSource}-${retry}`}
             src={displayedSource}
+            onLoad={() => setImageError(false)}
+            onError={() => setImageError(true)}
             alt={alt}
             draggable={false}
-            className={`pointer-events-none absolute inset-0 h-full w-full object-contain ${activeLayer === "contrast" ? "contrast-150 grayscale-[0.15]" : ""}`}
+            className="pointer-events-none absolute inset-0 h-full w-full object-contain"
             style={imageStyle}
           />
         ) : (
@@ -92,12 +101,17 @@ export function ReferenceViewer({ originalSrc, contrastSrc, stencilSrc, alt, cla
             <p>Nenhuma referência vinculada a esta sessão.</p>
           </div>
         )}
-        {activeLayer !== "stencil" && stencilSrc && (
+        {imageError && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90 p-6 text-center text-sm text-white" role="alert"
+          onPointerDown={event => event.stopPropagation()}>
+          <p>Não foi possível carregar a referência.</p>
+          <Button type="button" variant="secondary" onClick={() => { setImageError(false); setRetry(value => value + 1); }}>Tentar novamente</Button>
+        </div>}
+        {activeLayer !== "stencil" && stencilSrc && transform.overlayOpacity > 0 && (
           <img
-            src={stencilSrc}
+            src={sessionImageSource(stencilSrc) ?? undefined}
             alt="Decalque sobreposto"
             draggable={false}
-            className="pointer-events-none absolute inset-0 h-full w-full object-contain mix-blend-screen"
+            className="pointer-events-none absolute inset-0 h-full w-full object-contain"
             style={{ ...imageStyle, opacity: transform.overlayOpacity }}
           />
         )}
@@ -113,7 +127,7 @@ export function ReferenceViewer({ originalSrc, contrastSrc, stencilSrc, alt, cla
           <div className="flex rounded-lg bg-white/10 p-0.5" role="group" aria-label="Camada visível">
             {([
               ["original", "Original", Boolean(originalSrc)],
-              ["contrast", "Contraste", Boolean(contrastSrc ?? originalSrc)],
+              ["contrast", "Contraste", Boolean(contrastSrc)],
               ["stencil", "Decalque", Boolean(stencilSrc)],
             ] as const).map(([layer, label, available]) => (
               <button

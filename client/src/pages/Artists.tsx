@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,9 @@ interface ArtistForm {
   name: string;
   email: string;
   phone: string;
+  whatsappOperationalEnabled: number;
+  manualClientReminderEnabled: number;
+  notifyClientActionsEnabled: number;
   instagram: string;
   specialty: string;
   bio: string;
@@ -49,6 +53,9 @@ const emptyForm: ArtistForm = {
   name: "",
   email: "",
   phone: "",
+  whatsappOperationalEnabled: 0,
+  manualClientReminderEnabled: 0,
+  notifyClientActionsEnabled: 1,
   instagram: "",
   specialty: "",
   bio: "",
@@ -109,6 +116,9 @@ export default function Artists() {
       name: artist.name,
       email: artist.email || "",
       phone: artist.phone || "",
+      whatsappOperationalEnabled: artist.whatsappOperationalEnabled ?? 0,
+      manualClientReminderEnabled: artist.manualClientReminderEnabled ?? 0,
+      notifyClientActionsEnabled: artist.notifyClientActionsEnabled ?? 1,
       instagram: artist.instagram || "",
       specialty: artist.specialty || "",
       bio: artist.bio || "",
@@ -130,6 +140,10 @@ export default function Artists() {
     e.preventDefault();
     if (!form.name.trim()) {
       toast.error("Nome do artista é obrigatório");
+      return;
+    }
+    if (form.whatsappOperationalEnabled === 1 && !form.phone.trim()) {
+      toast.error("Cadastre o telefone do artista para ativar os avisos pelo WhatsApp.");
       return;
     }
     const payload = {
@@ -350,7 +364,7 @@ export default function Artists() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="phone">Telefone</Label>
+                <Label htmlFor="phone">Telefone / WhatsApp do artista</Label>
                 <Input
                   id="phone"
                   placeholder="(11) 99999-9999"
@@ -378,6 +392,63 @@ export default function Artists() {
                     placeholder="usuario"
                     value={form.instagram.replace(/^@/, "")}
                     onChange={(e) => setForm({ ...form, instagram: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="sm:col-span-2 rounded-xl border p-4 space-y-4">
+                <div>
+                  <p className="font-medium text-sm">Assistente do Artista no WhatsApp</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    O WhatsApp oficial do estúdio pode avisar este artista sobre atendimentos e decisões dos clientes. O WhatsApp pessoal do artista não precisa ser Business.
+                  </p>
+                </div>
+
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="whatsapp-operational">Receber avisos operacionais no WhatsApp</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Ao ativar, o artista autoriza o estúdio a enviar lembretes relacionados aos próprios atendimentos para o número cadastrado acima.
+                    </p>
+                  </div>
+                  <Switch
+                    id="whatsapp-operational"
+                    checked={form.whatsappOperationalEnabled === 1}
+                    onCheckedChange={(checked) => setForm({
+                      ...form,
+                      whatsappOperationalEnabled: checked ? 1 : 0,
+                      manualClientReminderEnabled: checked ? form.manualClientReminderEnabled : 0,
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="manual-client-reminder">Enviar confirmação pelo WhatsApp pessoal do artista</Label>
+                    <p className="text-xs text-muted-foreground">
+                      O estúdio envia um aviso ao artista com um link. Ao tocar, abre a conversa do cliente com a mensagem e os links do Tatuei já preparados.
+                    </p>
+                  </div>
+                  <Switch
+                    id="manual-client-reminder"
+                    disabled={form.whatsappOperationalEnabled !== 1}
+                    checked={form.manualClientReminderEnabled === 1}
+                    onCheckedChange={(checked) => setForm({ ...form, manualClientReminderEnabled: checked ? 1 : 0 })}
+                  />
+                </div>
+
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="notify-client-actions">Avisar quando o cliente responder</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Confirmação, atraso, adiantamento e pedido de remarcação voltam para o Tatuei e geram uma atualização para o artista.
+                    </p>
+                  </div>
+                  <Switch
+                    id="notify-client-actions"
+                    disabled={form.whatsappOperationalEnabled !== 1}
+                    checked={form.notifyClientActionsEnabled === 1}
+                    onCheckedChange={(checked) => setForm({ ...form, notifyClientActionsEnabled: checked ? 1 : 0 })}
                   />
                 </div>
               </div>

@@ -1,3 +1,4 @@
+import NativeBot from "./pages/NativeBot";
 import LegacyArchive from './pages/LegacyArchive';
 import {useAuth} from './_core/hooks/useAuth';
 import {isInvitedArtist} from '@shared/artistInvitations';
@@ -5,6 +6,7 @@ import ArtistInventory from './components/ArtistInventory';
 import AcceptArtistInvitation from './pages/AcceptArtistInvitation';
 import IntelligentInbox from './pages/IntelligentInbox';
 import PublicArtistCard from './pages/PublicArtistCard';
+import PublicProposal from "./pages/PublicProposal";
 import CustomerFeedback from "./pages/CustomerFeedback";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -15,6 +17,8 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
 import Clients from "./pages/Clients";
+import ClientDuplicates from "./pages/ClientDuplicates";
+import Quotes from "./pages/Quotes";
 import NewClient from "./pages/NewClient";
 import ClientProfile from "./pages/ClientProfile";
 import Schedule from "./pages/Schedule";
@@ -55,9 +59,11 @@ function StockEntry(){
 function Router() {
   return (
     <Switch>
+      <Route path="/bot-tatuei" component={() => <DashboardLayout><NativeBot/></DashboardLayout>} />
       <Route path="/historicos-anteriores" component={() => <DashboardLayout><LegacyArchive/></DashboardLayout>} />
       <Route path="/intelligent-inbox" component={() => <DashboardLayout><IntelligentInbox/></DashboardLayout>} />
       <Route path="/artista/:token" component={PublicArtistCard} />
+      <Route path="/proposta/:token" component={PublicProposal} />
       <Route path="/feedback/:token" component={CustomerFeedback} />
       <Route path="/" component={() => (
         <DashboardLayout>
@@ -65,6 +71,12 @@ function Router() {
         </DashboardLayout>
       )} />
       
+      <Route path="/quotes" component={() => (
+        <DashboardLayout>
+          <Quotes />
+        </DashboardLayout>
+      )} />
+      <Route path="/clients/duplicates" component={() => <DashboardLayout><ClientDuplicates/></DashboardLayout>} />
       <Route path="/clients" component={() => (
         <DashboardLayout>
           <Clients />

@@ -1,3 +1,4 @@
+import {interpolateMessage} from '../../shared/messageTemplate';
 /**
  * Interface comum para todos os provedores de WhatsApp.
  * Para adicionar um novo provedor, implemente esta interface
@@ -37,5 +38,5 @@ export function interpolateTemplate(
   template: string,
   vars: Record<string, string | undefined>
 ): string {
-  return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] ?? `{${key}}`);
+  return interpolateMessage(template,vars);
 }

@@ -1,5 +1,6 @@
 import {INBOX_MODULES} from '../shared/intelligentInbox';
 export { careRules, careEvents, careSessions, careTags } from "./customerCareSchema";
+export { quoteProposals, quotePresets, artistQuoteBranding } from "./quoteProposalSchema";
 import { mysqlTable, mysqlSchema, AnyMySqlColumn, index, uniqueIndex, json, int, bigint, varchar, mysqlEnum, timestamp, datetime, text, tinyint, decimal } from "drizzle-orm/mysql-core"
 import { sql } from "drizzle-orm"
 
@@ -51,6 +52,7 @@ export const anamnesisRecords = mysqlTable("anamnesisRecords", {
 export const appointments = mysqlTable("appointments", {
 	id: int().autoincrement().notNull(),
 	clientId: int().notNull(),
+	quoteId: int("quote_id"), // Optional explicit link; never inferred from client/date.
 	calendarId: int(),
 	date: datetime({ mode: 'string' }).notNull(),
 	duration: int().notNull(),
@@ -306,7 +308,7 @@ export const userModulePermissions = mysqlTable("user_module_permissions", {
 	id: int().autoincrement().notNull(),
 	userId: int().notNull(),
 	studioId: int().notNull(),
-	module: mysqlEnum(['clients','appointments','stock','finance','anamnesis','pod','reports',...INBOX_MODULES]).notNull(),
+	module: mysqlEnum(['clients','appointments','stock','finance','anamnesis','pod','reports','quotes',...INBOX_MODULES]).notNull(),
 	canRead: tinyint().default(0).notNull(),
 	canWrite: tinyint().default(0).notNull(),
 	createdAt: timestamp({ mode: 'string' }).default('CURRENT_TIMESTAMP').notNull(),
@@ -756,6 +758,22 @@ export type CollaboratorRate = typeof collaboratorRates.$inferSelect;
 export type InsertCollaboratorRate = typeof collaboratorRates.$inferInsert;
 export type InsertPasswordResetToken = typeof passwordResetTokens.$inferInsert;
 
+// ── Preferências de comunicação operacional dos artistas ───────────────────
+
+export const artistNotificationSettings = mysqlTable("artist_notification_settings", {
+  id: int().autoincrement().notNull(),
+  studioId: int("studio_id").notNull(),
+  artistId: int("artist_id").notNull(),
+  whatsappOperationalEnabled: tinyint("whatsapp_operational_enabled").default(0).notNull(),
+  manualClientReminderEnabled: tinyint("manual_client_reminder_enabled").default(0).notNull(),
+  notifyClientActionsEnabled: tinyint("notify_client_actions_enabled").default(1).notNull(),
+  createdAt: timestamp("created_at", { mode: "string" }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { mode: "string" }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("artist_notification_settings_studio_artist_unique").on(table.studioId, table.artistId),
+  index("artist_notification_settings_enabled_idx").on(table.studioId, table.whatsappOperationalEnabled, table.manualClientReminderEnabled),
+]);
+
 // ── Central de Mensagens / WhatsApp Automático ─────────────────────────────
 
 export const whatsappIntegrations = mysqlTable("whatsapp_integrations", {
@@ -921,6 +939,8 @@ export const integrationSchedules = mysqlTable("integration_schedules", {
 ]);
 
 // Types
+export type ArtistNotificationSettings = typeof artistNotificationSettings.$inferSelect;
+export type InsertArtistNotificationSettings = typeof artistNotificationSettings.$inferInsert;
 export type WhatsappIntegration = typeof whatsappIntegrations.$inferSelect;
 export type InsertWhatsappIntegration = typeof whatsappIntegrations.$inferInsert;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
@@ -955,3 +975,5 @@ export const inventoryBatches = mysqlTable("inventory_batches", {
 export { inventoryLoans, inventoryLoanEvents, inventoryNotices, inventoryAlertPreferences } from "./inventoryWorkflowSchema";
 
 export { appointmentMaterialKits, appointmentKitOperations, inventoryMaterialRegistrations } from "./appointmentKitSchema";
+
+export * from "./sessionCockpitSchema";
