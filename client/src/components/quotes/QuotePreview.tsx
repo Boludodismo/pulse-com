@@ -1,4 +1,6 @@
 import type { QuoteEditorData, QuoteMedia } from "@shared/quoteProposal";
+import { useState } from "react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 export type QuotePreviewIdentity = {
   client: {
@@ -70,6 +72,7 @@ function MediaImage({
   watermarkUrl?: string | null;
   watermarkOpacity?: number;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (!media) {
     return (
       <div className={`quote-media-placeholder ${className}`}>
@@ -78,15 +81,13 @@ function MediaImage({
     );
   }
   return (
-    <div className={`quote-media-frame ${className}`}>
+    <><button type="button" className={`quote-media-frame ${className}`} onClick={() => setExpanded(true)} aria-label={`Ampliar: ${media.alt || "Imagem do projeto"}`} onContextMenu={e => { if (media.protect) e.preventDefault(); }}>
       <img
         className="quote-media-main"
         src={media.url}
         alt={media.alt || "Imagem do projeto"}
-        style={{
-          objectPosition: `${media.x}% ${media.y}%`,
-          transform: `scale(${media.zoom})`,
-        }}
+        loading="lazy"
+        draggable={false}
       />
       {watermarkUrl && (
         <img
@@ -96,7 +97,7 @@ function MediaImage({
           style={{ opacity: watermarkOpacity / 100 }}
         />
       )}
-    </div>
+    </button><Dialog open={expanded} onOpenChange={setExpanded}><DialogContent className="max-w-5xl"><DialogTitle>{media.alt || "Imagem do projeto"}</DialogTitle><img src={media.url} alt={media.alt || "Imagem do projeto"} draggable={false} onContextMenu={e => { if (media.protect) e.preventDefault(); }} className="max-h-[75dvh] w-full object-contain" />{media.protect && <p className="text-xs text-muted-foreground">Arte autoral identificada para esta proposta.</p>}</DialogContent></Dialog></>
   );
 }
 
@@ -123,7 +124,7 @@ function Footer({
         <span>Cliente: {identity.client.name || "—"}</span>
         <small>{formatDate(createdDate)}</small>
       </div>
-      <div className="quote-footer-page">{String(page).padStart(2, "0")} / 03</div>
+      <div className="quote-footer-page">{String(page).padStart(2, "0")}</div>
     </footer>
   );
 }
@@ -270,13 +271,30 @@ function ArtistPage(props: Props) {
   );
 }
 
+function ImageGallery({ images }: { images: QuoteMedia[] }) {
+  const labels = { reference: "Referência", current: "Tatuagem atual", artwork: "Arte desenvolvida", detail: "Detalhe" };
+  if (!images.length) return null;
+  return <div className="quote-extra-gallery">{images.map((media, i) => <figure key={media.key + i}><h4>{labels[media.kind]}</h4><MediaImage media={media} /><figcaption>{media.alt}{media.protect && <span> · Arte protegida</span>}</figcaption></figure>)}</div>;
+}
+
+function ProjectDetails({ project }: { project: QuoteEditorData["project"] }) {
+  return <div className="quote-details"><h3>DETALHES DO PROJETO</h3><ul>
+    {project.style && <li><b>Estilo:</b> {project.style}</li>}
+    {project.bodyRegion && <li><b>Região:</b> {project.bodyRegion}</li>}
+    {project.sizeText && <li><b>Tamanho:</b> {project.sizeText}</li>}
+    {project.durationText && <li><b>Tempo estimado:</b> {project.durationText}</li>}
+    <li><b>Sessões:</b> {project.sessions}</li>
+  </ul></div>;
+}
+
 function SummaryPage(props: Props) {
   const { editor, identity, quoteNumber, createdDate } = props;
   const logoUrl = activeLogo(editor, identity);
   const balance = Math.max(0, editor.pricing.totalAmount - editor.pricing.depositAmount);
-  const contactPhone = identity.studio.phone;
-  const contactInstagram = identity.studio.instagram;
-  const contactEmail = identity.studio.email;
+  const contact = editor.contactSource === "artist" ? identity.artist : identity.studio;
+  const contactPhone = contact.phone;
+  const contactInstagram = contact.instagram;
+  const contactEmail = contact.email;
 
   return (
     <section className="quote-page quote-summary-page" data-quote-page="3">
@@ -290,25 +308,27 @@ function SummaryPage(props: Props) {
 
       <h2>RESUMO DO PROJETO</h2>
       <div className="quote-accent-line" />
+      <h3 className="quote-project-title">{editor.project.title}</h3>
 
       <div className="quote-project-overview">
-        <div className="quote-project-image">
+        {editor.media.clientReference && <div className="quote-project-image">
           <h4>REFERÊNCIA DO CLIENTE</h4>
           <MediaImage media={editor.media.clientReference} />
-        </div>
-        <div className="quote-project-image">
+        </div>}
+        {editor.media.suggestedArtwork && <div className="quote-project-image">
           <h4 className="orange">ARTE SUGERIDA</h4>
           <MediaImage
             media={editor.media.suggestedArtwork}
             watermarkUrl={logoUrl}
             watermarkOpacity={editor.watermarkOpacity}
           />
-        </div>
-        <div className="quote-concept">
+        </div>}
+        {editor.project.concept && <div className="quote-concept">
           <h3>CONCEITO</h3>
           <p>{editor.project.concept || "Descreva o conceito artístico do projeto."}</p>
-        </div>
+        </div>}
       </div>
+      <ImageGallery images={editor.media.gallery} />
 
       <div className="quote-details">
         <h3>DETALHES DO PROJETO</h3>
@@ -320,6 +340,8 @@ function SummaryPage(props: Props) {
           <li><b>Sessões:</b> {editor.project.sessions}</li>
         </ul>
       </div>
+
+      {editor.additionalProjects.map((item, index) => <section key={item.id} className="quote-additional-project"><h3 className="quote-project-title">PROJETO {index + 2} · {item.project.title}</h3>{item.project.concept && <div className="quote-concept"><p>{item.project.concept}</p></div>}<ProjectDetails project={item.project} /><ImageGallery images={item.images} /></section>)}
 
       <div className="quote-investment">
         <h3>INVESTIMENTO</h3>
@@ -342,6 +364,8 @@ function SummaryPage(props: Props) {
         {editor.pricing.installmentText && (
           <div className="quote-installments">{editor.pricing.installmentText}</div>
         )}
+        {editor.pricing.showDeposit && editor.pricing.showDepositText && editor.pricing.depositText && <div className="quote-payment-info"><h3>SINAL E RESERVA</h3><p>{editor.pricing.depositText}</p></div>}
+        {editor.pricing.showInstallmentInfo && editor.pricing.installmentInfo && <div className="quote-payment-info"><h3>PARCELAMENTO NO CARTÃO</h3><p>{editor.pricing.installmentInfo}</p></div>}
         <div className="quote-total">
           <span>TOTAL DO INVESTIMENTO</span>
           <strong>{formatCurrency(editor.pricing.totalAmount)}</strong>
@@ -349,10 +373,10 @@ function SummaryPage(props: Props) {
       </div>
 
       <div className="quote-summary-bottom">
-        <div>
+        {editor.terms && <div>
           <h3>OBSERVAÇÕES</h3>
           <p>{editor.terms || "Condições e observações do orçamento."}</p>
-        </div>
+        </div>}
         <div className="quote-contact">
           <h3>CONTATO</h3>
           {contactPhone && <span>WhatsApp: {contactPhone}</span>}

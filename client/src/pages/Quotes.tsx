@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { ArrowLeft, CheckCircle2, Copy, ExternalLink, Eye, FileText, Image as ImageIcon, Plus, Save, Search, Share2, Trash2, Upload } from "lucide-react";
-import { DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload } from "@shared/quoteProposal";
+import { DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
 import QuotePreview, { type QuotePreviewIdentity } from "@/components/quotes/QuotePreview";
 import "@/styles/quotes.css";
 
@@ -60,19 +60,29 @@ function PresetPicker(props: {
 }) {
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [selected, setSelected] = useState<PresetOption | null>(null);
+  const [previous, setPrevious] = useState<string | null>(null);
+  function apply(append: boolean) {
+    if (!selected) return;
+    const next = append && props.value ? props.value + "\n\n" + selected.content : selected.content;
+    if (next.length > QUOTE_TEXT_LIMIT) { toast.error("O texto ultrapassaria 8.000 caracteres."); return; }
+    setPrevious(props.value); props.onChange(next);
+  }
   return <div className="space-y-3">
     <Label>{props.title}</Label>
     <div className="grid grid-cols-2 gap-2">
-      {props.options.slice(0, 4).map((item) => <button
+      {props.options.map((item) => <button
         key={(item.id || "d") + "-" + item.name}
-        type="button" disabled={props.disabled} onClick={() => props.onChange(item.content)}
-        className={"rounded-lg border p-3 text-left disabled:opacity-50 " + (props.value === item.content ? "border-primary bg-primary/10" : "border-border bg-card hover:border-primary/50")}
+        type="button" disabled={props.disabled} onClick={() => setSelected(item)} aria-pressed={selected === item}
+        className={"rounded-lg border p-3 text-left disabled:opacity-50 " + (selected === item ? "border-primary bg-primary/10" : "border-border bg-card hover:border-primary/50")}
       >
         <span className="text-[10px] uppercase tracking-wide text-primary">Modelo</span>
         <strong className="mt-1 block text-sm">{item.name}</strong>
       </button>)}
     </div>
-    <Textarea value={props.value} onChange={(e) => props.onChange(e.target.value)} rows={6} disabled={props.disabled} />
+    {selected && <div className="rounded-lg border border-primary/30 p-3 space-y-3"><p className="whitespace-pre-wrap text-sm">{selected.content}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => apply(false)}>Usar este texto</Button><Button type="button" variant="outline" onClick={() => apply(true)}>Acrescentar</Button></div></div>}
+    <Textarea aria-label={props.title} value={props.value} maxLength={QUOTE_TEXT_LIMIT} onChange={(e) => props.onChange(e.target.value)} rows={6} disabled={props.disabled} />
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{props.value.length.toLocaleString("pt-BR")} / 8.000 caracteres</span>{previous !== null && <Button type="button" variant="ghost" size="sm" onClick={() => { props.onChange(previous); setPrevious(null); }}>Desfazer aplicação</Button>}</div>
     <div className="flex flex-col gap-2 sm:flex-row">
       <Input value={name} onChange={(e) => setName(e.target.value)} disabled={props.disabled} placeholder="Nome para salvar este texto" />
       <Button type="button" variant="outline" disabled={props.disabled || saving || name.trim().length < 2 || props.value.trim().length < 2}
@@ -85,7 +95,7 @@ function PresetPicker(props: {
 
 function MediaAdjuster(props: {
   label: string; media: QuoteMedia | null; disabled?: boolean; uploading?: boolean;
-  onUpload: (file: File) => void; onChange: (patch: Partial<QuoteMedia>) => void;
+  onUpload: (file: File) => void; onChange: (patch: Partial<QuoteMedia>) => void; onRemove?: () => void;
 }) {
   return <div className="rounded-xl border bg-card/40 p-4 space-y-3">
     <div className="flex items-center justify-between gap-3">
@@ -110,7 +120,27 @@ function MediaAdjuster(props: {
       <label className="block text-xs">Zoom · {props.media.zoom.toFixed(1)}x
         <input className="mt-1 w-full accent-orange-500" type="range" min={1} max={3} step={0.1} value={props.media.zoom} disabled={props.disabled} onChange={(e) => props.onChange({ zoom: Number(e.target.value) })} />
       </label>
+      <Label>Legenda<Input value={props.media.alt} maxLength={200} onChange={(e) => props.onChange({ alt: e.target.value })} /></Label>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={props.media.protect} onChange={(e) => props.onChange({ protect: e.target.checked })} />Proteger arte com marca d’água</label>
+      <p className="text-xs text-muted-foreground">A cópia do cliente receberá a identificação do artista e do orçamento. Isso dificulta o reaproveitamento, mas não bloqueia prints.</p>
+      {props.onRemove && <Button type="button" variant="ghost" size="sm" onClick={props.onRemove}>Remover imagem</Button>}
     </>}
+  </div>;
+}
+
+function MediaCollection(props: { images: QuoteMedia[]; busy: boolean; onFiles: (files: File[]) => void; onChange: (images: QuoteMedia[]) => void }) {
+  const patch = (index: number, value: Partial<QuoteMedia>) => props.onChange(props.images.map((m, i) => i === index ? { ...m, ...value } : m));
+  const move = (index: number, step: number) => { const images = [...props.images]; [images[index], images[index + step]] = [images[index + step], images[index]]; props.onChange(images); };
+  return <div className="space-y-3">
+    <label className="block text-sm font-medium">Adicionar imagens · JPG, PNG ou WebP · até 6 MB cada<input aria-label="Adicionar imagens ao projeto" className="mt-2 block w-full text-sm" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={props.busy} onChange={(e) => { props.onFiles(Array.from(e.target.files || [])); e.currentTarget.value = ""; }} /></label>
+    <p className="text-xs text-muted-foreground">Até {QUOTE_IMAGE_LIMIT} imagens por orçamento. As legendas e a ordem aparecem no link do cliente.</p>
+    {props.images.map((media, index) => <div key={media.key} className="rounded-lg border p-3 space-y-2">
+      <img src={media.url} alt={media.alt} className="h-40 w-full rounded object-contain bg-black" />
+      <Label>Legenda<Input maxLength={200} value={media.alt} onChange={(e) => patch(index, { alt: e.target.value })} /></Label>
+      <label className="block text-sm">Tipo<select className="mt-1 w-full rounded-md border border-input bg-background p-2" value={media.kind} onChange={(e) => patch(index, { kind: e.target.value as QuoteMedia["kind"] })}>{[["reference", "Referência"], ["current", "Tatuagem atual"], ["artwork", "Arte desenvolvida"], ["detail", "Detalhe"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={media.protect} onChange={(e) => patch(index, { protect: e.target.checked })} />Proteger arte com marca d’água</label>
+      <div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" disabled={index === 0} onClick={() => move(index, -1)}>Subir</Button><Button type="button" size="sm" variant="outline" disabled={index === props.images.length - 1} onClick={() => move(index, 1)}>Descer</Button><Button type="button" size="sm" variant="ghost" onClick={() => props.onChange(props.images.filter((_, i) => i !== index))}>Remover</Button></div>
+    </div>)}
   </div>;
 }
 
@@ -178,7 +208,9 @@ export default function Quotes() {
   const [artistId, setArtistId] = useState(user?.artistId || 0);
   const [editor, setEditor] = useState<QuoteEditorData>(() => buildEmptyQuoteEditorData());
   const [snapshot, setSnapshot] = useState<QuoteStoredPayload | null>(null);
-  const [uploadingSlot, setUploadingSlot] = useState<"clientReference" | "suggestedArtwork" | null>(null);
+  const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const [failedUploads, setFailedUploads] = useState<{ file: File; projectId: string | null }[]>([]);
   const brandingAppliedRef = useRef<number | null>(null);
 
   const quotesQuery = trpc.quotes.list.useQuery();
@@ -188,6 +220,8 @@ export default function Quotes() {
   const brandingQuery = trpc.quotes.branding.get.useQuery({ artistId: queryArtistId }, { enabled: artistId > 0 });
   const conceptPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "concept" }, { enabled: artistId > 0 });
   const termsPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "terms" }, { enabled: artistId > 0 });
+  const depositPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "deposit" }, { enabled: artistId > 0 });
+  const installmentPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "installment" }, { enabled: artistId > 0 });
 
   const createMutation = trpc.quotes.create.useMutation();
   const updateMutation = trpc.quotes.update.useMutation();
@@ -227,17 +261,19 @@ export default function Quotes() {
         name: currentArtist?.name || user?.name || "", bio: currentArtist?.bio || null, specialty: currentArtist?.specialty || null,
         photoUrl: currentArtist?.photoUrl || null, phone: currentArtist?.phone || null, email: currentArtist?.email || null, instagram: currentArtist?.instagram || null,
       },
-      studio: { name: brandingQuery.data?.studioName || user?.studioName || null, logoUrl: brandingQuery.data?.studioLogoUrl || null },
+      studio: { name: brandingQuery.data?.studioName || user?.studioName || null, logoUrl: brandingQuery.data?.studioLogoUrl || null, phone: brandingQuery.data?.studioPhone || null },
       personalLogoUrl: brandingQuery.data?.personalLogoUrl || null,
     };
   }, [snapshot, currentClient, currentArtist, user?.name, user?.studioName, brandingQuery.data]);
 
   function combinePresets(saved: Array<{ id: number; name: string; content: string }> | undefined, defaults: readonly PresetOption[]) {
     const all: PresetOption[] = [...(saved || []).map((p) => ({ id: p.id, name: p.name, content: p.content })), ...defaults.map((p) => ({ name: p.name, content: p.content }))];
-    return all.filter((p, i) => all.findIndex((x) => x.name === p.name) === i).slice(0, 4);
+    return all.filter((p, i) => all.findIndex((x) => x.name === p.name) === i);
   }
   const conceptOptions = useMemo(() => combinePresets(conceptPresetsQuery.data, DEFAULT_CONCEPT_PRESETS), [conceptPresetsQuery.data]);
   const termsOptions = useMemo(() => combinePresets(termsPresetsQuery.data, DEFAULT_TERMS_PRESETS), [termsPresetsQuery.data]);
+  const depositOptions = useMemo(() => combinePresets(depositPresetsQuery.data, DEFAULT_DEPOSIT_PRESETS), [depositPresetsQuery.data]);
+  const installmentOptions = useMemo(() => combinePresets(installmentPresetsQuery.data, DEFAULT_INSTALLMENT_PRESETS), [installmentPresetsQuery.data]);
 
   const filteredQuotes = (quotesQuery.data || []).filter((q) => {
     const text = [q.quoteNumber, q.parsedPayload?.client.name, q.parsedPayload?.artist.name, q.parsedPayload?.editor.project.title].filter(Boolean).join(" ").toLowerCase();
@@ -254,7 +290,7 @@ export default function Quotes() {
   function resetEditor() {
     const preferred = user?.artistId && artists.some((a) => a.id === user.artistId) ? user.artistId : (artists[0]?.id || 0);
     setQuoteId(null); setQuoteNumber("RASCUNHO"); setQuoteStatus("draft"); setPublicToken(null); setCreatedDate(isoToday()); setValidUntil(addDaysIso(15));
-    setClientId(0); setArtistId(preferred); setEditor(buildEmptyQuoteEditorData()); setSnapshot(null); setClientFilter(""); setMobileTab("edit");
+    setClientId(0); setArtistId(preferred); setEditor(buildEmptyQuoteEditorData()); setSnapshot(null); setClientFilter(""); setMobileTab("edit"); setFailedUploads([]);
     brandingAppliedRef.current = null; setMode("editor");
   }
 
@@ -262,10 +298,11 @@ export default function Quotes() {
     if (!row.parsedPayload) { toast.error("Não foi possível ler este orçamento."); return; }
     setQuoteId(row.id); setQuoteNumber(row.quoteNumber); setQuoteStatus(row.status); setPublicToken(row.publicToken || null); setCreatedDate(row.createdDate.slice(0, 10));
     setValidUntil(row.validUntil.slice(0, 10)); setClientId(row.clientId); setArtistId(row.artistId); setEditor(row.parsedPayload.editor);
-    setSnapshot(row.parsedPayload); setMobileTab("edit"); setMode("editor");
+    setSnapshot(row.parsedPayload); setFailedUploads([]); setMobileTab("edit"); setMode("editor");
   }
 
   async function saveDraft() {
+    if (uploadingSlot) { toast.error("Aguarde o envio das imagens."); return null; }
     if (!clientId) { toast.error("Selecione o cliente."); return null; }
     if (!artistId) { toast.error("Selecione o artista responsável."); return null; }
     try {
@@ -293,12 +330,13 @@ export default function Quotes() {
 
   async function uploadMedia(slot: "clientReference" | "suggestedArtwork", file: File) {
     if (!artistId) { toast.error("Selecione o artista."); return; }
+    if (!editor.media[slot] && allQuoteMedia(editor).length >= QUOTE_IMAGE_LIMIT) { toast.error(`Limite de ${QUOTE_IMAGE_LIMIT} imagens por orçamento.`); return; }
     if (file.size > 6 * 1024 * 1024) { toast.error("A imagem deve ter no máximo 6 MB."); return; }
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) { toast.error("Use JPG, PNG ou WebP."); return; }
     setUploadingSlot(slot);
     try {
       const result = await uploadMediaMutation.mutateAsync({ artistId, fileName: file.name, imageBase64: await fileToDataUrl(file), mimeType: file.type as "image/jpeg" | "image/png" | "image/webp" });
-      setEditor((v) => ({ ...v, media: { ...v.media, [slot]: result } })); setSnapshot(null); toast.success("Imagem adicionada.");
+      setEditor((v) => ({ ...v, media: { ...v.media, [slot]: { ...result, protect: slot === "suggestedArtwork", kind: slot === "suggestedArtwork" ? "artwork" : "reference" } } })); setSnapshot(null); toast.success("Imagem adicionada.");
     } catch (e) { toast.error(e instanceof Error ? e.message : "Falha no envio."); } finally { setUploadingSlot(null); }
   }
 
@@ -310,7 +348,28 @@ export default function Quotes() {
     setSnapshot(null);
   }
 
-  async function savePreset(category: "concept" | "terms", name: string, value: string) {
+  async function uploadImages(files: File[], projectId: string | null) {
+    if (!artistId || uploadingSlot || !files.length) return;
+    if (allQuoteMedia(editor).length + files.length > QUOTE_IMAGE_LIMIT) { toast.error(`Limite de ${QUOTE_IMAGE_LIMIT} imagens por orçamento.`); return; }
+    setUploadingSlot(projectId || "gallery");
+    setFailedUploads((v) => v.filter(x => !files.includes(x.file)));
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      setUploadProgress(`Enviando imagem ${index + 1} de ${files.length}…`);
+      try {
+        if (file.size > 6 * 1024 * 1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("Use JPG, PNG ou WebP com até 6 MB.");
+        const media = await uploadMediaMutation.mutateAsync({ artistId, fileName: file.name, imageBase64: await fileToDataUrl(file), mimeType: file.type as "image/jpeg" | "image/png" | "image/webp" });
+        setEditor((v) => projectId ? { ...v, additionalProjects: v.additionalProjects.map(p => p.id === projectId ? { ...p, images: [...p.images, media] } : p) } : { ...v, media: { ...v.media, gallery: [...v.media.gallery, media] } });
+      } catch (error) { setFailedUploads(v => [...v, { file, projectId }]); toast.error(`${file.name}: ${error instanceof Error ? error.message : "Falha no envio."}`); }
+    }
+    setUploadingSlot(null); setUploadProgress("");
+  }
+
+  function updateAdditionalProject(id: string, patch: Partial<QuoteEditorData["project"]>) {
+    setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === id ? { ...p, project: { ...p.project, ...patch } } : p) }));
+  }
+
+  async function savePreset(category: QuotePresetCategory, name: string, value: string) {
     if (!artistId) return;
     try { await savePresetMutation.mutateAsync({ artistId, category, name, content: value, scope: "artist" }); await utils.quotes.presets.list.invalidate(); toast.success("Modelo salvo."); }
     catch (e) { toast.error(e instanceof Error ? e.message : "Não foi possível salvar o modelo."); }
@@ -390,14 +449,14 @@ export default function Quotes() {
     return (
       <div className="quote-editor-actions">
         {location === "top" && quoteStatus === "draft" && quoteId && (
-          <Button variant="outline" onClick={removeDraft}>
+          <Button variant="outline" disabled={Boolean(uploadingSlot) || finalizeMutation.isPending} onClick={removeDraft}>
             <Trash2 className="mr-2 h-4 w-4" />
             Excluir
           </Button>
         )}
 
         {quoteStatus === "draft" && (
-          <Button variant="outline" onClick={() => void saveDraft()} disabled={saving}>
+          <Button variant="outline" onClick={() => void saveDraft()} disabled={saving || Boolean(uploadingSlot) || finalizeMutation.isPending}>
             <Save className="mr-2 h-4 w-4" />
             Salvar
           </Button>
@@ -409,7 +468,7 @@ export default function Quotes() {
         </Button>
 
         {quoteStatus === "draft" && (
-          <Button onClick={() => void finalizeQuote()} disabled={saving || finalizeMutation.isPending}>
+          <Button onClick={() => void finalizeQuote()} disabled={saving || Boolean(uploadingSlot) || finalizeMutation.isPending}>
             <CheckCircle2 className="mr-2 h-4 w-4" />
             Finalizar e criar link
           </Button>
@@ -472,8 +531,8 @@ export default function Quotes() {
   return <>
     <div className="quote-screen-only space-y-4">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex items-center gap-3"><Button variant="outline" size="icon" onClick={() => setMode("list")}><ArrowLeft className="h-4 w-4" /></Button>
-          <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-bold">Editor de orçamento</h1><span className={"rounded-full border px-2 py-1 text-[11px] " + statusClass(quoteStatus)}>{STATUS_LABELS[quoteStatus] || quoteStatus}</span></div><p className="mt-1 text-sm text-muted-foreground">{quoteNumber} · vertical 9:16 · smartphone + link</p></div>
+        <div className="flex items-center gap-3"><Button variant="outline" size="icon" disabled={Boolean(uploadingSlot) || finalizeMutation.isPending} onClick={() => setMode("list")}><ArrowLeft className="h-4 w-4" /></Button>
+          <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-bold">Editor de orçamento</h1><span className={"rounded-full border px-2 py-1 text-[11px] " + statusClass(quoteStatus)}>{STATUS_LABELS[quoteStatus] || quoteStatus}</span></div><p className="mt-1 text-sm text-muted-foreground">{quoteNumber} · link responsivo · conteúdo adaptável</p></div>
         </div>
         {renderActionButtons("top")}
       </div>
@@ -482,7 +541,7 @@ export default function Quotes() {
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
         {editorVisible && <div className="min-w-0 space-y-5">
-          <fieldset disabled={locked} className="min-w-0 space-y-5 disabled:opacity-80">
+          <fieldset disabled={locked || saving || Boolean(uploadingSlot) || finalizeMutation.isPending} className="min-w-0 space-y-5 disabled:opacity-80">
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <h2 className="font-semibold">1. Cliente e identificação</h2>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -510,16 +569,28 @@ export default function Quotes() {
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <div className="flex items-center gap-2"><ImageIcon className="h-4 w-4 text-primary" /><h2 className="font-semibold">3. Imagens e capa</h2></div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <MediaAdjuster label="Referência do cliente" media={editor.media.clientReference} uploading={uploadingSlot === "clientReference"} onUpload={(f) => void uploadMedia("clientReference", f)} onChange={(p) => updateMedia("clientReference", p)} />
-              <MediaAdjuster label="Arte sugerida" media={editor.media.suggestedArtwork} uploading={uploadingSlot === "suggestedArtwork"} onUpload={(f) => void uploadMedia("suggestedArtwork", f)} onChange={(p) => updateMedia("suggestedArtwork", p)} />
+              <MediaAdjuster label="Referência do cliente" media={editor.media.clientReference} uploading={uploadingSlot === "clientReference"} onUpload={(f) => void uploadMedia("clientReference", f)} onChange={(p) => updateMedia("clientReference", p)} onRemove={() => setEditor(v => ({ ...v, media: { ...v.media, clientReference: null } }))} />
+              <MediaAdjuster label="Arte sugerida" media={editor.media.suggestedArtwork} uploading={uploadingSlot === "suggestedArtwork"} onUpload={(f) => void uploadMedia("suggestedArtwork", f)} onChange={(p) => updateMedia("suggestedArtwork", p)} onRemove={() => setEditor(v => ({ ...v, media: { ...v.media, suggestedArtwork: null } }))} />
             </div>
             <div className="space-y-2"><Label>Imagem principal da capa</Label><div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "reference" } }))} className={"rounded-lg border p-3 text-sm " + (editor.media.coverSource === "reference" ? "border-primary bg-primary/10" : "border-border")}>Referência</button>
               <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "suggested" } }))} className={"rounded-lg border p-3 text-sm " + (editor.media.coverSource === "suggested" ? "border-primary bg-primary/10" : "border-border")}>Arte sugerida</button>
             </div></div>
+            <details className="rounded-lg border p-3" open={editor.media.gallery.length > 0 || undefined}><summary className="cursor-pointer text-sm font-medium">Mais imagens deste projeto · {editor.media.gallery.length}</summary><div className="mt-3"><MediaCollection images={editor.media.gallery} busy={Boolean(uploadingSlot)} onFiles={(files) => void uploadImages(files, null)} onChange={(gallery) => setEditor(v => ({ ...v, media: { ...v.media, gallery } }))} /></div></details>
           </section>
 
           <section className="rounded-xl border bg-card p-4 sm:p-5"><PresetPicker title="4. Conceito artístico" value={editor.project.concept} options={conceptOptions} onChange={(concept) => setEditor((v) => ({ ...v, project: { ...v.project, concept } }))} onSave={(name) => savePreset("concept", name, editor.project.concept)} /></section>
+
+          <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Outros projetos no mesmo orçamento</h2><Button type="button" variant="outline" disabled={editor.additionalProjects.length >= 19} onClick={() => setEditor(v => ({ ...v, additionalProjects: [...v.additionalProjects, { id: crypto.randomUUID(), project: quoteProjectSchema.parse({ title: "Novo projeto" }), images: [] }] }))}><Plus className="mr-2 h-4 w-4" />Adicionar projeto</Button></div>
+            <p className="text-xs text-muted-foreground">Os projetos abaixo fazem parte do valor total informado em Investimento.</p>
+            {editor.additionalProjects.map((item, index) => <details key={item.id} className="rounded-lg border p-3" open><summary className="cursor-pointer font-medium">Projeto {index + 2} · {item.project.title}</summary><div className="mt-4 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">{([["title", "Título"], ["style", "Estilo"], ["bodyRegion", "Região"], ["sizeText", "Tamanho"], ["durationText", "Tempo estimado"]] as const).map(([key, label]) => <Label key={key}>{label}<Input value={item.project[key]} maxLength={key === "title" ? 160 : 120} onChange={e => updateAdditionalProject(item.id, { [key]: e.target.value })} /></Label>)}<Label>Sessões<Input type="number" min={1} max={30} value={item.project.sessions} onChange={e => updateAdditionalProject(item.id, { sessions: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} /></Label></div>
+              <PresetPicker title="Descrição da tatuagem" value={item.project.concept} options={conceptOptions} onChange={concept => updateAdditionalProject(item.id, { concept })} onSave={name => savePreset("concept", name, item.project.concept)} />
+              <MediaCollection images={item.images} busy={Boolean(uploadingSlot)} onFiles={files => void uploadImages(files, item.id)} onChange={images => setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === item.id ? { ...p, images } : p) }))} />
+              <Button type="button" variant="ghost" onClick={() => { setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.filter(p => p.id !== item.id) })); setFailedUploads(v => v.filter(f => f.projectId !== item.id)); }}>Remover projeto</Button>
+            </div></details>)}
+          </section>
 
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <h2 className="font-semibold">5. Investimento</h2>
@@ -546,6 +617,13 @@ export default function Quotes() {
             </div>
           </section>
 
+          <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-5">
+            <details><summary className="cursor-pointer font-medium">Informativo sobre o sinal</summary><div className="mt-4 space-y-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showDepositText} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, showDepositText: e.target.checked } }))} />Exibir informativo do sinal</label><PresetPicker title="Escolha o texto sobre o sinal" value={editor.pricing.depositText} options={depositOptions} onChange={depositText => setEditor(v => ({ ...v, pricing: { ...v.pricing, depositText } }))} onSave={name => savePreset("deposit", name, editor.pricing.depositText)} /></div></details>
+            <details><summary className="cursor-pointer font-medium">Informativo sobre taxas do cartão</summary><div className="mt-4 space-y-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showInstallmentInfo} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, showInstallmentInfo: e.target.checked } }))} />Exibir informativo do parcelamento</label><PresetPicker title="Escolha o texto sobre o cartão" value={editor.pricing.installmentInfo} options={installmentOptions} onChange={installmentInfo => setEditor(v => ({ ...v, pricing: { ...v.pricing, installmentInfo } }))} onSave={name => savePreset("installment", name, editor.pricing.installmentInfo)} /></div></details>
+            <p className="text-xs text-muted-foreground">Os textos são informativos. Não alteram o sinal, o valor total nem calculam taxas.</p>
+            <Label>Contato no link do cliente<select className="mt-2 block w-full rounded-md border border-input bg-background p-2 text-sm" value={editor.contactSource} onChange={e => setEditor(v => ({ ...v, contactSource: e.target.value as "artist" | "studio" }))}><option value="studio">Estúdio</option><option value="artist">Artista responsável pelo orçamento</option></select></Label>
+          </section>
+
           <section className="rounded-xl border bg-card p-4 sm:p-5"><PresetPicker title="6. Condições e observações" value={editor.terms} options={termsOptions} onChange={(terms) => setEditor((v) => ({ ...v, terms }))} onSave={(name) => savePreset("terms", name, editor.terms)} /></section>
 
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
@@ -559,6 +637,8 @@ export default function Quotes() {
             <Button type="button" variant="outline" onClick={() => void saveBranding()}><Save className="mr-2 h-4 w-4" />Salvar identidade como padrão</Button>
           </section>
           </fieldset>
+          {uploadProgress && <p role="status" className="text-sm text-primary">{uploadProgress}</p>}
+          {failedUploads.length > 0 && <div role="alert" className="rounded-lg border border-destructive/40 p-3 space-y-2"><p className="text-sm">Algumas imagens não foram enviadas:</p>{failedUploads.map((failed, i) => <div key={i} className="flex flex-wrap items-center gap-2 text-sm"><span>{failed.file.name}</span><Button type="button" size="sm" variant="outline" disabled={Boolean(uploadingSlot) || locked} onClick={() => void uploadImages([failed.file], failed.projectId)}>Tentar novamente</Button><Button type="button" size="sm" variant="ghost" onClick={() => setFailedUploads(v => v.filter(x => x !== failed))}>Dispensar</Button></div>)}</div>}
 
           <section className="quote-editor-bottom-actions">
             <div className="quote-editor-bottom-actions-title">Ações da proposta</div>

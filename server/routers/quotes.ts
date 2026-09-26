@@ -5,6 +5,7 @@ import { z } from "zod";
 import { publicProcedure, router, tenantProcedure } from "../_core/trpc";
 import * as dbHelpers from "../db";
 import { storagePut } from "../storage";
+import { prepareProtectedQuoteArtwork, publicQuotePayload } from "../quoteArtworkProtection";
 import { artistQuoteBranding, quotePresets, quoteProposals } from "../../drizzle/quoteProposalSchema";
 import { artistCards } from "../../drizzle/studioRelationsSchema";
 import {
@@ -12,6 +13,8 @@ import {
   parseQuotePayload,
   quoteEditorDataSchema,
   quoteStoredPayloadSchema,
+  quoteMediaSchema,
+  QUOTE_TEXT_LIMIT,
   type QuoteEditorData,
 } from "../../shared/quoteProposal";
 
@@ -271,11 +274,14 @@ export const quotesRouter = router({
       }
       const db = await connection();
       const publicToken = current.publicToken || randomBytes(24).toString("hex");
-      await db.update(quoteProposals).set({
+      const protectedPayload = await prepareProtectedQuoteArtwork(payload, ctx.studioId, current.artistId, current.quoteNumber);
+      const result = await db.update(quoteProposals).set({
         status: "finalized",
         publicToken,
+        payload: JSON.stringify(protectedPayload),
         finalizedAt: nowSql(),
-      }).where(and(eq(quoteProposals.id, current.id), eq(quoteProposals.studioId, ctx.studioId)));
+      }).where(and(eq(quoteProposals.id, current.id), eq(quoteProposals.studioId, ctx.studioId), eq(quoteProposals.status, "draft"), eq(quoteProposals.payload, current.payload)));
+      if (!result[0].affectedRows) throw new TRPCError({ code: "CONFLICT", message: "Este orçamento mudou durante a finalização. Reabra o rascunho e tente novamente." });
       return { ok: true, status: "finalized" as const, publicToken, publicPath: `/proposta/${publicToken}` };
     }),
 
@@ -338,14 +344,14 @@ export const quotesRouter = router({
       const key = `quotes/${ctx.studioId}/${input.artistId}/media/${randomUUID()}.${ext}`;
       const uploaded = await storagePut(key, buffer, input.mimeType);
       if (!uploaded.url) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "O armazenamento de imagens está indisponível." });
-      return {
+      return quoteMediaSchema.parse({
         key,
         url: uploaded.url,
         alt: input.fileName.replace(/\.[^.]+$/, ""),
         x: 50,
         y: 50,
         zoom: 1,
-      };
+      });
     }),
 
   public: router({
@@ -371,7 +377,8 @@ export const quotesRouter = router({
           acceptedAt: row.acceptedAt,
           expired,
           artistCardPath: card ? `/artista/${card.token}` : null,
-          payload,
+          quoteNumber: row.quoteNumber,
+          payload: publicQuotePayload(payload),
         };
       }),
 
@@ -429,7 +436,7 @@ export const quotesRouter = router({
         artistId: idSchema,
         category: z.enum(QUOTE_PRESET_CATEGORIES),
         name: z.string().trim().min(2).max(120),
-        content: z.string().trim().min(2).max(1800),
+        content: z.string().trim().min(2).max(QUOTE_TEXT_LIMIT),
         scope: z.enum(["artist", "studio"]).default("artist"),
       }))
       .mutation(async ({ ctx, input }) => {
@@ -467,6 +474,7 @@ export const quotesRouter = router({
           watermarkOpacity: Math.min(100, Math.max(20, branding?.watermarkOpacity ?? 70)),
           studioLogoUrl: settings?.logoUrl ?? null,
           studioName: settings?.studioName ?? null,
+          studioPhone: settings?.phone ?? null,
         };
       }),
 
