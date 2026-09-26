@@ -25,6 +25,7 @@ type Cup="P"|"M"|"G"|"GG";
 type Ingredient={materialId:string;drops:number};
 type Sample={source?:SampleSource|null;id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];lab:[number,number,number];xPct:number;yPct:number};
 type ReferenceDraft=ColorValue&{xPct:number;yPct:number;source:SampleSource;requestId:string};
+type SamplerFeedback={x:number;y:number;hex:string};
 type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
 type Sheet="preparation"|"materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|"appearance"|null;
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
@@ -141,7 +142,7 @@ const [samplingError,setSamplingError]=useState<string|null>(null);
 const sampleSaving=useRef(false);
 const [layerOrder,setLayerOrder]=useState<string[]|null>(null);
 const [layerBusy,setLayerBusy]=useState(false),layerSaving=useRef(false);
-const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null);
+const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null),[samplerFeedback,setSamplerFeedback]=useState<SamplerFeedback|null>(null);
 const [directQuantity,setDirectQuantity]=useState("1");
 const [sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null>(null),[note,setNote]=useState("");
 const [recipeDropsPerMl,setRecipeDropsPerMl]=useState(SESSION_DROPS_PER_ML);
@@ -181,7 +182,7 @@ useEffect(()=>{
   const update=()=>setStageSize({width:node.clientWidth,height:node.clientHeight});
   const observer=new ResizeObserver(update);observer.observe(node);update();return()=>observer.disconnect();
 },[proc?.id]);
-useEffect(()=>{setReferenceDraft(null);setSamplingError(null)},[selectedLayerKey,selectedImageKey,selectedImageUrl,selectedVisible]);
+useEffect(()=>{setReferenceDraft(null);setSamplerFeedback(null);setSamplingError(null)},[selectedLayerKey,selectedImageKey,selectedImageUrl,selectedVisible]);
 function selectLayer(key:string){setSelectedLayerKey(key);setReferenceDraft(null);setSamplingError(null)}
 function samplePosition(s:Sample){
   return s.source&&stageSize.width&&stageSize.height?imageSampleMarker(s.source.imageXPct,s.source.imageYPct,s.source.width,s.source.height,stageSize.width,stageSize.height):s;
@@ -318,9 +319,10 @@ async function redoStock(){
 function readSelectedLayerAt(cx:number,cy:number){
   if(sampleSaving.current)return null;
   const s=stage.current,im=layerImages.current.get(selectedLayerKey);
-  if(!s||!im||!im.complete||!im.naturalWidth||!canSampleSelected||samples.length>=30){setReferenceDraft(null);return null}
-  const point=imageSamplePoint({x:cx,y:cy},s.getBoundingClientRect(),{width:im.naturalWidth,height:im.naturalHeight},vr.current);
-  if(!point){setReferenceDraft(null);setSamplingError(null);return null}
+  if(!s||!im||!im.complete||!im.naturalWidth||!canSampleSelected||samples.length>=30){setReferenceDraft(null);setSamplerFeedback(null);return null}
+  const rect=s.getBoundingClientRect();
+  const point=imageSamplePoint({x:cx,y:cy},rect,{width:im.naturalWidth,height:im.naturalHeight},vr.current);
+  if(!point){setReferenceDraft(null);setSamplerFeedback(null);setSamplingError(null);return null}
   const region=samplePixelRegion(point.pixelX,point.pixelY,im.naturalWidth,im.naturalHeight);
   const canvas=document.createElement("canvas");canvas.width=region.width;canvas.height=region.height;
   const context=canvas.getContext("2d",{willReadFrequently:true});if(!context)return null;
@@ -328,18 +330,18 @@ function readSelectedLayerAt(cx:number,cy:number){
     context.imageSmoothingEnabled=false;
     context.drawImage(im,region.left,region.top,region.width,region.height,0,0,region.width,region.height);
     const rgb=averageSamplePixels(context.getImageData(0,0,region.width,region.height).data);
-    if(!rgb){setReferenceDraft(null);setSamplingError("Este ponto é transparente. Escolha uma área com cor.");return null}
+    if(!rgb){setReferenceDraft(null);setSamplerFeedback(null);setSamplingError("Este ponto é transparente. Escolha uma área com cor.");return null}
     const [R,G,B]=rgb,CMYK=cmyk(R,G,B),LAB=lab(R,G,B);
     const source:SampleSource={layerKey:selectedLayerKey,layerName:String(selectedLayer.name),imageKey:selectedImageKey,imageXPct:point.imageXPct,imageYPct:point.imageYPct,width:im.naturalWidth,height:im.naturalHeight};
     const draft:ReferenceDraft={hex:hex(R,G,B),red:R,green:G,blue:B,cyan:CMYK[0],magenta:CMYK[1],yellow:CMYK[2],black:CMYK[3],labL:LAB[0],labA:LAB[1],labB:LAB[2],xPct:point.xPct,yPct:point.yPct,source,requestId:crypto.randomUUID()};
-    setReferenceDraft(draft);setSamplingError(null);return draft;
-  }catch{setReferenceDraft(null);setSamplingError("Não foi possível ler os pixels desta imagem. Reenvie o arquivo para esta camada.");return null}
+    setReferenceDraft(draft);setSamplerFeedback({x:cx-rect.left,y:cy-rect.top,hex:draft.hex});setSamplingError(null);return draft;
+  }catch{setReferenceDraft(null);setSamplerFeedback(null);setSamplingError("Não foi possível ler os pixels desta imagem. Reenvie o arquivo para esta camada.");return null}
 }
-function stopSampling(){setSampler(false);setReferenceDraft(null);setSamplingError(null)}
+function stopSampling(){setSampler(false);setReferenceDraft(null);setSamplerFeedback(null);setSamplingError(null)}
 function startSampling(){
   if(samples.length>=30){toast.info("Limite de 30 amostras atingido.");return;}
   if(!canSampleSelected){toast.info("Selecione uma camada de imagem visível para coletar cores.");return;}
-  setMode("color");setReferenceDraft(null);setSamplingError(null);setSampler(true);
+  setMode("color");setReferenceDraft(null);setSamplerFeedback(null);setSamplingError(null);setSampler(true);
 }
 function toggleSampling(){if(sampler)stopSampling();else startSampling();}
 async function confirmReferenceSample(){
@@ -381,10 +383,27 @@ function up(e:RP<HTMLDivElement>){
   if(!result.handled)return;
   e.preventDefault();e.stopPropagation();
   applyImageGesture(result);
+  if(sampler)setSamplerFeedback(null);
   // Remove the pointer first: releasePointerCapture can also send lostpointercapture.
   if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
 }
 function wheel(e:RW<HTMLDivElement>){if(isControl(e.target))return;e.preventDefault();if(imageGesture.current.mode==="sample"||imageGesture.current.nativeActive)return;if(sampler&&!e.ctrlKey)return;vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
+function dismissOutside(target:EventTarget|null){
+  if(!(target instanceof Element))return;
+  if(target.closest(".cockpit-sheet,.appearance-sheet,.temp-sampler-panel"))return;
+  if(sheet)setSheet(null);
+  if(!target.closest(".cockpit-dock.left")){if(!lmin)setLmin(true);if(lex)setLex(false)}
+  if(!target.closest(".cockpit-dock.right")){if(!rmin)setRmin(true);if(rex)setRex(false)}
+}
+useEffect(()=>{
+  const key=(event:KeyboardEvent)=>{
+    if(event.key!=="Escape")return;
+    if(sheet){setSheet(null);return}
+    if(!lmin||!rmin){setLmin(true);setRmin(true);setLex(false);setRex(false)}
+  };
+  document.addEventListener("keydown",key);
+  return()=>document.removeEventListener("keydown",key);
+},[sheet,lmin,rmin]);
 useEffect(()=>{
   const el=stage.current;if(!el)return;
   // Native GestureEvents remain available for Safari trackpads, without competing with touch pointers.
@@ -457,7 +476,7 @@ const stackLayers=visualLayerStack(visualLayers.length?visualLayers:[
 const panelLayers=layerOrder?layerOrder.map(key=>stackLayers.find(layer=>layer.layerKey===key)).filter(Boolean):stackLayers;
 const orderedLayers=[...panelLayers].reverse();
 
-return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opacity,"--tools-size":toolAppearance.size,"--palette-alpha":paletteAppearance.opacity,"--palette-size":paletteAppearance.size} as CSSProperties} ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
+return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opacity,"--tools-size":toolAppearance.size,"--palette-alpha":paletteAppearance.opacity,"--palette-size":paletteAppearance.size} as CSSProperties} ref={cockpitRoot} onPointerDownCapture={event=>dismissOutside(event.target)} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
 <header className="cockpit-top">
 <button type="button" aria-label="Voltar à sessão" className="cockpit-icon" onClick={props.onClose}><ArrowLeft size={18}/></button>
 <button className="cockpit-icon" onClick={vundo} disabled={!vu.length} title="Desfazer imagem"><Undo2 size={18}/></button><button className="cockpit-icon" onClick={vred} disabled={!vredo.length} title="Refazer imagem"><Redo2 size={18}/></button>
@@ -488,6 +507,7 @@ return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opac
 })}
 {referenceDraft&&<span className="reference-draft-marker" style={{left:referenceDraft.xPct+"%",top:referenceDraft.yPct+"%",background:referenceDraft.hex,zIndex:orderedLayers.length}}/>}
 </div>
+{sampler&&samplerFeedback&&<div className="sampler-finger-preview" aria-hidden="true" style={{left:samplerFeedback.x,top:samplerFeedback.y,background:samplerFeedback.hex}}><span>{samplerFeedback.hex.toUpperCase()}</span></div>}
 {refOn&&!canvasRefSrc&&<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
   <div><div style={{marginBottom:10}}>Nenhuma referência anexada</div><button className="dock-add" style={{padding:"0 16px"}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();referenceInput.current?.click()}}><Plus size={16}/> Adicionar referência</button></div>
 </div>}
@@ -503,7 +523,7 @@ return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opac
 </main>
 
 <aside className={"cockpit-dock left "+(lmin?"minimized ":"")+(lex?"expanded":"")} style={panel(lop,lscale,"left")}>
-<header><button type="button" aria-label={lmin?"Abrir materiais":"Recolher materiais"} onClick={()=>{setLmin(v=>!v);if(lmin&&window.matchMedia("(max-width: 620px)").matches){setLex(true);setRmin(true)}}}>{lmin?<><Package size={18}/><span>Materiais</span></>:<Minus size={16}/>}</button><strong>Materiais</strong><button type="button" aria-label="Expandir ou compactar materiais" onClick={()=>setLex(v=>!v)}>{lex?<ChevronLeft size={16}/>:<ChevronRight size={16}/>}</button></header>
+<header><button type="button" aria-label={lmin?"Abrir materiais":"Recolher materiais"} onClick={()=>{const opening=lmin;setLmin(v=>!v);if(opening){setRmin(true);setRex(false);if(window.matchMedia("(max-width: 620px)").matches)setLex(true)}}}>{lmin?<><Package size={18}/><span>Materiais</span></>:<Minus size={16}/>}</button><strong>Materiais</strong><button type="button" aria-label="Expandir ou compactar materiais" onClick={()=>{const expanding=!lex;setLex(v=>!v);if(expanding){setRmin(true);setRex(false)}}}>{lex?<ChevronLeft size={16}/>:<ChevronRight size={16}/>}</button></header>
 <div className="dock-controls"><label>Tamanho <input aria-label="Tamanho do painel de materiais" type="range" min=".85" max="1.35" step=".05" value={lscale} onChange={e=>setLscale(+e.target.value)}/><output>{Math.round(lscale*100)}%</output></label><label>Fundo <input aria-label="Opacidade do painel de materiais" type="range" min=".4" max="1" step=".05" value={lop} onChange={e=>setLop(+e.target.value)}/><output>{Math.round(lop*100)}%</output></label><button type="button" className="save-appearance-link" onClick={()=>setSheet("appearance")}><Settings2 size={13}/> Salvar preferências</button></div>
 <div className="dock-body">{mats.map(m=>{
   const symbol=materialSymbol(m),label=materialSymbolLabels[symbol];
@@ -523,7 +543,7 @@ return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opac
 </aside>
 
 <aside className={"cockpit-dock right "+(rmin?"minimized ":"")+(rex?"expanded":"")} style={panel(rop,rscale,"right")}>
-<header><button type="button" aria-label={rmin?"Abrir camadas":"Recolher camadas"} onClick={()=>{setRmin(v=>!v);if(rmin&&window.matchMedia("(max-width: 620px)").matches){setRex(true);setLmin(true)}}}>{rmin?<><Layers3 size={18}/><span>Camadas</span></>:<Minus size={16}/>}</button><strong>Camadas</strong><button type="button" aria-label="Expandir ou compactar camadas" onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
+<header><button type="button" aria-label={rmin?"Abrir camadas":"Recolher camadas"} onClick={()=>{const opening=rmin;setRmin(v=>!v);if(opening){setLmin(true);setLex(false);if(window.matchMedia("(max-width: 620px)").matches)setRex(true)}}}>{rmin?<><Layers3 size={18}/><span>Camadas</span></>:<Minus size={16}/>}</button><strong>Camadas</strong><button type="button" aria-label="Expandir ou compactar camadas" onClick={()=>{const expanding=!rex;setRex(v=>!v);if(expanding){setLmin(true);setLex(false)}}}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
 <div className="dock-controls"><label>Tamanho <input aria-label="Tamanho do painel de camadas" type="range" min=".85" max="1.35" step=".05" value={rscale} onChange={e=>setRscale(+e.target.value)}/><output>{Math.round(rscale*100)}%</output></label><label>Fundo <input aria-label="Opacidade do painel de camadas" type="range" min=".4" max="1" step=".05" value={rop} onChange={e=>setRop(+e.target.value)}/><output>{Math.round(rop*100)}%</output></label><button type="button" className="save-appearance-link" onClick={()=>setSheet("appearance")}><Settings2 size={13}/> Salvar preferências</button></div>
 <div className="dock-body"><SessionLayerPanel
   layers={panelLayers.map((layer:any)=>({layerKey:String(layer.layerKey),name:String(layer.name),src:layer.layerKey==="reference"?canvasRefSrc:layer.layerKey==="samples"?null:canvasSafeSource(layer.imageUrl),opacity:layerOpacity(layer),visible:layerVisible(layer)}))}
