@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readSessionMaterials, snapshotSessionMaterials } from "./sessionMaterials";
 import { getTableName } from "drizzle-orm";
 import { emptyPreparation, preparationSchema, validateRecipeMaterial } from "../shared/sessionPreparation";
-import { isSessionInk, isSessionDiluent, SESSION_CUP_ML, sessionCupSize, validateSessionUnit } from "../shared/sessionInkQuantity";
+import { isSessionInk, isSessionCartridge, validateSessionConsumption, isSessionDiluent, SESSION_CUP_ML, sessionCupSize, validateSessionUnit } from "../shared/sessionInkQuantity";
 
 const material = { tenantMaterialId: 7, name: "Vaselina Electric Ink", unit: "g", quantity: "20.000" };
 const procedure = { id: 12, studioId: 4, appointmentId: 15 };
@@ -77,4 +77,19 @@ describe("materiais oficiais da sessão", () => {
     expect(Object.values(SESSION_CUP_ML).map(ml => ml * 20)).toEqual([10, 20, 40, 80]);
     expect(sessionCupSize({ name: "Batoque PP", unit: "un" })).toBeUndefined();
   });
+});
+
+describe("materiais discretos e unidades de lote",()=>{
+ it("não confunde a marca Electric Ink de um cartucho com pigmento",()=>{
+   const m={name:"Cartucho Electric Ink 1009MGL",category:"Cartuchos e agulhas",unit:"un"};
+   expect(isSessionCartridge(m)).toBe(true);expect(isSessionInk(m)).toBe(false);
+   expect(()=>validateSessionConsumption(m,"1",{unitSnapshot:"unidade"})).not.toThrow();
+   expect(()=>validateSessionConsumption(m,"1",{unitSnapshot:"g"})).toThrow("diverge");
+   expect(()=>validateSessionConsumption(m,"0.5")).toThrow("inteira");
+ });
+ it("aceita massa fracionada e não transforma pares em gramas",()=>{
+   expect(()=>validateSessionConsumption({name:"Vaselina",unit:"g"},"2.5")).not.toThrow();
+   expect(()=>validateSessionConsumption({name:"Luvas",unit:"par"},"2")).not.toThrow();
+   expect(()=>validateSessionConsumption({name:"Luvas",unit:"g"},"2")).toThrow();
+ });
 });

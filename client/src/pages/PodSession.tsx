@@ -764,7 +764,7 @@ export default function PodSession() {
               <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
                 {auditConsumptions.map((consumption) => (
                   <div key={consumption.id} className="flex flex-wrap items-center gap-2 rounded-md bg-background/75 p-3 text-xs">
-                    <span className="min-w-0 flex-1 break-words">{consumption.nameSnapshot} · {formatMaterialQuantity(consumption.quantity)} {consumption.unitSnapshot}<br/>Lote: {consumption.lotSnapshot||"não registrado"} · {consumption.supplierNameSnapshot||"fornecedor não registrado"} · Validade: {consumption.expiresAtSnapshot?.slice(0,10).split("-").reverse().join("/")||"não registrada"}</span>
+                    <span className="min-w-0 flex-1 break-words">{consumption.nameSnapshot} · {formatMaterialQuantity(consumption.quantity)} {consumption.unitSnapshot}<br/>Custo registrado: {Number(consumption.totalCostSnapshot).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}<br/>Lote: {consumption.lotSnapshot||"não registrado"} · {consumption.supplierNameSnapshot||"fornecedor não registrado"} · Validade: {consumption.expiresAtSnapshot?.slice(0,10).split("-").reverse().join("/")||"não registrada"}</span>
                     <span className={consumption.status === "revertido" ? "text-muted-foreground" : "text-emerald-600"}>{consumption.status === "revertido" ? "Revertido" : "Confirmado"}</span>
                     {consumption.status === "consumido" && !isFinished && (
                       <Button
@@ -790,7 +790,7 @@ export default function PodSession() {
           {batchConsumption&&tenantMaterials.find(m=>m.id===batchConsumption.materialId)&&<ConsumeMaterialBatch material={tenantMaterials.find(m=>m.id===batchConsumption.materialId)!} artistId={procedureQuery.data?.procedure?.artistId??undefined} initialQuantity={batchConsumption.quantity} busy={consumeTenantMaterialMutation.isPending} onClose={()=>setBatchConsumption(null)} onConfirm={(quantity,batchId)=>consumeTenantMaterialMutation.mutate({procedureId,tenantMaterialId:batchConsumption.materialId,plannedMaterialId:batchConsumption.plannedMaterialId,quantity,batchId})}/>}
           {/* Insumos rápidos */}
           <div className="border-b p-3">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Lançamento rápido</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Lançamentos avulsos (sem baixa de estoque)</p><p className="text-xs text-muted-foreground mb-2">Para movimentar saldo, lote e custo, use Consumo do estoque acima.</p>
             <div className="flex flex-wrap gap-1.5">
               {QUICK_CONSUMABLES.map((item) => (
                 <Button

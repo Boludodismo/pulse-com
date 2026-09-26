@@ -174,6 +174,7 @@ export default function SessionFinalization({
               {step === 0 && (
                 <>
                   <h3 className="font-semibold">Consumo confirmado</h3>
+                  <p>Total de materiais: {data.consumptions.filter(i=>i.status === "consumido").reduce((sum,i)=>sum+Number(i.totalCostSnapshot),0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}</p>
                   <p className="text-sm text-muted-foreground">
                     Confira os materiais e os lotes realmente utilizados.
                     Concluir a sessão não repete a baixa do estoque.
@@ -194,6 +195,8 @@ export default function SessionFinalization({
                           {i.unitSnapshot}
                         </p>
                         <p>
+                          Custo: {Number(i.totalCostSnapshot).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}{Number(i.unitCostSnapshot)===0?" · custo cadastrado como zero":""}
+                        </p><p>
                           Lote: {i.lotSnapshot || "não informado"} · Validade:{" "}
                           {date(i.expiresAtSnapshot)}
                         </p>

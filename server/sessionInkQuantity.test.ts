@@ -3,6 +3,8 @@ import { inkStockQuantity, sessionCupSize, sessionCupSizeLabel, sessionMaterialN
 describe('session ink consumption in inventory units', () => {
   it('converts drops to ml without consuming an entire bottle', () => {
     expect(inkStockQuantity('ml', 1, 'drops', 'M')).toBe('0.050');
+    expect(inkStockQuantity('ml', 10, 'drops', 'M', 40)).toBe('0.250');
+    expect(inkStockQuantity('gotas', 10, 'drops', 'M', 40)).toBe('10.000');
     expect(inkStockQuantity('ml', 10, 'drops', 'M')).toBe('0.500');
     expect(inkStockQuantity('gotas', 10, 'drops', 'M')).toBe('10.000');
   });

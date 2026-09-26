@@ -76,6 +76,20 @@ async function main() {
   await assert.rejects(api.pod.session.saveInkRecipe({ ...recipeInput, requestId: randomUUID(), cupSize: "P", ingredients: [{ tenantMaterialId: black.id, drops: 11 }] }));
   assert.equal(await stock(cup.id), 99);
   await api.pod.session.revertInkRecipe({ recipeId: withCup.id, reason: "Teste" });
+  const cartridge = await createMaterial("Cartucho Electric Ink 1009MGL", "un", "Cartuchos e agulhas");
+  await api.pod.session.addMaterial({procedureId:created.id,tenantMaterialId:cartridge.id});
+  assert.equal(await stock(cartridge.id),100);
+  await assert.rejects(api.pod.session.consumeAuto({procedureId:created.id,tenantMaterialId:cartridge.id,quantity:"0.5"}));
+  const cartridgeInput={procedureId:created.id,tenantMaterialId:cartridge.id,quantity:"3",expectedUnit:"un",requestId:randomUUID()};
+  const c=await api.pod.session.consumeAuto(cartridgeInput);
+  await api.pod.session.consumeAuto(cartridgeInput);
+  assert.equal(await stock(cartridge.id),97);
+  const audit=(await api.pod.session.get({procedureId:created.id})).consumptions.find(row=>row.id===c.id)!;
+  assert.equal(audit.unitSnapshot,"un");assert.equal(Number(audit.totalCostSnapshot),6);
+  assert.equal(audit.clientId,9101);assert.equal(audit.tenantMaterialId,cartridge.id);
+  await api.pod.session.revertConsumption({consumptionId:c.id,reason:"Teste de unidade"});
+  assert.equal(await stock(cartridge.id),100);
+  await assert.rejects(createMaterial("Cartucho incorreto", "g", "Cartuchos"));
   console.log("PASS: persisted selection, quantities, start without consumption, explicit additions, independent diluent, recipes, stock, concurrent retries, rollback and reversal");
 
   await db.end();

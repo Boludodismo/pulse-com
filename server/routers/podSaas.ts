@@ -1,7 +1,7 @@
 import { readSessionMaterials, snapshotSessionMaterials } from "../sessionMaterials";
 import { defaultSessionQuantity } from "../../shared/sessionMaterialDefaults";
 import { validateRecipeMaterial } from "../../shared/sessionPreparation";
-import { SESSION_CUP_ML, SESSION_DROPS_PER_ML, sessionCupSize, isSessionCup, validateSessionUnit } from "../../shared/sessionInkQuantity";
+import { SESSION_CUP_ML, SESSION_DROPS_PER_ML, sessionCupSize, isSessionCup, validateSessionUnit, validateSessionConsumption } from "../../shared/sessionInkQuantity";
 import { importTestInventory } from "../inventoryTestImport";
 import { resolveProcedureArtist } from "../procedureArtist";
 import { appointmentKitsRouter } from "./appointmentKits";
@@ -1502,6 +1502,7 @@ export const podSaasRouter = router({
             if (expiry && String(expiry).slice(0, 10) < today)
               throw new TRPCError({ code: "BAD_REQUEST", message: `O lote de ${material.name} está vencido.` });
 
+            validateSessionConsumption(material, args.quantity, batch);
             const cost = batch?.unitCost ?? material.unitCost;
             const persistedPrevious = scaledToDecimal(previousQuantity, 3);
             const persistedNext = scaledToDecimal(previousQuantity - quantity, 3);
@@ -1861,7 +1862,7 @@ export const podSaasRouter = router({
         );
 
         if(input.expectedUnit!==undefined&&input.expectedUnit!==material.unit)throw new TRPCError({code:"CONFLICT",message:"A unidade do material mudou. Revise a preparação antes de consumir."});
-        validateSessionUnit(material);
+        validateSessionConsumption(material, input.quantity);
         const quantity = decimalToScaled(input.quantity, 3);
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         if (previousQuantity < quantity)
@@ -1899,6 +1900,7 @@ export const podSaasRouter = router({
         if (expiry && String(expiry).slice(0, 10) < today)
           throw new TRPCError({ code: "BAD_REQUEST", message: `O lote de ${material.name} está vencido.` });
 
+        validateSessionConsumption(material, input.quantity, batch);
         const cost = batch?.unitCost ?? material.unitCost;
         const persistedPrevious = scaledToDecimal(previousQuantity, 3);
         const persistedNext = scaledToDecimal(previousQuantity - quantity, 3);
@@ -1992,7 +1994,7 @@ export const podSaasRouter = router({
         )).limit(1).for("update"))[0];
         if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado nesta empresa." });
         await requireMaterialForArtist(tx as unknown as InventoryDatabase, ctx, material, procedure.artistId);
-        validateSessionUnit(material);
+        validateSessionConsumption(material, input.quantity);
         const quantity = decimalToScaled(input.quantity, 3);
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         if (previousQuantity < quantity) throw new TRPCError({ code: "BAD_REQUEST", message: "Saldo insuficiente para confirmar este consumo." });
@@ -2005,6 +2007,7 @@ export const podSaasRouter = router({
         const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Sao_Paulo'}).format(new Date());
         const expiry=batch?.expiresAt??(!batch?material.expiresAt:null);
         if(expiry&&String(expiry).slice(0,10)<today)throw new TRPCError({code:"BAD_REQUEST",message:"Este lote está vencido. Selecione outro material."});
+        validateSessionConsumption(material, input.quantity, batch);
         const cost=batch?.unitCost??material.unitCost;
         if(batch)await tx.update(inventoryBatches).set({remainingQuantity:scaledToDecimal(available-quantity,3)}).where(and(eq(inventoryBatches.id,batch.id),eq(inventoryBatches.studioId,ctx.studioId)));
 
