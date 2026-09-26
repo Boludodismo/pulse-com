@@ -54,7 +54,10 @@ export async function assertInvitedArtistAccess(user: User, path: string, type: 
     if (!row) throw denied(); return row as any;
   };
   if (input.clientId != null) await client(input.clientId);
-  if (input.appointmentId != null) await tenantRow(schema.appointments,input.appointmentId);
+  if (input.appointmentId != null) {
+    const appointment = await tenantRow(schema.appointments,input.appointmentId);
+    if (appointment.artistId !== user.artistId) throw denied();
+  }
   if (input.calendarId != null) {
     const [row] = await db.select({id:schema.calendars.id}).from(schema.calendars).where(and(eq(schema.calendars.id,input.calendarId),eq(schema.calendars.userId,user.id))).limit(1);
     if (!row) throw denied();
@@ -65,9 +68,15 @@ export async function assertInvitedArtistAccess(user: User, path: string, type: 
     if (row.artistId !== user.artistId) throw denied();
   }
   if (path === 'appointments.create' && input.artistId !== user.artistId) throw denied();
+  const appointmentData = input.data && typeof input.data === 'object' ? input.data as Record<string, any> : undefined;
+  if (path === 'appointments.update' && appointmentData?.artistId != null && appointmentData.artistId !== user.artistId) throw denied();
   if (path.startsWith('appointments.') && input.artist != null) {
     const row = await tenantRow(schema.artists,user.artistId);
     if (input.artist !== row.name) throw denied();
+  }
+  if (path === 'appointments.update' && appointmentData?.artist != null) {
+    const row = await tenantRow(schema.artists,user.artistId);
+    if (appointmentData.artist !== row.name) throw denied();
   }
   if (path.startsWith('clients.') && input.id != null) await client(input.id);
   if (path.startsWith('transactions.') && input.id != null) await tenantRow(schema.transactions,input.id);
