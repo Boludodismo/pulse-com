@@ -1047,6 +1047,7 @@
 .quote-summary-page .quote-contact { padding-left: 1rem; }
 .quote-summary-page .quote-contact span { font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
 .quote-extra-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.quote-image-description { margin: 0.75rem 0 0; color: #d8d8d8; font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .quote-extra-gallery figure { margin: 0; min-width: 0; }
 .quote-extra-gallery figcaption { font-size: 13px; color: #bfbfbf; margin-top: 0.5rem; overflow-wrap: anywhere; }
 .quote-summary-page .quote-media-frame { width: 100%; display: block; padding: 0; cursor: zoom-in; aspect-ratio: 4 / 5; flex: none; }

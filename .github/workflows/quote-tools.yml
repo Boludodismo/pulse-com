@@ -1,7 +1,7 @@
 name: Quote tools release checks
 on:
   push:
-    branches: ['feat/quote-tools-protected-art-20260926']
+    branches: ['feat/quote-tools-protected-art-20260926', 'feat/quote-image-descriptions-20260926']
 permissions:
   contents: read
 jobs:
@@ -31,6 +31,6 @@ jobs:
       - run: corepack enable && corepack prepare pnpm@10.4.1 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc --noEmit --target ES2022 --incremental false
-      - run: pnpm exec vitest run server/quoteTools.test.ts server/quoteRouter.test.ts server/storage.s3.test.ts server/sessionMaterials.test.ts
+      - run: pnpm exec vitest run server/quoteTools.test.ts server/quoteRouter.test.ts server/quotePreview.test.ts server/storage.s3.test.ts server/sessionMaterials.test.ts
       - run: pnpm tsx scripts/test-quote-payload.ts
       - run: pnpm build
