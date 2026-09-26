@@ -10,6 +10,7 @@ import { upgradeInventoryTrace } from "../server/_core/inventoryTraceSchema";
 import { upgradeInventoryWorkflow } from "../server/_core/inventoryWorkflowSchema";
 import { upgradeAppointmentKits } from "../server/_core/appointmentKitSchema";
 import { ensureStudioSettingsScope } from "../server/_core/studioSettingsScope";
+import { visualLayerStack } from "../shared/sessionVisualLayers";
 import { emptyPreparation } from "../shared/sessionPreparation";
 
 async function main() {
@@ -96,6 +97,45 @@ async function main() {
   assert.equal(Number((summary.totalMaterialCost-afterReversal.totalMaterialCost).toFixed(4)),6);
   await assert.rejects(createMaterial("Cartucho incorreto", "g", "Cartuchos"));
   console.log("PASS: persisted selection, quantities, start without consumption, explicit additions, independent diluent, recipes, stock, concurrent retries, rollback and reversal");
+
+  // Layer composition settings must survive reads and be isolated from stock and other tenants.
+  const layers = () => api.pod.session.listVisualLayers({procedureId:created.id});
+  const order = async () => visualLayerStack(await layers()).map(layer=>layer.layerKey);
+  const beforeStock = await stock(vaseline.id);
+  const baseOrder = await order();
+  assert.deepEqual(baseOrder,["samples","reference"]);
+  const layerA = await api.pod.session.addVisualLayer({procedureId:created.id,name:"Arte teste A",layerType:"image",imageUrl:"/test-layer-a.png",imageKey:"test-layer-a",opacity:60});
+  const layerB = await api.pod.session.addVisualLayer({procedureId:created.id,name:"Arte teste B",layerType:"stencil_overlay",imageUrl:"/test-layer-b.png",imageKey:"test-layer-b",opacity:40});
+  await api.pod.session.updateVisualLayer({procedureId:created.id,layerKey:layerA.layerKey,opacity:37,isVisible:false});
+  const expectedKeys = await order();
+  const orderedKeys = ["reference",layerA.layerKey,"samples",layerB.layerKey];
+  await api.pod.session.reorderVisualLayers({procedureId:created.id,expectedKeys,orderedKeys});
+  assert.deepEqual(await order(),orderedKeys);
+  const savedA=(await layers()).find(layer=>layer.layerKey===layerA.layerKey)!;
+  assert.equal(savedA.opacity,37); assert.equal(savedA.isVisible,0); assert.equal(savedA.imageUrl,"/test-layer-a.png");
+  await assert.rejects(api.pod.session.reorderVisualLayers({procedureId:created.id,expectedKeys,orderedKeys:expectedKeys}));
+  await assert.rejects(api.pod.session.reorderVisualLayers({procedureId:created.id,expectedKeys:orderedKeys,orderedKeys:["reference",layerA.layerKey,"samples","foreign-layer"]}));
+  await assert.rejects(api.pod.session.reorderVisualLayers({procedureId:created.id,expectedKeys:orderedKeys,orderedKeys:["reference",layerA.layerKey,"samples","samples"]}));
+  await assert.rejects(other.pod.session.reorderVisualLayers({procedureId:created.id,expectedKeys:orderedKeys,orderedKeys:[...orderedKeys].reverse()}));
+  await assert.rejects(other.pod.session.updateVisualLayer({procedureId:created.id,layerKey:layerA.layerKey,opacity:12}));
+  await assert.rejects(api.pod.session.updateVisualLayer({procedureId:created.id,layerKey:layerA.layerKey,opacity:101}));
+  assert.deepEqual(await order(),orderedKeys);
+  const competing=await Promise.allSettled([
+    api.pod.session.reorderVisualLayers({procedureId:created.id,expectedKeys:orderedKeys,orderedKeys:[...orderedKeys].reverse()}),
+    api.pod.session.reorderVisualLayers({procedureId:created.id,expectedKeys:orderedKeys,orderedKeys:[orderedKeys[1],orderedKeys[0],orderedKeys[2],orderedKeys[3]]}),
+  ]);
+  assert.equal(competing.filter(result=>result.status==="fulfilled").length,1);
+  assert.equal(competing.filter(result=>result.status==="rejected").length,1);
+  await api.pod.session.updateVisualLayer({procedureId:created.id,layerKey:"reference",opacity:0,isVisible:false});
+  await api.pod.session.updateVisualLayer({procedureId:created.id,layerKey:"reference",isVisible:true});
+  assert.equal((await layers()).find(layer=>layer.layerKey==="reference")!.opacity,0);
+  await db.query("UPDATE procedure_visual_layers SET imageKey=NULL WHERE procedureId=? AND layerKey=?",[created.id,layerB.layerKey]);
+  const beforeRemove=await order();
+  await api.pod.session.removeVisualLayer({procedureId:created.id,layerKey:layerB.layerKey});
+  await assert.rejects(api.pod.session.reorderVisualLayers({procedureId:created.id,expectedKeys:beforeRemove,orderedKeys:[...beforeRemove].reverse()}));
+  assert.ok(!(await order()).includes(layerB.layerKey));
+  assert.equal(await stock(vaseline.id),beforeStock);
+  console.log("PASS: layer order, opacity, visibility, atomic concurrent reorder, stale/deleted/foreign layers, bounds and tenant isolation");
 
   await db.end();
 }

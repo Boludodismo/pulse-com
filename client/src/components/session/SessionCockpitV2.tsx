@@ -1,3 +1,5 @@
+import { visualLayerStack } from "@shared/sessionVisualLayers";
+import SessionLayerPanel from "./SessionLayerPanel";
 import { readTestMetadata } from "@shared/inventoryTestCatalog";
 import SessionPreparationSummary from "@/components/SessionPreparationSummary";
 import SessionMaterialQuantity from "@/components/SessionMaterialQuantity";
@@ -95,6 +97,7 @@ const revert=trpc.pod.session.revertConsumption.useMutation();
 const saveSampleMutation=trpc.pod.session.saveColorSample.useMutation();
 const saveMaterialColorMutation=trpc.pod.inventory.saveMaterialColorSample.useMutation();
 const saveRecipeResultMutation=trpc.pod.session.saveInkRecipeResult.useMutation();
+const reorderVisualLayersMutation=trpc.pod.session.reorderVisualLayers.useMutation();
 const updateVisualLayerMutation=trpc.pod.session.updateVisualLayer.useMutation();
 const addVisualLayerMutation=trpc.pod.session.addVisualLayer.useMutation();
 const removeVisualLayerMutation=trpc.pod.session.removeVisualLayer.useMutation();
@@ -117,8 +120,9 @@ const [vu,setVu]=useState<View[]>([]),[vredo,setVredo]=useState<View[]>([]);
 const [lmin,setLmin]=useState(()=>window.matchMedia("(max-width: 620px)").matches),[rmin,setRmin]=useState(()=>window.matchMedia("(max-width: 620px)").matches),[lex,setLex]=useState(false),[rex,setRex]=useState(false);
 const [focusMode,setFocusMode]=useState(false),[cleanMode,setCleanMode]=useState(false);
 const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=useState(1),[rscale,setRscale]=useState(1);
-const [layerLocal,setLayerLocal]=useState<Record<string,{opacity:number;isVisible:boolean}>>({});
-const [refOn,setRefOn]=useState(true),[refOp,setRefOp]=useState(1),[markOn,setMarkOn]=useState(true),[markOp,setMarkOp]=useState(1);
+const [layerLocal,setLayerLocal]=useState<Record<string,{opacity?:number;isVisible?:boolean}>>({});
+const [layerOrder,setLayerOrder]=useState<string[]|null>(null);
+const [layerBusy,setLayerBusy]=useState(false),layerSaving=useRef(false);
 const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null);
 const [directQuantity,setDirectQuantity]=useState("1");
 const [sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null>(null),[note,setNote]=useState("");
@@ -145,14 +149,9 @@ useEffect(()=>{if(preparationQuery.data?.preparation?.colors.length)setMode("col
 const recipes=(recipeQuery.data||[]) as any[];
 const visualLayers=(visualLayerQuery.data||[]) as any[];
 const referenceLayer=visualLayers.find(l=>l.layerKey==="reference");
-const sampleLayer=visualLayers.find(l=>l.layerKey==="samples");
-const extraLayers=visualLayers.filter(l=>l.layerKey!=="reference"&&l.layerKey!=="samples");
-useEffect(()=>{
-  if(!visualLayers.length)return;
-  if(referenceLayer){setRefOn(Boolean(referenceLayer.isVisible));setRefOp(Number(referenceLayer.opacity??100)/100)}
-  if(sampleLayer){setMarkOn(Boolean(sampleLayer.isVisible));setMarkOp(Number(sampleLayer.opacity??100)/100)}
-  setLayerLocal(Object.fromEntries(extraLayers.map(layer=>[String(layer.layerKey),{opacity:Number(layer.opacity??100),isVisible:Boolean(layer.isVisible)}])));
-},[visualLayerQuery.data]);
+const refOn=layerLocal.reference?.isVisible??Boolean(referenceLayer?.isVisible??true);
+const layerVisible=(layer:any)=>layerLocal[String(layer.layerKey)]?.isVisible??Boolean(layer.isVisible);
+const layerOpacity=(layer:any)=>layerLocal[String(layer.layerKey)]?.opacity??Number(layer.opacity??100);
 const totals=useMemo(()=>{const o:Record<string,number>={};for(const u of (session.data?.consumptions||[]) as any[]){if(u.status!=="consumido")continue;o[String(u.tenantMaterialId)]=(o[String(u.tenantMaterialId)]||0)+Number(u.quantity)}return o},[session.data?.consumptions]);
 const visibleRecipeColors=useMemo(()=>stock.filter(m=>m.kind==="ink"||m.kind==="diluent").filter(m=>{if(!familyFilter||m.kind==="diluent")return true;const stored=materialColorMap[m.id];return familyForColor(stored?.hex||m.color,stored)===familyFilter}),[stock,familyFilter,materialColorMap]);
 
@@ -183,17 +182,41 @@ async function exitFocusMode(){
   try{if(document.fullscreenElement)await document.exitFullscreen()}catch{}
 }
 
-async function persistLayer(layerKey:string,patch:{name?:string;opacity?:number;isVisible?:boolean;sortOrder?:number}){
+async function persistLayer(layerKey:string,patch:{opacity?:number;isVisible?:boolean}){
+  if(layerSaving.current)return;
+  const current=visualLayers.find(layer=>layer.layerKey===layerKey);
+  if(current&&Object.entries(patch).every(([key,value])=>key==="isVisible"?Boolean(current[key])===value:Number(current[key])===value)){
+    setLayerLocal(previous=>{const next={...previous};delete next[layerKey];return next});return;
+  }
+  layerSaving.current=true;setLayerBusy(true);
   try{
     await updateVisualLayerMutation.mutateAsync({procedureId,layerKey,...patch});
     await utils.pod.session.listVisualLayers.invalidate({procedureId});
-  }catch(e:any){toast.error(e.message||"Não foi possível atualizar a camada.")}
+  }catch(e:any){
+    toast.error(e.message||"Não foi possível salvar a camada. O ajuste foi desfeito.");
+  }finally{
+    setLayerLocal(previous=>{const next={...previous};delete next[layerKey];return next});
+    layerSaving.current=false;setLayerBusy(false);
+  }
 }
 async function toggleLayer(layerKey:string,next:boolean){
-  if(layerKey==="reference"){setRefOn(next);if(!next)stopSampling();}
-  else if(layerKey==="samples")setMarkOn(next);
-  else setLayerLocal(x=>({...x,[layerKey]:{opacity:x[layerKey]?.opacity??100,isVisible:next}}));
+  if(layerSaving.current)return;
+  setLayerLocal(previous=>({...previous,[layerKey]:{...previous[layerKey],isVisible:next}}));
+  if(layerKey==="reference"&&!next)stopSampling();
   await persistLayer(layerKey,{isVisible:next});
+}
+async function reorderLayers(keys:string[]){
+  if(layerSaving.current||!visualLayers.length)return;
+  const expectedKeys=visualLayerStack(visualLayers).map(layer=>String(layer.layerKey));
+  if(keys.join("|")===expectedKeys.join("|"))return;
+  layerSaving.current=true;setLayerBusy(true);setLayerOrder(keys);
+  try{
+    await reorderVisualLayersMutation.mutateAsync({procedureId,orderedKeys:keys,expectedKeys});
+    await utils.pod.session.listVisualLayers.invalidate({procedureId});
+  }catch(e:any){
+    toast.error(e.message||"Não foi possível salvar a ordem das camadas.");
+    await utils.pod.session.listVisualLayers.invalidate({procedureId});
+  }finally{setLayerOrder(null);layerSaving.current=false;setLayerBusy(false)}
 }
 async function uploadVisualLayer(file:File){
   if(file.size>16*1024*1024)return toast.error("Imagem acima de 16 MB.");
@@ -210,20 +233,6 @@ async function removeLayer(layer:any){
   if(!window.confirm("Remover a camada “"+layer.name+"”?"))return;
   try{await removeVisualLayerMutation.mutateAsync({procedureId,layerKey:String(layer.layerKey)});await utils.pod.session.listVisualLayers.invalidate({procedureId});toast.success("Camada removida.")}catch(e:any){toast.error(e.message||"Não foi possível remover a camada.")}
 }
-async function moveLayer(layer:any,direction:-1|1){
-  const ordered=extraLayers.slice().sort((a:any,b:any)=>Number(a.sortOrder)-Number(b.sortOrder));
-  const index=ordered.findIndex((x:any)=>x.layerKey===layer.layerKey),other=ordered[index+direction];
-  if(index<0||!other)return;
-  const aOrder=Number(layer.sortOrder),bOrder=Number(other.sortOrder);
-  try{
-    await Promise.all([
-      updateVisualLayerMutation.mutateAsync({procedureId,layerKey:String(layer.layerKey),sortOrder:bOrder}),
-      updateVisualLayerMutation.mutateAsync({procedureId,layerKey:String(other.layerKey),sortOrder:aOrder}),
-    ]);
-    await utils.pod.session.listVisualLayers.invalidate({procedureId});
-  }catch(e:any){toast.error(e.message||"Não foi possível reordenar as camadas.")}
-}
-
 const stockActionPending=useRef(false);
 const retryKeys=useRef(new Map<string,string>());
 function stockRequestId(key:string){const id=retryKeys.current.get(key)||crypto.randomUUID();retryKeys.current.set(key,id);return id}
@@ -448,7 +457,7 @@ async function uploadReference(file:File){
     });
     await utils.pod.session.get.invalidate({procedureId});
     await utils.pod.session.listVisualLayers.invalidate({procedureId});
-    setRefOn(true);
+    await toggleLayer("reference",true);
     setView(V0);
     toast.success("Referência principal atualizada.");
   }catch(e:any){
@@ -463,12 +472,12 @@ const panel=(o:number,s:number,side:"left"|"right")=>({"--panel-alpha":o,transfo
 const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP,pct=cup?Math.round(ml/CUP[cup]*100):0,cupDropCapacity=cup?Math.floor(CUP[cup]/DROP):Infinity,ingredientLimit=500;
 const refSrc=proc.referenceImageUrl?String(proc.referenceImageUrl):(props.originalSrc?String(props.originalSrc):null);
 const canvasRefSrc=canvasSafeSource(refSrc);
-const orderedLayers=(visualLayers.length?visualLayers:[
-  {layerKey:"reference",name:"Referência principal",layerType:"reference",imageUrl:refSrc,opacity:Math.round(refOp*100),isVisible:refOn?1:0,sortOrder:0},
-  {layerKey:"samples",name:"Amostras de cor",layerType:"samples",imageUrl:null,opacity:Math.round(markOp*100),isVisible:markOn?1:0,sortOrder:900},
-]).slice().sort((a:any,b:any)=>Number(a.sortOrder)-Number(b.sortOrder));
-const layerVisible=(layer:any)=>layer.layerKey==="reference"?refOn:layer.layerKey==="samples"?markOn:(layerLocal[String(layer.layerKey)]?.isVisible??Boolean(layer.isVisible));
-const layerOpacity=(layer:any)=>layer.layerKey==="reference"?Math.round(refOp*100):layer.layerKey==="samples"?Math.round(markOp*100):(layerLocal[String(layer.layerKey)]?.opacity??Number(layer.opacity??100));
+const stackLayers=visualLayerStack(visualLayers.length?visualLayers:[
+  {layerKey:"reference",name:"Referência principal",layerType:"reference",imageUrl:refSrc,opacity:100,isVisible:1,sortOrder:0},
+  {layerKey:"samples",name:"Amostras de cor",layerType:"samples",imageUrl:null,opacity:100,isVisible:1,sortOrder:900},
+]);
+const panelLayers=layerOrder?layerOrder.map(key=>stackLayers.find(layer=>layer.layerKey===key)).filter(Boolean):stackLayers;
+const orderedLayers=[...panelLayers].reverse();
 
 return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
 <header className="cockpit-top">
@@ -486,18 +495,18 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <div className="cockpit-anamnese">Sessão #{procedureId}</div>
 <div className="cockpit-view-quick"><button type="button" aria-label="Restaurar imagem" onClick={()=>vset(V0)}>{Math.round(view.scale*100)}%</button><button type="button" aria-label="Girar imagem à esquerda" onClick={()=>vset({...vr.current,rotation:vr.current.rotation-15})}><RotateCcw size={15}/></button><button type="button" aria-label="Girar imagem à direita" onClick={()=>vset({...vr.current,rotation:vr.current.rotation+15})}><RotateCw size={15}/></button></div><button className="focus-entry-button" onClick={()=>void enterFocusMode()} title="Abrir modo foco"><Maximize2 size={16}/><span>FOCO</span></button>
 <div className="cockpit-transform" style={{transform:"translate("+view.x+"px,"+view.y+"px) rotate("+view.rotation+"deg) scale("+view.scale+")"}}>
-{orderedLayers.map((layer:any)=>{
+{orderedLayers.map((layer:any,index:number)=>{
   if(!layerVisible(layer))return null;
   if(layer.layerKey==="reference"){
-    return canvasRefSrc?<img key="reference" ref={image} src={canvasRefSrc} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100}} alt="Referência"/>:null;
+    return canvasRefSrc?<img key="reference" ref={image} src={canvasRefSrc} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100,zIndex:index}} alt="Referência"/>:null;
   }
   if(layer.layerKey==="samples"){
-    return <div key="samples" className="cockpit-sample-layer" style={{opacity:layerOpacity(layer)/100}}>{samples.filter(s=>!s.code.startsWith("P")).map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex}}/>)}</div>;
+    return <div key="samples" className="cockpit-sample-layer" style={{opacity:layerOpacity(layer)/100,zIndex:index}}>{samples.filter(s=>!s.code.startsWith("P")).map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex}}/>)}</div>;
   }
   const src=canvasSafeSource(layer.imageUrl);
-  return src?<img key={layer.layerKey} src={src} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100}} alt={layer.name}/>:null;
+  return src?<img key={layer.layerKey} src={src} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100,zIndex:index}} alt={layer.name}/>:null;
 })}
-{referenceDraft&&<span className="reference-draft-marker" style={{left:referenceDraft.xPct+"%",top:referenceDraft.yPct+"%",background:referenceDraft.hex}}/>}
+{referenceDraft&&<span className="reference-draft-marker" style={{left:referenceDraft.xPct+"%",top:referenceDraft.yPct+"%",background:referenceDraft.hex,zIndex:orderedLayers.length}}/>}
 </div>
 {refOn&&!canvasRefSrc&&<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
   <div><div style={{marginBottom:10}}>Nenhuma referência anexada</div><button className="dock-add" style={{padding:"0 16px"}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();referenceInput.current?.click()}}><Plus size={16}/> Adicionar referência</button></div>
@@ -524,17 +533,17 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <aside className={"cockpit-dock right "+(rmin?"minimized ":"")+(rex?"expanded":"")} style={panel(rop,rscale,"right")}>
 <header><button type="button" aria-label={rmin?"Abrir camadas":"Recolher camadas"} onClick={()=>{setRmin(v=>!v);if(rmin&&window.matchMedia("(max-width: 620px)").matches){setRex(true);setLmin(true)}}}>{rmin?<Layers3 size={18}/>:<Minus size={16}/>}</button><strong>Camadas</strong><button type="button" aria-label="Expandir ou compactar camadas" onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
 <div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={rscale} onChange={e=>setRscale(+e.target.value)}/><output>{Math.round(rscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={rop} onChange={e=>setRop(+e.target.value)}/><output>{Math.round(rop*100)}</output></label></div>
-<div className="dock-body">{orderedLayers.map((layer:any)=>{
-  const src=layer.layerKey==="reference"?canvasRefSrc:layer.layerKey==="samples"?null:canvasSafeSource(layer.imageUrl);
-  const opacity=layerOpacity(layer),visible=layerVisible(layer);
-  return <div className="layer-card layer-card-dynamic" key={layer.layerKey}>
-    {layer.layerKey==="samples"?<div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Pipette size={17}/></div>:src?<img className="layer-thumb" src={src}/>:<div className="layer-thumb" style={{display:"grid",placeItems:"center"}}><Layers3 size={17}/></div>}
-    <div className="layer-main"><strong>{layer.name}</strong><input type="range" min="0" max="100" step="5" value={opacity} onChange={e=>{const value=Number(e.target.value);if(layer.layerKey==="reference")setRefOp(value/100);else if(layer.layerKey==="samples")setMarkOp(value/100);else setLayerLocal(x=>({...x,[layer.layerKey]:{opacity:value,isVisible:x[layer.layerKey]?.isVisible??visible}}))}} onPointerUp={e=>void persistLayer(String(layer.layerKey),{opacity:Number(e.currentTarget.value)})}/>{rex&&layer.layerKey!=="reference"&&layer.layerKey!=="samples"&&<div className="layer-row-actions"><button onClick={()=>void moveLayer(layer,-1)}>↑</button><button onClick={()=>void moveLayer(layer,1)}>↓</button><button className="danger" onClick={()=>void removeLayer(layer)}><X size={11}/></button></div>}</div>
-    <button className="layer-eye" onClick={()=>void toggleLayer(String(layer.layerKey),!visible)}>{visible?<Eye size={16}/>:<EyeOff size={16}/>}</button>
-  </div>
-})}
-<button className="dock-add" onClick={()=>setSheet("layerAdd")}><Plus size={16}/>{rex&&" Nova camada"}</button>
-<button className="dock-add secondary" onClick={()=>referenceInput.current?.click()}><Plus size={16}/>{rex&&(refSrc?" Trocar referência":" Adicionar referência")}</button></div>
+<div className="dock-body"><SessionLayerPanel
+  layers={panelLayers.map((layer:any)=>({layerKey:String(layer.layerKey),name:String(layer.name),src:layer.layerKey==="reference"?canvasRefSrc:layer.layerKey==="samples"?null:canvasSafeSource(layer.imageUrl),opacity:layerOpacity(layer),visible:layerVisible(layer)}))}
+  busy={layerBusy||visualLayerQuery.isLoading||addVisualLayerMutation.isPending||removeVisualLayerMutation.isPending}
+  expanded={rex} onExpand={()=>{setRex(true);if(window.matchMedia("(max-width:620px)").matches)setLmin(true)}}
+  onReorder={keys=>void reorderLayers(keys)} onVisibility={(key,visible)=>void toggleLayer(key,visible)}
+  onOpacity={(key,opacity)=>setLayerLocal(previous=>({...previous,[key]:{...previous[key],opacity}}))}
+  onCommitOpacity={(key,opacity)=>void persistLayer(key,{opacity})}
+  onRemove={key=>{const layer=visualLayers.find(layer=>layer.layerKey===key);if(layer)void removeLayer(layer)}}
+/>
+<button className="dock-add" disabled={layerBusy} aria-label="Adicionar camada" onClick={()=>setSheet("layerAdd")}><Plus size={16}/>{rex&&" Nova camada"}</button>
+<button className="dock-add secondary" disabled={layerBusy} aria-label="Trocar referência principal" onClick={()=>referenceInput.current?.click()}><Plus size={16}/>{rex&&(refSrc?" Trocar referência":" Adicionar referência")}</button></div>
 </aside>
 
 <div className="cockpit-palette"><button className="palette-add" onClick={()=>{setMode(mode==="tonal"?"color":"tonal");stopSampling();}}><Palette size={13}/> {mode==="tonal"?"Cores":"Tons"}</button>
