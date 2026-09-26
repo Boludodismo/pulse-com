@@ -353,7 +353,8 @@ export default function Quotes() {
     if (allQuoteMedia(editor).length + files.length > QUOTE_IMAGE_LIMIT) { toast.error(`Limite de ${QUOTE_IMAGE_LIMIT} imagens por orçamento.`); return; }
     setUploadingSlot(projectId || "gallery");
     setFailedUploads((v) => v.filter(x => !files.includes(x.file)));
-    for (const [index, file] of files.entries()) {
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
       setUploadProgress(`Enviando imagem ${index + 1} de ${files.length}…`);
       try {
         if (file.size > 6 * 1024 * 1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("Use JPG, PNG ou WebP com até 6 MB.");

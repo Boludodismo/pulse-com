@@ -51,7 +51,7 @@ async function readLimitedImage(url: string) {
 
 export async function prepareProtectedQuoteArtwork(payload: QuoteStoredPayload, studioId: number, artistId: number, quoteNumber: string) {
   const prefix = `quotes/${studioId}/${artistId}/media/`;
-  const media = [...new Map(allQuoteMedia(payload.editor).filter(m => m.protect).map(m => [m.key, m])).values()];
+  const media = Array.from(new Map(allQuoteMedia(payload.editor).filter(m => m.protect).map(m => [m.key, m])).values());
   // Validate every key before fetching any asset; no arbitrary user-supplied URLs.
   for (const image of media) {
     const suffix = image.key.slice(prefix.length);
