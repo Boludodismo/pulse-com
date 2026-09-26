@@ -1,5 +1,5 @@
 import type { QuoteEditorData, QuoteMedia } from "@shared/quoteProposal";
-import { useState } from "react";
+import React, { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 export type QuotePreviewIdentity = {
@@ -97,7 +97,7 @@ function MediaImage({
           style={{ opacity: watermarkOpacity / 100 }}
         />
       )}
-    </button><Dialog open={expanded} onOpenChange={setExpanded}><DialogContent className="max-w-5xl"><DialogTitle>{media.alt || "Imagem do projeto"}</DialogTitle><img src={media.url} alt={media.alt || "Imagem do projeto"} draggable={false} onContextMenu={e => { if (media.protect) e.preventDefault(); }} className="max-h-[75dvh] w-full object-contain" />{media.protect && <p className="text-xs text-muted-foreground">Arte autoral identificada para esta proposta.</p>}</DialogContent></Dialog></>
+    </button><Dialog open={expanded} onOpenChange={setExpanded}><DialogContent className="max-h-[90dvh] max-w-5xl overflow-y-auto"><DialogTitle>{media.alt || "Imagem do projeto"}</DialogTitle><img src={media.url} alt={media.alt || "Imagem do projeto"} draggable={false} onContextMenu={e => { if (media.protect) e.preventDefault(); }} className="max-h-[75dvh] w-full object-contain" />{media.description && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{media.description}</p>}{media.protect && <p className="text-xs text-muted-foreground">Arte autoral identificada para esta proposta.</p>}</DialogContent></Dialog></>
   );
 }
 
@@ -251,7 +251,7 @@ function ArtistPage(props: Props) {
           target="_blank"
           rel="noreferrer"
         >
-          Ver perfil completo do artista
+          Acessar cartão virtual do artista
           <span aria-hidden="true">→</span>
         </a>
       )}
@@ -271,10 +271,14 @@ function ArtistPage(props: Props) {
   );
 }
 
+function ImageDescription({ media }: { media: QuoteMedia }) {
+  return media.description ? <p className="quote-image-description">{media.description}</p> : null;
+}
+
 function ImageGallery({ images }: { images: QuoteMedia[] }) {
   const labels = { reference: "Referência", current: "Tatuagem atual", artwork: "Arte desenvolvida", detail: "Detalhe" };
   if (!images.length) return null;
-  return <div className="quote-extra-gallery">{images.map((media, i) => <figure key={media.key + i}><h4>{labels[media.kind]}</h4><MediaImage media={media} /><figcaption>{media.alt}{media.protect && <span> · Arte protegida</span>}</figcaption></figure>)}</div>;
+  return <div className="quote-extra-gallery">{images.map((media, i) => <figure key={media.key + i}><h4>{labels[media.kind]}</h4><MediaImage media={media} /><figcaption>{media.alt}{media.protect && <span> · Arte protegida</span>}</figcaption><ImageDescription media={media} /></figure>)}</div>;
 }
 
 function ProjectDetails({ project }: { project: QuoteEditorData["project"] }) {
@@ -314,6 +318,7 @@ function SummaryPage(props: Props) {
         {editor.media.clientReference && <div className="quote-project-image">
           <h4>REFERÊNCIA DO CLIENTE</h4>
           <MediaImage media={editor.media.clientReference} />
+          <ImageDescription media={editor.media.clientReference} />
         </div>}
         {editor.media.suggestedArtwork && <div className="quote-project-image">
           <h4 className="orange">ARTE SUGERIDA</h4>
@@ -322,6 +327,7 @@ function SummaryPage(props: Props) {
             watermarkUrl={logoUrl}
             watermarkOpacity={editor.watermarkOpacity}
           />
+          <ImageDescription media={editor.media.suggestedArtwork} />
         </div>}
         {editor.project.concept && <div className="quote-concept">
           <h3>CONCEITO</h3>

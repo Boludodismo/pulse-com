@@ -17,6 +17,7 @@ export const quoteMediaSchema = z.object({
   key: z.string().min(1).max(500),
   url: mediaUrl,
   alt: z.string().max(200).default(""),
+  description: z.string().max(QUOTE_TEXT_LIMIT).default(""),
   x: z.number().min(0).max(100).default(50),
   y: z.number().min(0).max(100).default(50),
   zoom: z.number().min(1).max(3).default(1),
@@ -129,8 +130,19 @@ export const quoteStoredPayloadSchema = z.object({
 
 export type QuoteStoredPayload = z.infer<typeof quoteStoredPayloadSchema>;
 
-export const QUOTE_PRESET_CATEGORIES = ["concept", "terms", "bio", "payment", "notes", "deposit", "installment"] as const;
+export const QUOTE_PRESET_CATEGORIES = ["concept", "terms", "bio", "payment", "notes", "deposit", "installment", "image"] as const;
 export type QuotePresetCategory = (typeof QUOTE_PRESET_CATEGORIES)[number];
+
+export const DEFAULT_IMAGE_DESCRIPTION_PRESETS = [
+  { name: "Referência visual", content: "Esta imagem apresenta uma referência de estilo e composição para orientar o projeto. Os elementos serão adaptados à sua proposta." },
+  { name: "Tatuagem atual", content: "Registro da tatuagem atual para análise de tamanho, posição e pigmentação no planejamento do projeto." },
+  { name: "Planejamento de cobertura", content: "Proposta visual para a cobertura. A composição e os tons serão definidos considerando a tatuagem existente e a avaliação da pele." },
+  { name: "Arte desenvolvida", content: "Arte desenvolvida para esta proposta. Observe a composição e os elementos apresentados e envie suas dúvidas ou sugestões de ajuste." },
+  { name: "Simulação no corpo", content: "Simulação para visualizar a posição e a proporção da tatuagem. O encaixe final será conferido no corpo antes da execução." },
+  { name: "Detalhe do projeto", content: "Imagem de detalhe para facilitar a visualização dos traços, contrastes e elementos da composição." },
+  { name: "Variação para escolha", content: "Alternativa de composição para comparação. Indique qual versão se aproxima mais da sua ideia e quais ajustes gostaria de conversar com o artista." },
+  { name: "Etapa do projeto", content: "Esta imagem apresenta uma etapa do planejamento. A sequência de execução será alinhada com o artista conforme o andamento do projeto." },
+] as const;
 
 export const DEFAULT_CONCEPT_PRESETS = [
   {

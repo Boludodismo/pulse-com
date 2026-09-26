@@ -95,6 +95,14 @@ async function brandingRow(studioId: number, artistId: number) {
     .limit(1))[0] ?? null;
 }
 
+async function publishedArtistCardPath(studioId: number, artistId: number) {
+  const db = await connection();
+  const card = (await db.select({ token: artistCards.token }).from(artistCards)
+    .where(and(eq(artistCards.studioId, studioId), eq(artistCards.artistId, artistId), eq(artistCards.published, 1)))
+    .limit(1))[0];
+  return card ? `/artista/${card.token}` : null;
+}
+
 async function buildStoredPayload(input: {
   studioId: number;
   clientId: number;
@@ -359,15 +367,7 @@ export const quotesRouter = router({
       .input(z.object({ token: publicTokenSchema }))
       .query(async ({ input }) => {
         const { row, payload, expired } = await publicQuoteByToken(input.token);
-        const db = await connection();
-        const card = (await db.select({ token: artistCards.token })
-          .from(artistCards)
-          .where(and(
-            eq(artistCards.studioId, row.studioId),
-            eq(artistCards.artistId, payload.artist.id),
-            eq(artistCards.published, 1),
-          ))
-          .limit(1))[0] ?? null;
+        const artistCardPath = await publishedArtistCardPath(row.studioId, payload.artist.id);
         return {
           status: row.status,
           createdDate: row.createdDate,
@@ -376,7 +376,7 @@ export const quotesRouter = router({
           viewedAt: row.viewedAt,
           acceptedAt: row.acceptedAt,
           expired,
-          artistCardPath: card ? `/artista/${card.token}` : null,
+          artistCardPath,
           quoteNumber: row.quoteNumber,
           payload: publicQuotePayload(payload),
         };
@@ -463,11 +463,13 @@ export const quotesRouter = router({
       .input(z.object({ artistId: idSchema }))
       .query(async ({ ctx, input }) => {
         await resolveArtist(ctx, input.artistId);
-        const [branding, settings] = await Promise.all([
+        const [branding, settings, artistCardPath] = await Promise.all([
           brandingRow(ctx.studioId, input.artistId),
           dbHelpers.getStudioSettings(ctx.studioId),
+          publishedArtistCardPath(ctx.studioId, input.artistId),
         ]);
         return {
+          artistCardPath,
           personalLogoUrl: branding?.personalLogoUrl ?? null,
           personalLogoKey: branding?.personalLogoKey ?? null,
           defaultLogoSource: logoSourceSchema.catch("studio").parse(branding?.defaultLogoSource ?? "studio"),

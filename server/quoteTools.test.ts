@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
-import { allQuoteMedia, buildEmptyQuoteEditorData, DEFAULT_CONCEPT_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, parseQuotePayload, quoteEditorDataSchema, quoteMediaSchema, quoteStoredPayloadSchema } from "../shared/quoteProposal";
+import { allQuoteMedia, buildEmptyQuoteEditorData, DEFAULT_IMAGE_DESCRIPTION_PRESETS, DEFAULT_CONCEPT_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, parseQuotePayload, quoteEditorDataSchema, quoteMediaSchema, quoteStoredPayloadSchema } from "../shared/quoteProposal";
 
 const storage = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
 vi.mock("./storage", () => ({ storageGet: storage.get, storagePut: storage.put }));
@@ -22,11 +22,12 @@ describe("quote data compatibility and presets", () => {
     const p: any = fixture(); p.editor.media.clientReference = media(1);
     p.editor.pricing.totalAmount = 180000;
     delete p.protectedMedia; delete p.editor.additionalProjects; delete p.editor.media.gallery;
-    delete p.editor.media.clientReference.protect; delete p.editor.media.clientReference.kind;
+    delete p.editor.media.clientReference.description; delete p.editor.media.clientReference.protect; delete p.editor.media.clientReference.kind;
     delete p.editor.pricing.depositText; delete p.editor.pricing.installmentInfo;
     const read = parseQuotePayload(JSON.stringify(p))!;
     expect(read.editor.media.clientReference?.url).toContain("private-1");
     expect(read.editor.media.clientReference?.protect).toBe(false);
+    expect(read.editor.media.clientReference?.description).toBe("");
     expect(read.editor.pricing.totalAmount).toBe(180000);
     expect(read.editor.additionalProjects).toEqual([]);
     expect(read.editor.pricing.depositText).toBe("");
@@ -43,11 +44,14 @@ describe("quote data compatibility and presets", () => {
   });
   it("has eight descriptions and three distinct models for each payment field", () => {
     expect(DEFAULT_CONCEPT_PRESETS).toHaveLength(8);
+    expect(DEFAULT_IMAGE_DESCRIPTION_PRESETS).toHaveLength(8);
     expect(DEFAULT_DEPOSIT_PRESETS).toHaveLength(3);
     expect(DEFAULT_INSTALLMENT_PRESETS).toHaveLength(3);
     expect(new Set(DEFAULT_DEPOSIT_PRESETS.map(p => p.content)).size).toBe(3);
   });
   it("rejects text and image excess without truncation", () => {
+    expect(quoteMediaSchema.safeParse({ ...media(1), description: "á".repeat(8001) }).success).toBe(false);
+    expect(quoteMediaSchema.parse({ ...media(1), description: "á".repeat(8000) }).description).toHaveLength(8000);
     const p = fixture(); p.editor.project.concept = "x".repeat(8001);
     expect(quoteEditorDataSchema.safeParse(p.editor).success).toBe(false);
     p.editor.project.concept = "ok";
@@ -62,7 +66,7 @@ describe("quote artwork customer copy", () => {
   it("removes source URLs and keys from every occurrence, including the cover", () => {
     const p = fixture(); const source = media(1, true);
     p.editor.media.suggestedArtwork = source; p.editor.media.coverSource = "suggested";
-    p.editor.media.gallery = [{ ...source, protect: false }];
+    p.editor.media.gallery = [{ ...source, protect: false, description: "Descrição exclusiva da galeria" }];
     p.editor.additionalProjects = [{ id: "two", project: p.editor.project, images: [source] }];
     p.protectedMedia = [{ sourceKey: source.key, media: { ...source, key: "quotes/1/2/protected/copy.jpg", url: "https://example.test/watermarked" } }];
     const customer = publicQuotePayload(p); const serialized = JSON.stringify(customer);
@@ -70,6 +74,7 @@ describe("quote artwork customer copy", () => {
     expect(allQuoteMedia(customer.editor).every(m => m.url === "https://example.test/watermarked")).toBe(true);
     expect(p.editor.media.suggestedArtwork.url).toContain("private-1");
     expect(customer.protectedMedia).toEqual([]);
+    expect(customer.editor.media.gallery[0].description).toBe("Descrição exclusiva da galeria");
   });
   it("never falls back to the original if a protected copy is missing", () => {
     const p = fixture(); p.editor.media.clientReference = media(1, true);

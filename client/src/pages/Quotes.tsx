@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useIsMobile } from "@/hooks/useMobile";
 import { trpc } from "@/lib/trpc";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { ArrowLeft, CheckCircle2, Copy, ExternalLink, Eye, FileText, Image as ImageIcon, Plus, Save, Search, Share2, Trash2, Upload } from "lucide-react";
-import { DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
+import { DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, DEFAULT_IMAGE_DESCRIPTION_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
 import QuotePreview, { type QuotePreviewIdentity } from "@/components/quotes/QuotePreview";
 import "@/styles/quotes.css";
 
@@ -55,9 +55,10 @@ function statusClass(status: string) {
 type PresetOption = { id?: number; name: string; content: string };
 
 function PresetPicker(props: {
-  title: string; value: string; options: PresetOption[]; disabled?: boolean;
+  title: string; value: string; options: PresetOption[]; disabled?: boolean; compact?: boolean;
   onChange: (value: string) => void; onSave: (name: string) => Promise<void>;
 }) {
+  const textId = useId();
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<PresetOption | null>(null);
@@ -69,8 +70,13 @@ function PresetPicker(props: {
     setPrevious(props.value); props.onChange(next);
   }
   return <div className="space-y-3">
-    <Label>{props.title}</Label>
-    <div className="grid grid-cols-2 gap-2">
+    <Label htmlFor={textId}>{props.title}</Label>
+    {props.compact ? <select aria-label="Modelo de descrição da imagem" className="w-full rounded-md border border-input bg-background p-2 text-sm" disabled={props.disabled}
+      value={selected ? props.options.findIndex(p => p.name === selected.name && p.content === selected.content) : ""}
+      onChange={e => setSelected(e.target.value === "" ? null : props.options[Number(e.target.value)])}>
+      <option value="">Escolher um modelo de texto (opcional)</option>
+      {props.options.map((item, index) => <option key={(item.id || "d") + "-" + item.name} value={index}>{item.name}</option>)}
+    </select> : <div className="grid grid-cols-2 gap-2">
       {props.options.map((item) => <button
         key={(item.id || "d") + "-" + item.name}
         type="button" disabled={props.disabled} onClick={() => setSelected(item)} aria-pressed={selected === item}
@@ -79,21 +85,37 @@ function PresetPicker(props: {
         <span className="text-[10px] uppercase tracking-wide text-primary">Modelo</span>
         <strong className="mt-1 block text-sm">{item.name}</strong>
       </button>)}
-    </div>
+    </div>}
     {selected && <div className="rounded-lg border border-primary/30 p-3 space-y-3"><p className="whitespace-pre-wrap text-sm">{selected.content}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => apply(false)}>Usar este texto</Button><Button type="button" variant="outline" onClick={() => apply(true)}>Acrescentar</Button></div></div>}
-    <Textarea aria-label={props.title} value={props.value} maxLength={QUOTE_TEXT_LIMIT} onChange={(e) => props.onChange(e.target.value)} rows={6} disabled={props.disabled} />
+    <Textarea id={textId} aria-label={props.title} value={props.value} maxLength={QUOTE_TEXT_LIMIT} onChange={(e) => props.onChange(e.target.value)} rows={props.compact ? 3 : 6} disabled={props.disabled} placeholder={props.compact ? "Escreva livremente ou aplique um modelo e ajuste para esta imagem." : undefined} />
     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{props.value.length.toLocaleString("pt-BR")} / 8.000 caracteres</span>{previous !== null && <Button type="button" variant="ghost" size="sm" onClick={() => { props.onChange(previous); setPrevious(null); }}>Desfazer aplicação</Button>}</div>
-    <div className="flex flex-col gap-2 sm:flex-row">
+    <details open={props.compact ? undefined : true} className={props.compact ? "text-sm" : ""}>
+      <summary className={props.compact ? "cursor-pointer text-muted-foreground" : "hidden"}>Salvar este texto como modelo pessoal</summary>
+    <div className={"flex flex-col gap-2 sm:flex-row" + (props.compact ? " mt-3" : "")}>
       <Input value={name} onChange={(e) => setName(e.target.value)} disabled={props.disabled} placeholder="Nome para salvar este texto" />
       <Button type="button" variant="outline" disabled={props.disabled || saving || name.trim().length < 2 || props.value.trim().length < 2}
         onClick={async () => { setSaving(true); try { await props.onSave(name.trim()); setName(""); } finally { setSaving(false); } }}>
         <Save className="mr-2 h-4 w-4" />Salvar como modelo
       </Button>
     </div>
+    </details>
   </div>;
 }
 
-function MediaAdjuster(props: {
+type ImageDescriptionProps = {
+  imageOptions: PresetOption[];
+  onSaveImagePreset: (name: string, content: string) => Promise<void>;
+};
+
+function ImageDescriptionEditor(props: ImageDescriptionProps & {
+  media: QuoteMedia; disabled?: boolean; onChange: (description: string) => void;
+}) {
+  return <PresetPicker key={props.media.key} compact title="Descrição da imagem (opcional)" value={props.media.description}
+    options={props.imageOptions} disabled={props.disabled} onChange={props.onChange}
+    onSave={name => props.onSaveImagePreset(name, props.media.description)} />;
+}
+
+function MediaAdjuster(props: ImageDescriptionProps & {
   label: string; media: QuoteMedia | null; disabled?: boolean; uploading?: boolean;
   onUpload: (file: File) => void; onChange: (patch: Partial<QuoteMedia>) => void; onRemove?: () => void;
 }) {
@@ -121,6 +143,7 @@ function MediaAdjuster(props: {
         <input className="mt-1 w-full accent-orange-500" type="range" min={1} max={3} step={0.1} value={props.media.zoom} disabled={props.disabled} onChange={(e) => props.onChange({ zoom: Number(e.target.value) })} />
       </label>
       <Label>Legenda<Input value={props.media.alt} maxLength={200} onChange={(e) => props.onChange({ alt: e.target.value })} /></Label>
+      <ImageDescriptionEditor media={props.media} imageOptions={props.imageOptions} onSaveImagePreset={props.onSaveImagePreset} disabled={props.disabled} onChange={description => props.onChange({ description })} />
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={props.media.protect} onChange={(e) => props.onChange({ protect: e.target.checked })} />Proteger arte com marca d’água</label>
       <p className="text-xs text-muted-foreground">A cópia do cliente receberá a identificação do artista e do orçamento. Isso dificulta o reaproveitamento, mas não bloqueia prints.</p>
       {props.onRemove && <Button type="button" variant="ghost" size="sm" onClick={props.onRemove}>Remover imagem</Button>}
@@ -128,19 +151,23 @@ function MediaAdjuster(props: {
   </div>;
 }
 
-function MediaCollection(props: { images: QuoteMedia[]; busy: boolean; onFiles: (files: File[]) => void; onChange: (images: QuoteMedia[]) => void }) {
+function MediaCollection(props: ImageDescriptionProps & { images: QuoteMedia[]; busy: boolean; onFiles: (files: File[]) => void; onChange: (images: QuoteMedia[]) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const patch = (index: number, value: Partial<QuoteMedia>) => props.onChange(props.images.map((m, i) => i === index ? { ...m, ...value } : m));
   const move = (index: number, step: number) => { const images = [...props.images]; [images[index], images[index + step]] = [images[index + step], images[index]]; props.onChange(images); };
   return <div className="space-y-3">
-    <label className="block text-sm font-medium">Adicionar imagens · JPG, PNG ou WebP · até 6 MB cada<input aria-label="Adicionar imagens ao projeto" className="mt-2 block w-full text-sm" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={props.busy} onChange={(e) => { props.onFiles(Array.from(e.target.files || [])); e.currentTarget.value = ""; }} /></label>
-    <p className="text-xs text-muted-foreground">Até {QUOTE_IMAGE_LIMIT} imagens por orçamento. As legendas e a ordem aparecem no link do cliente.</p>
+    <input ref={inputRef} aria-label="Adicionar imagens ao projeto" className="hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={props.busy} onChange={(e) => { props.onFiles(Array.from(e.target.files || [])); e.currentTarget.value = ""; }} />
+    <Button type="button" disabled={props.busy} onClick={() => inputRef.current?.click()}><Plus className="mr-2 h-4 w-4" />{props.busy ? "Enviando imagens…" : "Adicionar imagens"}</Button>
+    <p className="text-xs text-muted-foreground">Selecione uma ou mais imagens · JPG, PNG ou WebP · até 6 MB cada. Até {QUOTE_IMAGE_LIMIT} imagens por orçamento. Legendas, descrições e ordem aparecem no link do cliente.</p>
     {props.images.map((media, index) => <div key={media.key} className="rounded-lg border p-3 space-y-2">
       <img src={media.url} alt={media.alt} className="h-40 w-full rounded object-contain bg-black" />
       <Label>Legenda<Input maxLength={200} value={media.alt} onChange={(e) => patch(index, { alt: e.target.value })} /></Label>
+      <ImageDescriptionEditor media={media} imageOptions={props.imageOptions} onSaveImagePreset={props.onSaveImagePreset} onChange={description => patch(index, { description })} />
       <label className="block text-sm">Tipo<select className="mt-1 w-full rounded-md border border-input bg-background p-2" value={media.kind} onChange={(e) => patch(index, { kind: e.target.value as QuoteMedia["kind"] })}>{[["reference", "Referência"], ["current", "Tatuagem atual"], ["artwork", "Arte desenvolvida"], ["detail", "Detalhe"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={media.protect} onChange={(e) => patch(index, { protect: e.target.checked })} />Proteger arte com marca d’água</label>
       <div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" disabled={index === 0} onClick={() => move(index, -1)}>Subir</Button><Button type="button" size="sm" variant="outline" disabled={index === props.images.length - 1} onClick={() => move(index, 1)}>Descer</Button><Button type="button" size="sm" variant="ghost" onClick={() => props.onChange(props.images.filter((_, i) => i !== index))}>Remover</Button></div>
     </div>)}
+    {props.images.length > 0 && <Button type="button" variant="outline" disabled={props.busy} onClick={() => inputRef.current?.click()}><Plus className="mr-2 h-4 w-4" />Adicionar mais imagens</Button>}
   </div>;
 }
 
@@ -222,6 +249,7 @@ export default function Quotes() {
   const termsPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "terms" }, { enabled: artistId > 0 });
   const depositPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "deposit" }, { enabled: artistId > 0 });
   const installmentPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "installment" }, { enabled: artistId > 0 });
+  const imagePresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "image" }, { enabled: artistId > 0 });
 
   const createMutation = trpc.quotes.create.useMutation();
   const updateMutation = trpc.quotes.update.useMutation();
@@ -274,6 +302,8 @@ export default function Quotes() {
   const termsOptions = useMemo(() => combinePresets(termsPresetsQuery.data, DEFAULT_TERMS_PRESETS), [termsPresetsQuery.data]);
   const depositOptions = useMemo(() => combinePresets(depositPresetsQuery.data, DEFAULT_DEPOSIT_PRESETS), [depositPresetsQuery.data]);
   const installmentOptions = useMemo(() => combinePresets(installmentPresetsQuery.data, DEFAULT_INSTALLMENT_PRESETS), [installmentPresetsQuery.data]);
+  const imageOptions = useMemo(() => combinePresets(imagePresetsQuery.data, DEFAULT_IMAGE_DESCRIPTION_PRESETS), [imagePresetsQuery.data]);
+  const imageDescriptionProps = { imageOptions, onSaveImagePreset: (name: string, content: string) => savePreset("image", name, content) };
 
   const filteredQuotes = (quotesQuery.data || []).filter((q) => {
     const text = [q.quoteNumber, q.parsedPayload?.client.name, q.parsedPayload?.artist.name, q.parsedPayload?.editor.project.title].filter(Boolean).join(" ").toLowerCase();
@@ -547,7 +577,9 @@ export default function Quotes() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2 sm:col-span-2"><Label>Buscar cliente</Label><Input value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} disabled={Boolean(quoteId)} placeholder="Nome, telefone ou e-mail" />
                 <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={clientId || ""} disabled={Boolean(quoteId)} onChange={(e) => { setClientId(Number(e.target.value)); setSnapshot(null); }}><option value="">Selecione o cliente</option>{filteredClients.slice(0, 120).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-              <div className="space-y-2"><Label>Artista</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={artistId || ""} disabled={Boolean(quoteId) || Boolean(user?.artistId)} onChange={(e) => { setArtistId(Number(e.target.value)); setSnapshot(null); brandingAppliedRef.current = null; }}><option value="">Selecione</option>{artists.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
+              <div className="space-y-2"><Label>Artista</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={artistId || ""} disabled={Boolean(quoteId) || Boolean(user?.artistId)} onChange={(e) => { setArtistId(Number(e.target.value)); setSnapshot(null); brandingAppliedRef.current = null; }}><option value="">Selecione</option>{artists.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+                {brandingQuery.data?.artistCardPath ? <Button asChild variant="outline" className="h-auto min-h-10 w-full whitespace-normal"><a href={brandingQuery.data.artistCardPath} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4 shrink-0" />Acessar cartão virtual do artista</a></Button> : <p className="text-xs text-muted-foreground">{!artistId ? "Selecione um artista para acessar o cartão virtual." : brandingQuery.isLoading ? "Consultando cartão virtual…" : brandingQuery.isError ? "Não foi possível consultar o cartão virtual." : "Este artista ainda não tem um cartão virtual publicado."}</p>}
+              </div>
               <div className="space-y-2"><Label>Validade</Label><Input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} /></div>
               <div className="space-y-2"><Label>Data de criação</Label><Input value={createdDate.split("-").reverse().join("/")} readOnly /></div>
               <div className="space-y-2"><Label>Número</Label><Input value={quoteNumber} readOnly /></div>
@@ -569,14 +601,14 @@ export default function Quotes() {
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <div className="flex items-center gap-2"><ImageIcon className="h-4 w-4 text-primary" /><h2 className="font-semibold">3. Imagens e capa</h2></div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <MediaAdjuster label="Referência do cliente" media={editor.media.clientReference} uploading={uploadingSlot === "clientReference"} onUpload={(f) => void uploadMedia("clientReference", f)} onChange={(p) => updateMedia("clientReference", p)} onRemove={() => setEditor(v => ({ ...v, media: { ...v.media, clientReference: null } }))} />
-              <MediaAdjuster label="Arte sugerida" media={editor.media.suggestedArtwork} uploading={uploadingSlot === "suggestedArtwork"} onUpload={(f) => void uploadMedia("suggestedArtwork", f)} onChange={(p) => updateMedia("suggestedArtwork", p)} onRemove={() => setEditor(v => ({ ...v, media: { ...v.media, suggestedArtwork: null } }))} />
+              <MediaAdjuster {...imageDescriptionProps} label="Referência do cliente" media={editor.media.clientReference} uploading={uploadingSlot === "clientReference"} onUpload={(f) => void uploadMedia("clientReference", f)} onChange={(p) => updateMedia("clientReference", p)} onRemove={() => setEditor(v => ({ ...v, media: { ...v.media, clientReference: null } }))} />
+              <MediaAdjuster {...imageDescriptionProps} label="Arte sugerida" media={editor.media.suggestedArtwork} uploading={uploadingSlot === "suggestedArtwork"} onUpload={(f) => void uploadMedia("suggestedArtwork", f)} onChange={(p) => updateMedia("suggestedArtwork", p)} onRemove={() => setEditor(v => ({ ...v, media: { ...v.media, suggestedArtwork: null } }))} />
             </div>
             <div className="space-y-2"><Label>Imagem principal da capa</Label><div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "reference" } }))} className={"rounded-lg border p-3 text-sm " + (editor.media.coverSource === "reference" ? "border-primary bg-primary/10" : "border-border")}>Referência</button>
               <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "suggested" } }))} className={"rounded-lg border p-3 text-sm " + (editor.media.coverSource === "suggested" ? "border-primary bg-primary/10" : "border-border")}>Arte sugerida</button>
             </div></div>
-            <details className="rounded-lg border p-3" open={editor.media.gallery.length > 0 || undefined}><summary className="cursor-pointer text-sm font-medium">Mais imagens deste projeto · {editor.media.gallery.length}</summary><div className="mt-3"><MediaCollection images={editor.media.gallery} busy={Boolean(uploadingSlot)} onFiles={(files) => void uploadImages(files, null)} onChange={(gallery) => setEditor(v => ({ ...v, media: { ...v.media, gallery } }))} /></div></details>
+            <details className="rounded-lg border p-3" open><summary className="cursor-pointer text-sm font-medium">Mais imagens deste projeto · {editor.media.gallery.length}</summary><div className="mt-3"><MediaCollection {...imageDescriptionProps} images={editor.media.gallery} busy={Boolean(uploadingSlot)} onFiles={(files) => void uploadImages(files, null)} onChange={(gallery) => setEditor(v => ({ ...v, media: { ...v.media, gallery } }))} /></div></details>
           </section>
 
           <section className="rounded-xl border bg-card p-4 sm:p-5"><PresetPicker title="4. Conceito artístico" value={editor.project.concept} options={conceptOptions} onChange={(concept) => setEditor((v) => ({ ...v, project: { ...v.project, concept } }))} onSave={(name) => savePreset("concept", name, editor.project.concept)} /></section>
@@ -587,7 +619,7 @@ export default function Quotes() {
             {editor.additionalProjects.map((item, index) => <details key={item.id} className="rounded-lg border p-3" open><summary className="cursor-pointer font-medium">Projeto {index + 2} · {item.project.title}</summary><div className="mt-4 space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">{([["title", "Título"], ["style", "Estilo"], ["bodyRegion", "Região"], ["sizeText", "Tamanho"], ["durationText", "Tempo estimado"]] as const).map(([key, label]) => <Label key={key}>{label}<Input value={item.project[key]} maxLength={key === "title" ? 160 : 120} onChange={e => updateAdditionalProject(item.id, { [key]: e.target.value })} /></Label>)}<Label>Sessões<Input type="number" min={1} max={30} value={item.project.sessions} onChange={e => updateAdditionalProject(item.id, { sessions: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} /></Label></div>
               <PresetPicker title="Descrição da tatuagem" value={item.project.concept} options={conceptOptions} onChange={concept => updateAdditionalProject(item.id, { concept })} onSave={name => savePreset("concept", name, item.project.concept)} />
-              <MediaCollection images={item.images} busy={Boolean(uploadingSlot)} onFiles={files => void uploadImages(files, item.id)} onChange={images => setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === item.id ? { ...p, images } : p) }))} />
+              <MediaCollection {...imageDescriptionProps} images={item.images} busy={Boolean(uploadingSlot)} onFiles={files => void uploadImages(files, item.id)} onChange={images => setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === item.id ? { ...p, images } : p) }))} />
               <Button type="button" variant="ghost" onClick={() => { setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.filter(p => p.id !== item.id) })); setFailedUploads(v => v.filter(f => f.projectId !== item.id)); }}>Remover projeto</Button>
             </div></details>)}
           </section>
@@ -646,7 +678,7 @@ export default function Quotes() {
           </section>
         </div>}
 
-        {previewVisible && <aside className="min-w-0 lg:sticky lg:top-20"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Eye className="h-4 w-4 text-primary" />Pré-visualização da proposta</div><div className="quote-preview-stage"><QuotePreview editor={editor} identity={identity} quoteNumber={quoteNumber} createdDate={createdDate} validUntil={validUntil} /></div></aside>}
+        {previewVisible && <aside className="min-w-0 lg:sticky lg:top-20"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Eye className="h-4 w-4 text-primary" />Pré-visualização da proposta</div><div className="quote-preview-stage"><QuotePreview artistCardUrl={brandingQuery.data?.artistCardPath} editor={editor} identity={identity} quoteNumber={quoteNumber} createdDate={createdDate} validUntil={validUntil} /></div></aside>}
       </div>
     </div>
 
