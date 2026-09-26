@@ -97,6 +97,20 @@ export async function ensureStagingQuoteProposalSchema() {
     await ensureQuoteColumn("public_token", "public_token varchar(64) NULL AFTER payload");
     await ensureQuoteColumn("viewed_at", "viewed_at datetime NULL AFTER public_token");
     await ensureQuoteColumn("accepted_at", "accepted_at datetime NULL AFTER viewed_at");
+    for (const [name, type] of [
+      ["sent_at", "datetime"], ["sent_by_user_id", "int"],
+      ["sent_source", "varchar(24)"],
+      ["responded_at", "datetime"], ["response_source", "varchar(24)"],
+      ["response_text", "text"], ["response_by_user_id", "int"],
+      ["question_at", "datetime"], ["question_text", "text"],
+    ]) await ensureQuoteColumn(name, `${name} ${type} NULL`);
+    const [appointmentColumns] = await connection.query<RowDataPacket[]>("SHOW COLUMNS FROM appointments LIKE 'quote_id'");
+    if (!appointmentColumns.length) await connection.query("ALTER TABLE appointments ADD COLUMN quote_id int NULL");
+    const [appointmentIndexes] = await connection.query<RowDataPacket[]>("SHOW INDEX FROM appointments WHERE Key_name='appointments_quote_idx'");
+    if (!appointmentIndexes.length) await connection.query("CREATE INDEX appointments_quote_idx ON appointments (studioId, quote_id, clientId, artistId, status)");
+    // Preserve prior acceptances; never infer sending from creation, sharing or viewing.
+    await connection.query("INSERT IGNORE INTO care_tags (studio_id,client_id,label) SELECT DISTINCT studio_id,client_id,'orçamento respondido' FROM quote_proposals WHERE accepted_at IS NOT NULL OR responded_at IS NOT NULL");
+    await connection.query("INSERT IGNORE INTO care_tags (studio_id,client_id,label) SELECT DISTINCT studio_id,client_id,'orçamento enviado' FROM quote_proposals WHERE sent_at IS NOT NULL");
 
     // Widen only the existing quote payload; no data is rewritten or removed.
     const [payloadColumns] = await connection.query<RowDataPacket[]>(

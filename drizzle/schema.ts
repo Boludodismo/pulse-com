@@ -52,6 +52,7 @@ export const anamnesisRecords = mysqlTable("anamnesisRecords", {
 export const appointments = mysqlTable("appointments", {
 	id: int().autoincrement().notNull(),
 	clientId: int().notNull(),
+	quoteId: int("quote_id"), // Optional explicit link; never inferred from client/date.
 	calendarId: int(),
 	date: datetime({ mode: 'string' }).notNull(),
 	duration: int().notNull(),

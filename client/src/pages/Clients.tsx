@@ -1,3 +1,4 @@
+import {QUOTE_AUTOMATIC_TAGS} from "@shared/quoteHistory";
 import {ClientConsentButton} from "@/components/WhatsappConsentPanel";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
@@ -143,6 +144,8 @@ export default function Clients() {
           disabled={!canLoadClients}
         />
       </div>
+
+      <div className="flex flex-wrap gap-2" aria-label="Consultar clientes por orçamento">{QUOTE_AUTOMATIC_TAGS.map(label=><Button key={label} size="sm" variant={searchTerm===label?"default":"outline"} disabled={!canLoadClients} onClick={()=>setSearchTerm(searchTerm===label?"":label)}>{label}</Button>)}</div>
 
       {/* Clients List */}
       <Card>

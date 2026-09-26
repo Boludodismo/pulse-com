@@ -17,6 +17,7 @@ import { decryptIntegrationSecret, encryptIntegrationSecret, hashIntegrationPayl
 import { normalizeBrazilianPhone } from "./phone";
 import { formatAppointmentActionLinks, type AppointmentActionLinks } from "../appointmentActions";
 import { removeLegacyNumericReplyInstruction } from "./messagePresentation";
+import { quoteIdFromTrigger, quoteDeliveryError, recordDeliveredQuote, reconcileDeliveredQuotes } from "../quoteDelivery";
 
 /** Instancia o provedor correto com base na configuração salva */
 export function getProvider(config: ProviderConfig): WhatsAppProvider {
@@ -299,6 +300,11 @@ export async function processPendingIntegrationJobs(limit = 10) {
           }
         }
       }
+      const quoteId = quoteIdFromTrigger(queueItem?.trigger);
+      if (quoteId) {
+        const reason = await quoteDeliveryError(job.studioId, quoteId, payload.clientId, payload.recipientPhone, Boolean(integration.sandboxMode));
+        if (reason) throw new PermanentDeliveryError(reason);
+      }
       if (integration.sandboxMode) {
         if (!integration.sandboxTestPhone) throw new Error("Defina o telefone de teste antes de ativar a homologação.");
         if (normalizeBrazilianPhone(payload.recipientPhone) !== integration.sandboxTestPhone) {
@@ -354,6 +360,10 @@ export async function processPendingIntegrationJobs(limit = 10) {
         .where(eq(messageQueue.id, payload.messageQueueId));
       if (payload.appointmentReminderId) await db.update(appointmentReminders).set({ status: "sent", sentAt: sqlDate() })
         .where(eq(appointmentReminders.id, payload.appointmentReminderId));
+      if (quoteId) {
+        await recordDeliveredQuote(quoteId, job.studioId, sqlDate())
+          .catch(() => console.warn("[Quotes] Message sent; history will be repaired without resending."));
+      }
       await db.update(integrationEvents).set({ status: "processed", processedAt: sqlDate(), errorMessage: null })
         .where(and(
           eq(integrationEvents.studioId, job.studioId),
@@ -396,6 +406,7 @@ export async function processPendingIntegrationJobs(limit = 10) {
       } else result.retried += 1;
     }
   }
+  await reconcileDeliveredQuotes().catch(() => console.warn("[Quotes] Delivery history repair will be retried without resending messages."));
   return result;
 }
 

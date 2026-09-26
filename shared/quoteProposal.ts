@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const QUOTE_TEXT_LIMIT = 8000;
 export const QUOTE_IMAGE_LIMIT = 40;
+export const quoteClientFirstName = (name: string | null | undefined) => name?.trim().split(/\s+/)[0] || "";
 
 const mediaUrl = z.string().max(3000).refine((value) => {
   if (value.startsWith("/api/storage?")) return true;
@@ -97,6 +98,7 @@ export const quoteStoredPayloadSchema = z.object({
   editor: quoteEditorDataSchema,
   protectedMedia: z.array(z.object({
     sourceKey: z.string().min(1).max(500),
+    markVersion: z.literal(2).optional(),
     media: quoteMediaSchema,
   }).strict()).max(QUOTE_IMAGE_LIMIT).default([]),
   client: z.object({
