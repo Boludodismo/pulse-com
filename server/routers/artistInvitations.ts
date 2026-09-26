@@ -3,6 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import { router, publicProcedure, tenantProcedure } from '../_core/trpc';
 import { issueArtistInvitation, inspectArtistInvitation, registerInvitedArtist, permissionInput, tokenInput, invitationPassword } from '../artistInvitations';
+import { sendArtistInvitationByBotConversa } from '../artistInvitationDelivery';
 import { listUserPermissions } from '../saas';
 import { getDb } from '../db';
 import { studioInvitations } from '../../drizzle/schema';
@@ -12,7 +13,17 @@ const manager = tenantProcedure.use(({ctx,next}) => {
 });
 export const artistInvitationsRouter = router({
   access: tenantProcedure.query(({ctx}) => listUserPermissions(ctx.user.id,ctx.studioId)),
-  issue: manager.input(z.object({artistId:z.number().int().positive(),permissions:permissionInput})).mutation(({ctx,input}) => issueArtistInvitation({...input,studioId:ctx.studioId,invitedByUserId:ctx.user.id})),
+  issue: manager.input(z.object({artistId:z.number().int().positive(),permissions:permissionInput})).mutation(async ({ctx,input}) => {
+    const invitation = await issueArtistInvitation({...input,studioId:ctx.studioId,invitedByUserId:ctx.user.id});
+    const delivery = await sendArtistInvitationByBotConversa({
+      studioId: ctx.studioId,
+      artistId: input.artistId,
+      artistName: invitation.name,
+      phone: invitation.phone,
+      token: invitation.token,
+    });
+    return {...invitation, inviteUrl: delivery.inviteUrl, delivery};
+  }),
   list: manager.input(z.object({artistId:z.number().int().positive()})).query(async ({ctx,input}) => {
     const db = await getDb(); if (!db) return [];
     return db.select({id:studioInvitations.id,status:studioInvitations.status,email:studioInvitations.email,expiresAt:studioInvitations.expiresAt}).from(studioInvitations).where(and(eq(studioInvitations.studioId,ctx.studioId),eq(studioInvitations.artistId,input.artistId))).orderBy(desc(studioInvitations.id)).limit(10);
