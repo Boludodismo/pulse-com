@@ -25,7 +25,7 @@ type Cup="P"|"M"|"G"|"GG";
 type Ingredient={materialId:string;drops:number};
 type Sample={source?:SampleSource|null;id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];lab:[number,number,number];xPct:number;yPct:number};
 type ReferenceDraft=ColorValue&{xPct:number;yPct:number;source:SampleSource;requestId:string};
-type SamplerFeedback={x:number;y:number;hex:string};
+type SamplerFeedback={x:number;y:number;hex:string;placement:"above"|"below"};
 type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
 type Sheet="preparation"|"materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|"appearance"|null;
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
@@ -334,7 +334,8 @@ function readSelectedLayerAt(cx:number,cy:number){
     const [R,G,B]=rgb,CMYK=cmyk(R,G,B),LAB=lab(R,G,B);
     const source:SampleSource={layerKey:selectedLayerKey,layerName:String(selectedLayer.name),imageKey:selectedImageKey,imageXPct:point.imageXPct,imageYPct:point.imageYPct,width:im.naturalWidth,height:im.naturalHeight};
     const draft:ReferenceDraft={hex:hex(R,G,B),red:R,green:G,blue:B,cyan:CMYK[0],magenta:CMYK[1],yellow:CMYK[2],black:CMYK[3],labL:LAB[0],labA:LAB[1],labB:LAB[2],xPct:point.xPct,yPct:point.yPct,source,requestId:crypto.randomUUID()};
-    setReferenceDraft(draft);setSamplerFeedback({x:cx-rect.left,y:cy-rect.top,hex:draft.hex});setSamplingError(null);return draft;
+    const localX=cx-rect.left,localY=cy-rect.top,safeX=Math.max(46,Math.min(rect.width-46,localX));
+    setReferenceDraft(draft);setSamplerFeedback({x:safeX,y:localY,hex:draft.hex,placement:localY<118?"below":"above"});setSamplingError(null);return draft;
   }catch{setReferenceDraft(null);setSamplerFeedback(null);setSamplingError("Não foi possível ler os pixels desta imagem. Reenvie o arquivo para esta camada.");return null}
 }
 function stopSampling(){setSampler(false);setReferenceDraft(null);setSamplerFeedback(null);setSamplingError(null)}
@@ -390,7 +391,7 @@ function up(e:RP<HTMLDivElement>){
 function wheel(e:RW<HTMLDivElement>){if(isControl(e.target))return;e.preventDefault();if(imageGesture.current.mode==="sample"||imageGesture.current.nativeActive)return;if(sampler&&!e.ctrlKey)return;vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
 function dismissOutside(target:EventTarget|null){
   if(!(target instanceof Element))return;
-  if(target.closest(".cockpit-sheet,.appearance-sheet,.temp-sampler-panel"))return;
+  if(target.closest(".cockpit-sheet,.appearance-sheet,.temp-sampler-panel,.session-material-tooltip"))return;
   if(sheet)setSheet(null);
   if(!target.closest(".cockpit-dock.left")){if(!lmin)setLmin(true);if(lex)setLex(false)}
   if(!target.closest(".cockpit-dock.right")){if(!rmin)setRmin(true);if(rex)setRex(false)}
@@ -507,7 +508,7 @@ return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opac
 })}
 {referenceDraft&&<span className="reference-draft-marker" style={{left:referenceDraft.xPct+"%",top:referenceDraft.yPct+"%",background:referenceDraft.hex,zIndex:orderedLayers.length}}/>}
 </div>
-{sampler&&samplerFeedback&&<div className="sampler-finger-preview" aria-hidden="true" style={{left:samplerFeedback.x,top:samplerFeedback.y,background:samplerFeedback.hex}}><span>{samplerFeedback.hex.toUpperCase()}</span></div>}
+{sampler&&samplerFeedback&&<div className={"sampler-finger-preview "+samplerFeedback.placement} aria-hidden="true" style={{left:samplerFeedback.x,top:samplerFeedback.y,background:samplerFeedback.hex}}><span>{samplerFeedback.hex.toUpperCase()}</span></div>}
 {refOn&&!canvasRefSrc&&<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
   <div><div style={{marginBottom:10}}>Nenhuma referência anexada</div><button className="dock-add" style={{padding:"0 16px"}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();referenceInput.current?.click()}}><Plus size={16}/> Adicionar referência</button></div>
 </div>}
