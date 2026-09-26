@@ -91,7 +91,7 @@ function PresetPicker(props: {
     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{props.value.length.toLocaleString("pt-BR")} / 8.000 caracteres</span>{previous !== null && <Button type="button" variant="ghost" size="sm" onClick={() => { props.onChange(previous); setPrevious(null); }}>Desfazer aplicação</Button>}</div>
     <details open={props.compact ? undefined : true} className={props.compact ? "text-sm" : ""}>
       <summary className={props.compact ? "cursor-pointer text-muted-foreground" : "hidden"}>Salvar este texto como modelo pessoal</summary>
-    <div className={"flex flex-col gap-2 sm:flex-row" + (props.compact ? " mt-3" : "")}>
+    <div className={"flex flex-col gap-2" + (props.compact ? " mt-3" : " sm:flex-row")}>
       <Input value={name} onChange={(e) => setName(e.target.value)} disabled={props.disabled} placeholder="Nome para salvar este texto" />
       <Button type="button" variant="outline" disabled={props.disabled || saving || name.trim().length < 2 || props.value.trim().length < 2}
         onClick={async () => { setSaving(true); try { await props.onSave(name.trim()); setName(""); } finally { setSaving(false); } }}>
