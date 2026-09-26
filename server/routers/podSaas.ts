@@ -1,3 +1,4 @@
+import type { SampleSource } from "../../shared/sessionColorSampling";
 import { completeVisualLayerOrder, visualLayerStack, validateVisualLayerOrder } from "../../shared/sessionVisualLayers";
 import { readSessionMaterials, snapshotSessionMaterials } from "../sessionMaterials";
 import { defaultSessionQuantity } from "../../shared/sessionMaterialDefaults";
@@ -87,6 +88,13 @@ const colorValueSchema = z.object({
   labA: z.number().min(-160).max(160),
   labB: z.number().min(-160).max(160),
 });
+
+const sampleSourceInputSchema = z.object({
+  layerKey:z.string().min(1).max(80), imageKey:z.string().max(500).nullable(),
+  imageXPct:z.number().min(0).max(100),imageYPct:z.number().min(0).max(100),
+  width:z.number().int().positive().max(100000),height:z.number().int().positive().max(100000),
+});
+const storedSampleSourceSchema=sampleSourceInputSchema.extend({layerName:z.string().min(1).max(160),sampleId:z.number().int().positive()});
 
 const SESSION_CUP_CAPACITY_ML = SESSION_CUP_ML;
 type SessionCupSize = keyof typeof SESSION_CUP_CAPACITY_ML;
@@ -1182,7 +1190,7 @@ export const podSaasRouter = router({
         await requireModule(ctx, "pod");
         const database = await requireDatabase();
         await requireProcedure(database, input.procedureId, ctx);
-        return database
+        const rows = await database
           .select()
           .from(procedureColorSamples)
           .where(and(
@@ -1190,6 +1198,16 @@ export const podSaasRouter = router({
             eq(procedureColorSamples.procedureId, input.procedureId),
           ))
           .orderBy(asc(procedureColorSamples.id));
+        const events=await database.select({payload:procedureEvents.payload}).from(procedureEvents).where(and(
+          eq(procedureEvents.procedureId,input.procedureId),eq(procedureEvents.eventType,"color_sample_source"),
+        ));
+        const sources=new Map<number,SampleSource>();
+        for(const event of events){
+          try{const parsed=storedSampleSourceSchema.safeParse(JSON.parse(event.payload||"null"));
+            if(parsed.success){const {sampleId,...source}=parsed.data;sources.set(sampleId,source)}
+          }catch{/* Older events without valid source metadata keep their original values. */}
+        }
+        return rows.map(row=>({...row,source:sources.get(row.id)??null}));
       }),
 
     saveColorSample: tenantProcedure
@@ -1209,6 +1227,8 @@ export const podSaasRouter = router({
         xPct: z.number().min(0).max(100),
         yPct: z.number().min(0).max(100),
         sampleSize: z.literal(5).default(5),
+        requestId:z.string().uuid().optional(),
+        source:sampleSourceInputSchema.optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         await requireModule(ctx, "pod", true);
@@ -1219,7 +1239,23 @@ export const podSaasRouter = router({
             input.procedureId,
             ctx,
           );
-          if (procedure.status === "finalizado")
+          const locked=(await tx.select().from(technicalProcedures).where(eq(technicalProcedures.id,procedure.id)).for("update"))[0];
+          const replay=await readStockReplay<{id:number;code:string;source:SampleSource|null}>(tx,procedure.id,"sample",input);
+          if(replay)return replay;
+          let source:SampleSource|null=null;
+          if(input.source){
+            const layer=(await tx.select().from(procedureVisualLayers).where(and(
+              eq(procedureVisualLayers.studioId,ctx.studioId),eq(procedureVisualLayers.procedureId,procedure.id),eq(procedureVisualLayers.layerKey,input.source.layerKey),
+            )).limit(1).for("update"))[0];
+            const isReference=input.source.layerKey==="reference";
+            if(input.source.layerKey==="samples"||(!isReference&&!layer))throw new TRPCError({code:"BAD_REQUEST",message:"Selecione uma camada de imagem desta sessão."});
+            const imageKey=isReference?locked.referenceImageKey:layer.imageKey;
+            const imageUrl=isReference?locked.referenceImageUrl:layer.imageUrl;
+            if(!imageUrl||(layer&&(!layer.isVisible||layer.opacity===0)))throw new TRPCError({code:"BAD_REQUEST",message:"A camada selecionada está oculta ou não contém imagem."});
+            if(imageKey!==input.source.imageKey)throw new TRPCError({code:"CONFLICT",message:"A imagem desta camada mudou. Selecione novamente a cor."});
+            source={...input.source,layerName:layer?.name??"Referência principal"};
+          }
+          if (locked.status === "finalizado")
             throw new TRPCError({ code: "BAD_REQUEST", message: "A sessão já foi finalizada." });
           const previous = (await tx
             .select({ code: procedureColorSamples.code })
@@ -1229,7 +1265,7 @@ export const podSaasRouter = router({
               eq(procedureColorSamples.procedureId, procedure.id),
             ))
             .orderBy(desc(procedureColorSamples.id))
-            .limit(1))[0];
+            .limit(1).for("update"))[0];
           const code = nextSessionCode("C", previous?.code);
           const inserted = await tx.insert(procedureColorSamples).values({
             studioId: ctx.studioId,
@@ -1255,7 +1291,10 @@ export const podSaasRouter = router({
           });
           const id = insertId(inserted);
           if (!id) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar a amostra." });
-          return { id, code };
+          if(source)await tx.insert(procedureEvents).values({procedureId:procedure.id,eventType:"color_sample_source",payload:JSON.stringify({sampleId:id,...source})});
+          const result={id,code,source};
+          await saveStockReplay(tx,procedure.id,"sample",input,result);
+          return result;
         });
       }),
 

@@ -1,3 +1,4 @@
+import { imageSamplePoint, samplePixelRegion, averageSamplePixels, imageSampleMarker, type SampleSource } from "@shared/sessionColorSampling";
 import { visualLayerStack } from "@shared/sessionVisualLayers";
 import SessionLayerPanel from "./SessionLayerPanel";
 import { readTestMetadata } from "@shared/inventoryTestCatalog";
@@ -17,8 +18,8 @@ type Material={id:string;name:string;short:string;kind:Kind;unit:string;color?:s
 type Cup="P"|"M"|"G"|"GG";
 type Ingredient={materialId:string;drops:number};
 type View={x:number;y:number;scale:number;rotation:number};
-type Sample={id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];lab:[number,number,number];xPct:number;yPct:number};
-type ReferenceDraft=ColorValue&{xPct:number;yPct:number};
+type Sample={source?:SampleSource|null;id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];lab:[number,number,number];xPct:number;yPct:number};
+type ReferenceDraft=ColorValue&{xPct:number;yPct:number;source:SampleSource;requestId:string};
 type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
 type Sheet="preparation"|"materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|null;
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
@@ -121,6 +122,9 @@ const [lmin,setLmin]=useState(()=>window.matchMedia("(max-width: 620px)").matche
 const [focusMode,setFocusMode]=useState(false),[cleanMode,setCleanMode]=useState(false);
 const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=useState(1),[rscale,setRscale]=useState(1);
 const [layerLocal,setLayerLocal]=useState<Record<string,{opacity?:number;isVisible?:boolean}>>({});
+const [selectedLayerKey,setSelectedLayerKey]=useState("reference");
+const [samplingError,setSamplingError]=useState<string|null>(null);
+const sampleSaving=useRef(false);
 const [layerOrder,setLayerOrder]=useState<string[]|null>(null);
 const [layerBusy,setLayerBusy]=useState(false),layerSaving=useRef(false);
 const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null);
@@ -141,10 +145,10 @@ useEffect(()=>{
   sync();visual?.addEventListener("resize",sync);visual?.addEventListener("scroll",sync);window.addEventListener("resize",sync);
   return()=>{visual?.removeEventListener("resize",sync);visual?.removeEventListener("scroll",sync);window.removeEventListener("resize",sync)};
 },[]);
-const stage=useRef<HTMLDivElement>(null),image=useRef<HTMLImageElement>(null),pts=useRef(new Map<number,{x:number;y:number}>());
+const stage=useRef<HTMLDivElement>(null),layerImages=useRef(new Map<string,HTMLImageElement>()),pts=useRef(new Map<number,{x:number;y:number}>());
 const start=useRef<View|null>(null),pstart=useRef<{x:number;y:number}|null>(null),base=useRef<{v:View;d:number;a:number;m:{x:number;y:number}}|null>(null),multiTouch=useRef(false),samplerPointerActive=useRef(false),samplePointerId=useRef<number|null>(null),interactionMode=useRef<"idle"|"sample"|"transform">("idle");
 
-const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],lab:[Number(s.labL||0),Number(s.labA||0),Number(s.labB||0)],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
+const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({source:s.source,id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],lab:[Number(s.labL||0),Number(s.labA||0),Number(s.labB||0)],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
 useEffect(()=>{if(preparationQuery.data?.preparation?.colors.length)setMode("color")},[preparationQuery.data?.preparation]);
 const recipes=(recipeQuery.data||[]) as any[];
 const visualLayers=(visualLayerQuery.data||[]) as any[];
@@ -152,6 +156,23 @@ const referenceLayer=visualLayers.find(l=>l.layerKey==="reference");
 const refOn=layerLocal.reference?.isVisible??Boolean(referenceLayer?.isVisible??true);
 const layerVisible=(layer:any)=>layerLocal[String(layer.layerKey)]?.isVisible??Boolean(layer.isVisible);
 const layerOpacity=(layer:any)=>layerLocal[String(layer.layerKey)]?.opacity??Number(layer.opacity??100);
+const selectedLayer=visualLayers.find(layer=>layer.layerKey===selectedLayerKey);
+const selectedImageKey=selectedLayer?.imageKey??null;
+const selectedImageUrl=selectedLayer?.imageUrl??null;
+const selectedVisible=selectedLayer?layerVisible(selectedLayer)&&layerOpacity(selectedLayer)>0:false;
+const canSampleSelected=!!selectedLayer&&selectedLayer.layerKey!=="samples"&&selectedVisible&&!!selectedImageUrl;
+const [stageSize,setStageSize]=useState({width:0,height:0});
+useEffect(()=>{
+  const node=stage.current;if(!node)return;
+  const update=()=>setStageSize({width:node.clientWidth,height:node.clientHeight});
+  const observer=new ResizeObserver(update);observer.observe(node);update();return()=>observer.disconnect();
+},[proc?.id]);
+useEffect(()=>{setReferenceDraft(null);setSamplingError(null)},[selectedLayerKey,selectedImageKey,selectedImageUrl,selectedVisible]);
+function selectLayer(key:string){setSelectedLayerKey(key);setReferenceDraft(null);setSamplingError(null)}
+function samplePosition(s:Sample){
+  return s.source&&stageSize.width&&stageSize.height?imageSampleMarker(s.source.imageXPct,s.source.imageYPct,s.source.width,s.source.height,stageSize.width,stageSize.height):s;
+}
+
 const totals=useMemo(()=>{const o:Record<string,number>={};for(const u of (session.data?.consumptions||[]) as any[]){if(u.status!=="consumido")continue;o[String(u.tenantMaterialId)]=(o[String(u.tenantMaterialId)]||0)+Number(u.quantity)}return o},[session.data?.consumptions]);
 const visibleRecipeColors=useMemo(()=>stock.filter(m=>m.kind==="ink"||m.kind==="diluent").filter(m=>{if(!familyFilter||m.kind==="diluent")return true;const stored=materialColorMap[m.id];return familyForColor(stored?.hex||m.color,stored)===familyFilter}),[stock,familyFilter,materialColorMap]);
 
@@ -182,18 +203,20 @@ async function exitFocusMode(){
   try{if(document.fullscreenElement)await document.exitFullscreen()}catch{}
 }
 
-async function persistLayer(layerKey:string,patch:{opacity?:number;isVisible?:boolean}){
-  if(layerSaving.current)return;
+async function persistLayer(layerKey:string,patch:{name?:string;opacity?:number;isVisible?:boolean}){
+  if(layerSaving.current)return false;
   const current=visualLayers.find(layer=>layer.layerKey===layerKey);
-  if(current&&Object.entries(patch).every(([key,value])=>key==="isVisible"?Boolean(current[key])===value:Number(current[key])===value)){
-    setLayerLocal(previous=>{const next={...previous};delete next[layerKey];return next});return;
+  if(current&&Object.entries(patch).every(([key,value])=>key==="isVisible"?Boolean(current[key])===value:key==="name"?current[key]===value:Number(current[key])===value)){
+    setLayerLocal(previous=>{const next={...previous};delete next[layerKey];return next});return true;
   }
   layerSaving.current=true;setLayerBusy(true);
   try{
     await updateVisualLayerMutation.mutateAsync({procedureId,layerKey,...patch});
     await utils.pod.session.listVisualLayers.invalidate({procedureId});
+    return true;
   }catch(e:any){
     toast.error(e.message||"Não foi possível salvar a camada. O ajuste foi desfeito.");
+    return false;
   }finally{
     setLayerLocal(previous=>{const next={...previous};delete next[layerKey];return next});
     layerSaving.current=false;setLayerBusy(false);
@@ -202,7 +225,7 @@ async function persistLayer(layerKey:string,patch:{opacity?:number;isVisible?:bo
 async function toggleLayer(layerKey:string,next:boolean){
   if(layerSaving.current)return;
   setLayerLocal(previous=>({...previous,[layerKey]:{...previous[layerKey],isVisible:next}}));
-  if(layerKey==="reference"&&!next)stopSampling();
+  if(layerKey===selectedLayerKey&&!next)setReferenceDraft(null);
   await persistLayer(layerKey,{isVisible:next});
 }
 async function reorderLayers(keys:string[]){
@@ -224,7 +247,7 @@ async function uploadVisualLayer(file:File){
   const b64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(r.error);r.onload=()=>resolve(String(r.result).split(",")[1]||"");r.readAsDataURL(file)});
   try{
     const uploaded=await uploadImage.mutateAsync({procedureId,imageBase64:b64,mimeType:file.type||"image/jpeg",imageType:"other",description:"Camada visual: "+newLayerName});
-    await addVisualLayerMutation.mutateAsync({procedureId,name:newLayerName.trim()||"Nova camada",layerType:newLayerType,imageUrl:String(uploaded.imageUrl),imageKey:String(uploaded.imageKey),opacity:newLayerType==="stencil_overlay"?65:100});
+    await addVisualLayerMutation.mutateAsync({procedureId,name:newLayerName.trim()||"Nova camada",layerType:newLayerType,imageUrl:String(uploaded.imageUrl),imageKey:String(uploaded.imageKey),opacity:100});
     await utils.pod.session.listVisualLayers.invalidate({procedureId});
     setSheet(null);toast.success("Camada adicionada à sessão.");
   }catch(e:any){toast.error(e.message||"Não foi possível adicionar a camada.")}
@@ -278,47 +301,50 @@ async function redoStock(){
   }catch(e:any){toast.error(e.message||"Não foi possível refazer.")}finally{stockActionPending.current=false}
 }
 
-function readReferenceAt(cx:number,cy:number){
-  const s=stage.current,im=image.current;if(!s||!im||!im.naturalWidth||samples.length>=30)return null;
-  const rect=s.getBoundingClientRect(),w=rect.width,h=rect.height,p=new DOMPoint(cx-rect.left,cy-rect.top);
-  const matrix=new DOMMatrix().translate(w/2+vr.current.x,h/2+vr.current.y).rotate(vr.current.rotation).scale(vr.current.scale).translate(-w/2,-h/2);
-  const q=p.matrixTransform(matrix.inverse()),fit=Math.min(w/im.naturalWidth,h/im.naturalHeight),iw=im.naturalWidth*fit,ih=im.naturalHeight*fit,ox=(w-iw)/2,oy=(h-ih)/2;
-  if(q.x<ox||q.x>ox+iw||q.y<oy||q.y>oy+ih)return null;
-  const px=Math.round((q.x-ox)/iw*im.naturalWidth),py=Math.round((q.y-oy)/ih*im.naturalHeight),canvas=document.createElement("canvas");canvas.width=5;canvas.height=5;const ctx=canvas.getContext("2d",{willReadFrequently:true});if(!ctx)return null;
+function readSelectedLayerAt(cx:number,cy:number){
+  if(sampleSaving.current)return null;
+  const s=stage.current,im=layerImages.current.get(selectedLayerKey);
+  if(!s||!im||!im.complete||!im.naturalWidth||!canSampleSelected||samples.length>=30){setReferenceDraft(null);return null}
+  const point=imageSamplePoint({x:cx,y:cy},s.getBoundingClientRect(),{width:im.naturalWidth,height:im.naturalHeight},vr.current);
+  if(!point){setReferenceDraft(null);setSamplingError(null);return null}
+  const region=samplePixelRegion(point.pixelX,point.pixelY,im.naturalWidth,im.naturalHeight);
+  const canvas=document.createElement("canvas");canvas.width=region.width;canvas.height=region.height;
+  const context=canvas.getContext("2d",{willReadFrequently:true});if(!context)return null;
   try{
-    const sx=Math.max(0,Math.min(im.naturalWidth-5,px-2)),sy=Math.max(0,Math.min(im.naturalHeight-5,py-2));
-    ctx.drawImage(im,sx,sy,5,5,0,0,5,5);const d=ctx.getImageData(0,0,5,5).data;let R=0,G=0,B=0,n=0;for(let i=0;i<d.length;i+=4){R+=d[i];G+=d[i+1];B+=d[i+2];n++}R=Math.round(R/n);G=Math.round(G/n);B=Math.round(B/n);
-    const CMYK=cmyk(R,G,B),LAB=lab(R,G,B),draft:ReferenceDraft={hex:hex(R,G,B),red:R,green:G,blue:B,cyan:CMYK[0],magenta:CMYK[1],yellow:CMYK[2],black:CMYK[3],labL:LAB[0],labA:LAB[1],labB:LAB[2],xPct:q.x/w*100,yPct:q.y/h*100};
-    setReferenceDraft(draft);return draft;
-  }catch{return null}
+    context.imageSmoothingEnabled=false;
+    context.drawImage(im,region.left,region.top,region.width,region.height,0,0,region.width,region.height);
+    const rgb=averageSamplePixels(context.getImageData(0,0,region.width,region.height).data);
+    if(!rgb){setReferenceDraft(null);setSamplingError("Este ponto é transparente. Escolha uma área com cor.");return null}
+    const [R,G,B]=rgb,CMYK=cmyk(R,G,B),LAB=lab(R,G,B);
+    const source:SampleSource={layerKey:selectedLayerKey,layerName:String(selectedLayer.name),imageKey:selectedImageKey,imageXPct:point.imageXPct,imageYPct:point.imageYPct,width:im.naturalWidth,height:im.naturalHeight};
+    const draft:ReferenceDraft={hex:hex(R,G,B),red:R,green:G,blue:B,cyan:CMYK[0],magenta:CMYK[1],yellow:CMYK[2],black:CMYK[3],labL:LAB[0],labA:LAB[1],labB:LAB[2],xPct:point.xPct,yPct:point.yPct,source,requestId:crypto.randomUUID()};
+    setReferenceDraft(draft);setSamplingError(null);return draft;
+  }catch{setReferenceDraft(null);setSamplingError("Não foi possível ler os pixels desta imagem. Reenvie o arquivo para esta camada.");return null}
 }
-function stopSampling(){
-  setSampler(false);
-  setReferenceDraft(null);
-}
+function stopSampling(){setSampler(false);setReferenceDraft(null);setSamplingError(null)}
 function startSampling(){
   if(samples.length>=30){toast.info("Limite de 30 amostras atingido.");return;}
-  if(!refOn){toast.info("Mostre a camada de referência para coletar uma cor.");return;}
-  setMode("color");
-  setReferenceDraft(null);
-  setSampler(true);
+  if(!canSampleSelected){toast.info("Selecione uma camada de imagem visível para coletar cores.");return;}
+  setMode("color");setReferenceDraft(null);setSamplingError(null);setSampler(true);
 }
 function toggleSampling(){if(sampler)stopSampling();else startSampling();}
 async function confirmReferenceSample(){
-  const x=referenceDraft;if(!x)return;
+  const x=referenceDraft;
+  if(!x||sampleSaving.current||!canSampleSelected||x.source.layerKey!==selectedLayerKey||x.source.imageKey!==selectedImageKey)return;
+  sampleSaving.current=true;
   try{
-    const saved=await saveSampleMutation.mutateAsync({procedureId,hex:x.hex,red:x.red,green:x.green,blue:x.blue,cyan:x.cyan,magenta:x.magenta,yellow:x.yellow,black:x.black,labL:x.labL,labA:x.labA,labB:x.labB,xPct:x.xPct,yPct:x.yPct,sampleSize:5});
-    const s:Sample={id:String(saved.id),code:saved.code,hex:x.hex,rgb:[x.red,x.green,x.blue],cmyk:[x.cyan,x.magenta,x.yellow,x.black],lab:[x.labL,x.labA,x.labB],xPct:x.xPct,yPct:x.yPct};
-    setSample(s);stopSampling();setMode("color");
-    toast.success(saved.code+" salva. Conta-gotas desligado.");
+    const saved=await saveSampleMutation.mutateAsync({procedureId,hex:x.hex,red:x.red,green:x.green,blue:x.blue,cyan:x.cyan,magenta:x.magenta,yellow:x.yellow,black:x.black,labL:x.labL,labA:x.labA,labB:x.labB,xPct:x.xPct,yPct:x.yPct,sampleSize:5,requestId:x.requestId,source:{layerKey:x.source.layerKey,imageKey:x.source.imageKey,imageXPct:x.source.imageXPct,imageYPct:x.source.imageYPct,width:x.source.width,height:x.source.height}});
+    const s:Sample={source:saved.source,id:String(saved.id),code:saved.code,hex:x.hex,rgb:[x.red,x.green,x.blue],cmyk:[x.cyan,x.magenta,x.yellow,x.black],lab:[x.labL,x.labA,x.labB],xPct:x.xPct,yPct:x.yPct};
+    setSample(s);setReferenceDraft(null);setMode("color");
+    toast.success(saved.code+" salva. O conta-gotas continua ligado.");
     await utils.pod.session.listColorSamples.invalidate({procedureId});
-  }catch(e:any){toast.error(e.message||"Não foi possível salvar essa cor.")}
+  }catch(e:any){toast.error(e.message||"Não foi possível salvar essa cor.")}finally{sampleSaving.current=false}
 }
 function isControl(target:EventTarget|null){
   return target instanceof Element && Boolean(target.closest("button,input,textarea,select,a,[role=button],.reference-sampler-card"));
 }
 function down(e:RP<HTMLDivElement>){
-  if(isControl(e.target))return;
+  if(isControl(e.target)||sampleSaving.current)return;
   if(e.pointerType==="mouse"&&e.button!==0)return;
   e.preventDefault();e.stopPropagation();
   e.currentTarget.setPointerCapture(e.pointerId);
@@ -332,7 +358,7 @@ function down(e:RP<HTMLDivElement>){
     start.current=null;
     pstart.current={x:e.clientX,y:e.clientY};
     base.current=null;
-    readReferenceAt(e.clientX,e.clientY);
+    readSelectedLayerAt(e.clientX,e.clientY);
     return;
   }
 
@@ -361,7 +387,7 @@ function move(e:RP<HTMLDivElement>){
 
   if(sampler&&interactionMode.current==="sample"){
     if(p.length===1&&e.pointerId===samplePointerId.current){
-      readReferenceAt(e.clientX,e.clientY);
+      readSelectedLayerAt(e.clientX,e.clientY);
     }
     return;
   }
@@ -498,27 +524,26 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 {orderedLayers.map((layer:any,index:number)=>{
   if(!layerVisible(layer))return null;
   if(layer.layerKey==="reference"){
-    return canvasRefSrc?<img key="reference" ref={image} src={canvasRefSrc} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100,zIndex:index}} alt="Referência"/>:null;
+    return canvasRefSrc?<img key="reference" ref={node=>{if(node)layerImages.current.set("reference",node);else layerImages.current.delete("reference")}} src={canvasRefSrc} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100,zIndex:index}} alt="Referência"/>:null;
   }
   if(layer.layerKey==="samples"){
-    return <div key="samples" className="cockpit-sample-layer" style={{opacity:layerOpacity(layer)/100,zIndex:index}}>{samples.filter(s=>!s.code.startsWith("P")).map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:s.xPct+"%",top:s.yPct+"%",background:s.hex}}/>)}</div>;
+    return <div key="samples" className="cockpit-sample-layer" style={{opacity:layerOpacity(layer)/100,zIndex:index}}>{samples.filter(s=>!s.code.startsWith("P")).map(s=><span key={s.id} className="sample-marker" data-code={s.code} style={{left:samplePosition(s).xPct+"%",top:samplePosition(s).yPct+"%",background:s.hex}}/>)}</div>;
   }
   const src=canvasSafeSource(layer.imageUrl);
-  return src?<img key={layer.layerKey} src={src} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100,zIndex:index}} alt={layer.name}/>:null;
+  return src?<img key={layer.layerKey} ref={node=>{if(node)layerImages.current.set(String(layer.layerKey),node);else layerImages.current.delete(String(layer.layerKey))}} src={src} className="cockpit-reference cockpit-layer-image" style={{opacity:layerOpacity(layer)/100,zIndex:index}} alt={layer.name}/>:null;
 })}
 {referenceDraft&&<span className="reference-draft-marker" style={{left:referenceDraft.xPct+"%",top:referenceDraft.yPct+"%",background:referenceDraft.hex,zIndex:orderedLayers.length}}/>}
 </div>
 {refOn&&!canvasRefSrc&&<div className="cockpit-empty" style={{pointerEvents:"auto"}}>
   <div><div style={{marginBottom:10}}>Nenhuma referência anexada</div><button className="dock-add" style={{padding:"0 16px"}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();referenceInput.current?.click()}}><Plus size={16}/> Adicionar referência</button></div>
 </div>}
-{sampler&&!referenceDraft&&<div className="cockpit-empty" style={{pointerEvents:"none",color:"#fecdd3"}}><Pipette size={28}/><br/>Pressione e arraste sobre a referência<br/><small style={{fontSize:10,color:"#fda4af"}}>A cor muda em tempo real · solte para fixar · confirme para salvar</small></div>}
+{sampler&&!referenceDraft&&<div className="sampler-instruction" role="status"><Pipette size={16}/><span>{samplingError||(!canSampleSelected?"Selecione uma camada de imagem visível.":samples.length>=30?"Limite de 30 amostras atingido.":`Coletando de ${selectedLayer.name} · pressione e arraste para escolher a cor`)}</span></div>}
 {sampler&&referenceDraft&&<div className="reference-sampler-card" onPointerDown={e=>e.stopPropagation()}>
   <div className="preview" style={{background:referenceDraft.hex}}/>
-  <div className="reference-sampler-info"><strong>Cor selecionada</strong><small>{referenceDraft.hex.toUpperCase()} · RGB {referenceDraft.red}/{referenceDraft.green}/{referenceDraft.blue}</small><small>CMYK {referenceDraft.cyan}/{referenceDraft.magenta}/{referenceDraft.yellow}/{referenceDraft.black} · LAB {referenceDraft.labL.toFixed(1)} {referenceDraft.labA.toFixed(1)} {referenceDraft.labB.toFixed(1)}</small></div>
+  <div className="reference-sampler-info"><strong>{referenceDraft.source.layerName} · amostra 5×5 px</strong><small>Cor original da camada selecionada</small><small>{referenceDraft.hex.toUpperCase()} · RGB {referenceDraft.red}/{referenceDraft.green}/{referenceDraft.blue}</small><small>CMYK {referenceDraft.cyan}/{referenceDraft.magenta}/{referenceDraft.yellow}/{referenceDraft.black} · LAB {referenceDraft.labL.toFixed(1)} {referenceDraft.labA.toFixed(1)} {referenceDraft.labB.toFixed(1)}</small></div>
   <div className="reference-sampler-actions">
-  <button className="cancel-label" onClick={()=>setReferenceDraft(null)}>Mover novamente</button>
-  <button disabled={saveSampleMutation.isPending} onClick={stopSampling}>Cancelar coleta</button>
-  <button className="primary" disabled={saveSampleMutation.isPending} onClick={()=>void confirmReferenceSample()}>Confirmar</button>
+  <button disabled={saveSampleMutation.isPending} onClick={()=>setReferenceDraft(null)}>Descartar ponto</button>
+  <button className="primary" disabled={saveSampleMutation.isPending} onClick={()=>void confirmReferenceSample()}>{saveSampleMutation.isPending?"Salvando…":"Salvar amostra"}</button>
   </div>
 </div>}
 </main>
@@ -536,6 +561,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <div className="dock-body"><SessionLayerPanel
   layers={panelLayers.map((layer:any)=>({layerKey:String(layer.layerKey),name:String(layer.name),src:layer.layerKey==="reference"?canvasRefSrc:layer.layerKey==="samples"?null:canvasSafeSource(layer.imageUrl),opacity:layerOpacity(layer),visible:layerVisible(layer)}))}
   busy={layerBusy||visualLayerQuery.isLoading||addVisualLayerMutation.isPending||removeVisualLayerMutation.isPending}
+  selected={selectedLayerKey} onSelect={selectLayer} onRename={(key,name)=>persistLayer(key,{name})}
   expanded={rex} onExpand={()=>{setRex(true);if(window.matchMedia("(max-width:620px)").matches)setLmin(true)}}
   onReorder={keys=>void reorderLayers(keys)} onVisibility={(key,visible)=>void toggleLayer(key,visible)}
   onOpacity={(key,opacity)=>setLayerLocal(previous=>({...previous,[key]:{...previous[key],opacity}}))}
@@ -546,11 +572,14 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <button className="dock-add secondary" disabled={layerBusy} aria-label="Trocar referência principal" onClick={()=>referenceInput.current?.click()}><Plus size={16}/>{rex&&(refSrc?" Trocar referência":" Adicionar referência")}</button></div>
 </aside>
 
-<div className="cockpit-palette"><button className="palette-add" onClick={()=>{setMode(mode==="tonal"?"color":"tonal");stopSampling();}}><Palette size={13}/> {mode==="tonal"?"Cores":"Tons"}</button>
-{mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):<>{samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}<button className={"palette-add "+(sampler?"selected":"")} onClick={toggleSampling} aria-pressed={sampler} disabled={!sampler&&samples.length>=30}><Pipette size={13}/> {sampler?"Encerrar conta-gotas":"Amostrar"}</button></>}</div>{focusMode&&<div className="focus-palette-strip">
+<div className="cockpit-palette">
+  <button className="palette-add" onClick={()=>setMode(mode==="tonal"?"color":"tonal")}><Palette size={13}/>{mode==="tonal"?"Cores":"Tons"}</button>
+  {mode==="tonal"?GRAYS.map((g,i)=><button key={g} className="palette-chip" style={{background:g}}><span>T{String(i+1).padStart(2,"0")}</span></button>):samples.map(s=><button key={s.id} className="palette-chip" style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}}><span>{s.code}</span></button>)}
+  <button className={"palette-add "+(sampler?"selected":"")} onClick={toggleSampling} aria-pressed={sampler} disabled={!sampler&&samples.length>=30}><Pipette size={13}/>{sampler?"Desligar conta-gotas":"Conta-gotas"}</button>
+</div>{focusMode&&<div className="focus-palette-strip">
   <div className="focus-tonal-gradient" title="Escala de contraste"/>
   <div className="focus-samples">{samples.map(s=><button key={s.id} style={{background:s.hex}} onClick={()=>{setSample(s);setSheet("sample")}} title={s.code}><span>{s.code}</span></button>)}</div>
-  <button className={"focus-sampler-button "+(sampler?"active":"")} onClick={toggleSampling} aria-pressed={sampler} disabled={!sampler&&samples.length>=30} title={sampler?"Encerrar conta-gotas":"Amostrar cor"}>{sampler?<X size={15}/>:<Pipette size={15}/>}<span>{sampler?"Encerrar":"Amostrar"}</span></button>
+  <button className={"focus-sampler-button "+(sampler?"active":"")} onClick={toggleSampling} aria-pressed={sampler} disabled={!sampler&&samples.length>=30} aria-label={sampler?"Desligar conta-gotas":"Conta-gotas"} title={sampler?"Desligar conta-gotas":"Amostrar cor"}>{sampler?<X size={15}/>:<Pipette size={15}/>}<span>{sampler?"Encerrar":"Amostrar"}</span></button>
 </div>}
 
 
@@ -561,11 +590,11 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <input ref={finalInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void finalPhoto(f);e.currentTarget.value=""}}/>
 <footer className="cockpit-bottom"><button type="button" aria-label={timerLabel} disabled={props.finished||props.timerBusy} onClick={()=>void toggleTimer()}>{props.running?<Pause size={18}/>:<Play size={18}/>}<span className="button-label">{props.running?"PAUSAR":props.started?"RETOMAR":"INICIAR"}</span></button><button type="button" aria-label="Buscar materiais no estoque" onClick={()=>setSheet("materials")}><Package size={18}/><span className="button-label">ESTOQUE</span></button><button type="button" aria-label="Adicionar foto da sessão" onClick={()=>finalInput.current?.click()}><Camera size={18}/><span className="button-label">FOTO</span></button><button type="button" aria-label="Revisar conclusão da sessão" className="finish" onClick={()=>setSheet("finish")}><Square size={17}/><span className="button-label">CONCLUIR</span></button></footer>
 
-{sheet==="layerAdd"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Nova camada visual</h3><p>Adicione uma imagem independente. Ela poderá ser ocultada, ter a opacidade alterada e ser reordenada sem modificar a referência principal.</p>
+{sheet==="layerAdd"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Nova camada visual</h3><p>Adicione uma imagem independente. O arquivo será exibido como enviado, sem filtros. Você controla a ordem, a opacidade e a visibilidade.</p>
 <div className="sheet-grid">{[
   {type:"contrast",name:"Contraste",desc:"Versão preparada para leitura de contraste"},
   {type:"stencil",name:"Decalque",desc:"Decalque isolado"},
-  {type:"stencil_overlay",name:"Decalque sobre referência",desc:"Sobreposição com opacidade inicial de 65%"},
+  {type:"stencil_overlay",name:"Decalque sobre referência",desc:"Imagem enviada pelo artista, sem tratamento automático"},
   {type:"image",name:"Camada de imagem",desc:"Qualquer outra imagem de apoio"},
 ].map((item:any)=><button key={item.type} className={"sheet-option "+(newLayerType===item.type?"selected":"")} onClick={()=>{setNewLayerType(item.type);setNewLayerName(item.name)}}><b>{item.name}</b><small>{item.desc}</small></button>)}</div>
 <label className="layer-name-label">Nome da camada</label><input className="search-input" value={newLayerName} onChange={e=>setNewLayerName(e.target.value)} placeholder="Ex.: Contraste PB, Decalque 2..."/>
@@ -576,7 +605,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 }} onRecipe={props.finished?undefined:index=>{
   const color=preparationQuery.data?.preparation?.colors[index];if(!color)return;
   if(color.ingredients.some(i=>!stock.some(m=>Number(m.id)===i.tenantMaterialId)))return toast.error("Uma tinta está indisponível. Atualize o estoque antes de reutilizar a receita.");
-  setSample(samples.find(s=>s.code===`P${String(index+1).padStart(2,"0")}`)||null);setCup(color.cupSize);setRecipeCupMaterialId("");setRecipeDropsPerMl(color.dropsPerMl);setIngs(color.ingredients.map(i=>({materialId:String(i.tenantMaterialId),drops:i.drops})));setFamilyFilter(null);stopSampling();setSheet("recipe");
+  setSample(samples.find(s=>s.code===`P${String(index+1).padStart(2,"0")}`)||null);setCup(color.cupSize);setRecipeCupMaterialId("");setRecipeDropsPerMl(color.dropsPerMl);setIngs(color.ingredients.map(i=>({materialId:String(i.tenantMaterialId),drops:i.drops})));setFamilyFilter(null);setReferenceDraft(null);setSheet("recipe");
 }}/></section>}
 {sheet==="materials"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Adicionar material ativo</h3>{preparationQuery.data?.preparation&&<button className="dock-add" onClick={()=>setSheet("preparation")}>Ver materiais e receitas preparados</button>}<p>Adicionar inclui o material nesta sessão. A baixa acontece ao confirmar a quantidade utilizada.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><details className="session-costs"><summary>Consumo e custos desta sessão</summary><p>Valores registrados no consumo. Cadastros de teste ou preços estimados não comprovam gasto real.</p><p>Total registrado: {new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format((session.data?.consumptions||[]).filter(c=>c.status==='consumido').reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0))}</p>{(session.data?.consumptions||[]).filter(c=>c.status==='consumido').map(c=><article key={c.id}><b>{c.nameSnapshot}</b><p>{Number(c.quantity).toLocaleString('pt-BR')} {c.unitSnapshot} · Lote: {c.lotSnapshot||'não informado'} · {new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(c.totalCostSnapshot))}</p>{Number(c.unitCostSnapshot)===0&&<p>Custo registrado como zero; confira o cadastro do lote.</p>}</article>)}</details><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} disabled={addMaterial.isPending} onClick={async()=>{try{await addMaterial.mutateAsync({procedureId,tenantMaterialId:Number(m.id)});await refreshAll();setSheet(null);setSearch("")}catch(e:any){toast.error(e.message)}}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section>}
 
@@ -586,7 +615,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 
 {sheet==="recipe"&&<section className="cockpit-sheet recipe-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Receita {sample?"· "+sample.code:""}</h3><p>Será gravada junto da sessão e das baixas de cada pigmento. Conversão: {recipeDropsPerMl} gotas/ml.</p>
 {sample&&<div className="recipe-sample-card">
-  <div className="sample-crop" style={canvasRefSrc&&!sample.code.startsWith("P")?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/>
+  <div className="sample-crop" style={{background:sample.hex}}/>
   <div className="recipe-sample-swatch" style={{background:sample.hex}}/>
   <div className="recipe-sample-meta"><strong>{sample.code}</strong><span>{sample.code.startsWith("P")?"Cor preparada antes da sessão":"Referência retirada da imagem"}</span><small>{sample.hex.toUpperCase()} · RGB {sample.rgb.join(" / ")} · CMYK {sample.cmyk.join(" / ")}</small></div>
 </div>}
@@ -610,7 +639,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <div className={"mix-summary mix-summary-sticky "+(drops>cupDropCapacity?"over":"")}><div>Total: {drops}{cup?` / ${cupDropCapacity}`:""} gotas · ~{ml.toFixed(2)} ml</div>{cup?<div>Batoque {cup}: {CUP[cup].toFixed(2)} ml · ocupação ~{pct}%</div>:<div>Composição sem recipiente definido</div>}{drops>cupDropCapacity&&<div className="mix-over-warning">Mistura acima da capacidade do batoque.</div>}{ings.map(i=>{const m=stock.find(x=>x.id===i.materialId);return <div key={i.materialId}>{m?.short}: {i.drops}gt · {drops?((i.drops/drops)*100).toFixed(1):0}%</div>})}</div>
 <div className="sheet-actions recipe-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={saveRecipeMutation.isPending||drops===0||drops>cupDropCapacity} onClick={()=>void saveRecipe()}>Salvar receita + baixar estoque</button></div></section>}
 
-{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · {sample.code.startsWith("P")?"Cor preparada":"Amostra 5×5 px"}</h3><div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={canvasRefSrc&&!sample.code.startsWith("P")?{backgroundImage:"url(\""+canvasRefSrc+"\")",backgroundPosition:sample.xPct+"% "+sample.yPct+"%"}:{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);startSampling()}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button>{sample.code.startsWith("P")&&<button onClick={()=>setSheet("preparation")}>Ver receita preparada</button>}</div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · {r.cupSize?`Batoque ${r.cupSize}`:"Sem recipiente"}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
+{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · {sample.code.startsWith("P")?"Cor preparada":"Amostra 5×5 px"}</h3>{!sample.code.startsWith("P")&&<p>Camada de origem: {sample.source?.layerName||"não registrada nesta amostra antiga"}</p>}<div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);startSampling()}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button>{sample.code.startsWith("P")&&<button onClick={()=>setSheet("preparation")}>Ver receita preparada</button>}</div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · {r.cupSize?`Batoque ${r.cupSize}`:"Sem recipiente"}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
 
 {sheet==="notes"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Notas rápidas</h3><textarea className="cockpit-note" value={note} onChange={e=>setNote(e.target.value)}/><div className="sheet-actions"><button className="primary" disabled={updateProcedure.isPending} onClick={()=>void saveNotes()}>Salvar na sessão</button></div></section>}
 {sheet==="finish"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Revisão antes de concluir</h3>{startSessionAction}<p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {recipes.filter((r:any)=>r.status!=="reverted").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>setSheet(null)}>Voltar</button><button className="primary" onClick={()=>{setSheet(null);props.onFinish()}}>Ir para conclusão da sessão</button></div></section>}

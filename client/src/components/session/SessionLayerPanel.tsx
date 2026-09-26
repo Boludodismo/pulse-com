@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
-import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, Layers3, Pipette, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, Layers3, Pipette, Pencil, Check, X } from "lucide-react";
 import { moveVisualLayer } from "@shared/sessionVisualLayers";
 
 export type PanelLayer = {
@@ -15,6 +15,9 @@ type Props = {
   busy: boolean;
   expanded: boolean;
   onExpand: () => void;
+  selected: string;
+  onSelect: (key: string) => void;
+  onRename: (key: string, name: string) => Promise<boolean>;
   onReorder: (keys: string[]) => void;
   onVisibility: (key: string, visible: boolean) => void;
   onOpacity: (key: string, opacity: number) => void;
@@ -23,7 +26,13 @@ type Props = {
 };
 
 export default function SessionLayerPanel(props: Props) {
-  const [selected, setSelected] = useState("reference");
+  const selected=props.selected, setSelected=props.onSelect;
+  const [renaming,setRenaming]=useState<string|null>(null);
+  const [nameDraft,setNameDraft]=useState("");
+  async function saveName(key:string){
+    const name=nameDraft.trim();if(!name||props.busy)return;
+    if(await props.onRename(key,name))setRenaming(null);
+  }
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -31,7 +40,7 @@ export default function SessionLayerPanel(props: Props) {
   const suppressClick = useRef(false);
   const keys = props.layers.map(layer => layer.layerKey);
   useEffect(() => {
-    if (!keys.includes(selected)) setSelected(keys[0] || "reference");
+    if (keys.length&&!keys.includes(selected)) setSelected(keys.includes("reference")?"reference":keys[0]);
   }, [keys.join("|"), selected]);
 
   function begin(event: PointerEvent<HTMLButtonElement>, key: string) {
@@ -118,7 +127,13 @@ export default function SessionLayerPanel(props: Props) {
             onKeyUp={event => props.onCommitOpacity(layer.layerKey, Number(event.currentTarget.value))}
             onBlur={event => props.onCommitOpacity(layer.layerKey, Number(event.currentTarget.value))}/>
         </label>
+        {renaming === layer.layerKey && <form className="session-layer-rename" onSubmit={event=>{event.preventDefault();void saveName(layer.layerKey)}}>
+          <label>Nome da camada<input autoFocus maxLength={160} value={nameDraft} disabled={props.busy} aria-label={`Nome de ${layer.name}`} onChange={event=>setNameDraft(event.target.value)} onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();setRenaming(null)}}}/></label>
+          <button type="submit" disabled={props.busy||!nameDraft.trim()} aria-label="Salvar nome da camada"><Check size={16}/></button>
+          <button type="button" disabled={props.busy} onClick={()=>setRenaming(null)} aria-label="Cancelar edição do nome"><X size={16}/></button>
+        </form>}
         {selected === layer.layerKey && <div className="session-layer-actions">
+          <button type="button" disabled={props.busy} aria-label={`Renomear ${layer.name}`} title="Renomear camada" onClick={()=>{setRenaming(layer.layerKey);setNameDraft(layer.name)}}><Pencil size={16}/></button>
           <button type="button" aria-label={`Subir ${layer.name}`} title="Subir camada" disabled={props.busy || index === 0} onClick={() => props.onReorder(moveVisualLayer(keys, layer.layerKey, index - 1))}><ArrowUp size={16}/></button>
           <button type="button" aria-label={`Descer ${layer.name}`} title="Descer camada" disabled={props.busy || index === keys.length - 1} onClick={() => props.onReorder(moveVisualLayer(keys, layer.layerKey, index + 1))}><ArrowDown size={16}/></button>
           {!["reference", "samples"].includes(layer.layerKey) && <button type="button" className="danger" disabled={props.busy} aria-label={`Remover ${layer.name}`} title="Remover camada" onClick={() => props.onRemove(layer.layerKey)}><X size={16}/></button>}

@@ -137,6 +137,32 @@ async function main() {
   assert.equal(await stock(vaseline.id),beforeStock);
   console.log("PASS: layer order, opacity, visibility, atomic concurrent reorder, stale/deleted/foreign layers, bounds and tenant isolation");
 
+  await api.pod.session.updateVisualLayer({procedureId:created.id,layerKey:layerA.layerKey,name:"Arte original renomeada",isVisible:true,opacity:100});
+  const renamed=(await layers()).find(layer=>layer.layerKey===layerA.layerKey)!;
+  assert.equal(renamed.name,"Arte original renomeada");assert.equal(renamed.imageKey,"test-layer-a");
+  await assert.rejects(other.pod.session.updateVisualLayer({procedureId:created.id,layerKey:layerA.layerKey,name:"Não permitido"}));
+  await assert.rejects(api.pod.session.updateVisualLayer({procedureId:created.id,layerKey:layerA.layerKey,name:"   "}));
+  const sampleInput={procedureId:created.id,hex:"#102030",red:16,green:32,blue:48,cyan:67,magenta:33,yellow:0,black:81,labL:12,labA:0,labB:0,xPct:50,yPct:50,sampleSize:5 as const,requestId:randomUUID(),source:{layerKey:layerA.layerKey,imageKey:"test-layer-a",imageXPct:50,imageYPct:50,width:1200,height:800}};
+  const firstSamples=await Promise.all([api.pod.session.saveColorSample(sampleInput),api.pod.session.saveColorSample(sampleInput)]);
+  assert.equal(firstSamples[0].id,firstSamples[1].id);
+  const nextSamples=await Promise.all([1,2].map(()=>api.pod.session.saveColorSample({...sampleInput,requestId:randomUUID()})));
+  assert.notEqual(nextSamples[0].code,nextSamples[1].code);
+  const savedSamples=await api.pod.session.listColorSamples({procedureId:created.id});
+  const sampled=savedSamples.find(row=>row.id===firstSamples[0].id)!;
+  assert.equal(sampled.source?.layerKey,layerA.layerKey);assert.equal(sampled.source?.layerName,"Arte original renomeada");assert.equal(sampled.hex,"#102030");
+  await api.pod.session.updateVisualLayer({procedureId:created.id,layerKey:layerA.layerKey,name:"Outro nome"});
+  assert.equal((await api.pod.session.listColorSamples({procedureId:created.id})).find(row=>row.id===sampled.id)?.source?.layerName,"Arte original renomeada");
+  await assert.rejects(other.pod.session.saveColorSample({...sampleInput,requestId:randomUUID()}));
+  await assert.rejects(api.pod.session.saveColorSample({...sampleInput,requestId:randomUUID(),source:{...sampleInput.source,layerKey:"samples"}}));
+  await assert.rejects(api.pod.session.saveColorSample({...sampleInput,requestId:randomUUID(),source:{...sampleInput.source,layerKey:"foreign-layer"}}));
+  await assert.rejects(api.pod.session.saveColorSample({...sampleInput,requestId:randomUUID(),source:{...sampleInput.source,imageKey:"old-image-key"}}));
+  await api.pod.session.updateVisualLayer({procedureId:created.id,layerKey:layerA.layerKey,isVisible:false});
+  await assert.rejects(api.pod.session.saveColorSample({...sampleInput,requestId:randomUUID()}));
+  const legacy=await api.pod.session.saveColorSample({...sampleInput,requestId:randomUUID(),source:undefined});
+  assert.equal((await api.pod.session.listColorSamples({procedureId:created.id})).find(row=>row.id===legacy.id)?.source,null);
+  assert.equal(await stock(vaseline.id),beforeStock);
+  console.log("PASS: layer rename preserves image; selected-image source history, sequential samples, concurrent unique codes, retry replay, hidden/stale/foreign source rejection and legacy compatibility");
+
   await db.end();
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

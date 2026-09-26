@@ -106,6 +106,14 @@
 .session-layer-opacity input{display:block;width:100%;height:32px;margin:0;accent-color:#f43f5e;touch-action:pan-y}
 .session-layer-actions{grid-column:1/-1;display:flex;gap:6px}
 .session-layer-actions .danger{margin-left:auto;color:#fda4af}
+.session-layer-rename{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px}
+.session-layer-rename label{width:100%;font-size:11px;color:#d4d4d8}
+.session-layer-rename input{display:block;width:100%;min-width:0;margin-top:5px;padding:8px;border:1px solid #71717a;border-radius:8px;background:#09090b;color:#fff}
+.session-layer-rename button{display:grid;place-items:center;min-width:44px;min-height:44px;border:1px solid #ffffff22;border-radius:9px;background:#ffffff08}
+.sampler-instruction{position:absolute;z-index:18;left:50%;bottom:60px;transform:translateX(-50%);display:flex;align-items:center;gap:7px;max-width:calc(100% - 32px);padding:9px 12px;border:1px solid #f43f5e55;border-radius:10px;background:#141417e8;color:#fecdd3;font-size:11px;pointer-events:none}
+.sampler-instruction svg{flex-shrink:0}
+.cockpit-lab.sampling-mode .cockpit-stage{cursor:crosshair}
+.cockpit-palette .palette-add{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:32px;height:auto;flex-shrink:0;padding:5px 8px;line-height:1.25;font-size:10px}
 .session-layer-panel button:disabled,.session-layer-panel input:disabled{opacity:.45}
 .session-layer-status{font-size:10px;color:#a1a1aa}
 .session-layer-percent{font-size:9px;grid-column:1/-1;text-align:center;color:#a1a1aa}
