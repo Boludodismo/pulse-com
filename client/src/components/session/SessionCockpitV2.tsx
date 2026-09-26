@@ -389,6 +389,7 @@ function up(e:RP<HTMLDivElement>){
   if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
 }
 function wheel(e:RW<HTMLDivElement>){if(isControl(e.target))return;e.preventDefault();if(imageGesture.current.mode==="sample"||imageGesture.current.nativeActive)return;if(sampler&&!e.ctrlKey)return;vset({...vr.current,scale:Math.max(.2,Math.min(5,vr.current.scale*(e.deltaY<0?1.08:.92)))})}
+// Recolhe UI transitória sem bloquear o pointerdown que continua para a imagem.
 function dismissOutside(target:EventTarget|null){
   if(!(target instanceof Element))return;
   if(target.closest(".cockpit-sheet,.appearance-sheet,.temp-sampler-panel,.session-material-tooltip"))return;
