@@ -13,6 +13,10 @@ async function main() {
   const [existing]: any = await db.query("SHOW TABLES");
   assert.equal(existing.length, 0, "Refuse to use an existing database");
   await runStartupMigrations();
+  // The Railway-only quote preparation adds this optional association in production.
+  // Mirror it in this disposable database for full-schema appointment reads below.
+  const [quoteColumns]: any = await db.query("SHOW COLUMNS FROM appointments LIKE 'quote_id'");
+  if (!quoteColumns.length) await db.query("ALTER TABLE appointments ADD COLUMN quote_id INT NULL");
   await db.query("INSERT INTO studios(id,name,masterKey) VALUES (101,'Estúdio original','test-101'),(202,'Estúdio assinante','test-202')");
   await db.query("CREATE TABLE crm_studio_identity_backup(studioId INT PRIMARY KEY, previousIdentity JSON NOT NULL)");
   await db.query("INSERT INTO crm_studio_identity_backup VALUES(101,JSON_OBJECT('name','Estúdio original'))");

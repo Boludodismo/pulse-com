@@ -15,7 +15,7 @@ async function main() {
   process.env.DATABASE_URL = url.toString();
   const c = await mysql.createConnection(url.toString());
   await c.query('CREATE TABLE clients(id INT PRIMARY KEY, studioId INT, name VARCHAR(255))');
-  await c.query('CREATE TABLE appointments(id INT PRIMARY KEY, studioId INT, clientId INT, quote_id INT NULL, date DATETIME, duration INT, service VARCHAR(255), artist VARCHAR(255), status VARCHAR(40))');
+  await c.query('CREATE TABLE appointments(id INT PRIMARY KEY, studioId INT, clientId INT, date DATETIME, duration INT, service VARCHAR(255), artist VARCHAR(255), status VARCHAR(40))');
   await c.query("INSERT INTO clients VALUES(1,101,'Cliente do estúdio'),(2,202,'Cliente de outro estúdio')");
   const fixtures = [
     [1,101,1,'2026-09-11 23:45:00',120,'Sessão na madrugada','Artista Exemplo','agendado'],
