@@ -12,6 +12,7 @@ import { upgradeAppointmentKits } from "../server/_core/appointmentKitSchema";
 import { ensureStudioSettingsScope } from "../server/_core/studioSettingsScope";
 import { visualLayerStack } from "../shared/sessionVisualLayers";
 import { emptyPreparation } from "../shared/sessionPreparation";
+import { defaultSessionAppearance } from "../shared/sessionAppearance";
 
 async function main() {
   const url = new URL(process.env.DATABASE_URL!);
@@ -45,6 +46,36 @@ async function main() {
   assert.equal(session.consumptions.length, 0);
   const stock = async (id: number) => Number((await api.pod.inventory.list({ artistId: 9101 })).find(m => m.id === id)!.currentQuantity);
   assert.equal(await stock(vaseline.id), 100);
+  // Preferences belong to an artist across clients; they must not touch stock or image layers.
+  const prefs=defaultSessionAppearance();prefs.materials.size=1.25;prefs.layers.opacity=.65;prefs.tools.size=1.1;
+  const initialAppearance=await api.pod.session.getAppearance({procedureId:created.id});
+  assert.equal(initialAppearance.preferences,null);assert.equal(initialAppearance.artistId,9101);
+  const savedAppearance=await api.pod.session.saveAppearance({procedureId:created.id,expectedRevision:0,preferences:prefs});
+  assert.equal(savedAppearance.revision,1);
+  await db.query("INSERT INTO artists(id,studioId,name,active) VALUES(9102,101,'Segundo artista',1)");
+  await db.query("INSERT INTO clients(id,studioId,name) VALUES(9102,101,'Segundo cliente')");
+  const nextClient=await api.procedures.create({clientId:9102,artistId:9101,title:"Outro cliente",requestId:randomUUID()});
+  const nextArtist=await api.procedures.create({clientId:9102,artistId:9102,title:"Outro artista",requestId:randomUUID()});
+  assert.deepEqual((await api.pod.session.getAppearance({procedureId:nextClient.id})).preferences,prefs);
+  assert.equal((await api.pod.session.getAppearance({procedureId:nextArtist.id})).preferences,null);
+  await db.query("INSERT INTO user_module_permissions(userId,studioId,module,canRead,canWrite) VALUES(101,101,'pod',1,1) ON DUPLICATE KEY UPDATE canRead=1,canWrite=1");
+  const ownArtist=root.createCaller({...ctx,user:{...ctx.user,role:"collaborator",artistId:9101}} as any);
+  assert.deepEqual((await ownArtist.pod.session.getAppearance({procedureId:created.id})).preferences,prefs);
+  await assert.rejects(ownArtist.pod.session.getAppearance({procedureId:nextArtist.id}));
+  await assert.rejects(ownArtist.pod.session.saveAppearance({procedureId:nextArtist.id,expectedRevision:0,preferences:prefs}));
+  await assert.rejects(other.pod.session.getAppearance({procedureId:created.id}));
+  await assert.rejects(other.pod.session.saveAppearance({procedureId:created.id,expectedRevision:1,preferences:prefs}));
+  await assert.rejects(api.pod.session.saveAppearance({procedureId:created.id,expectedRevision:0,preferences:prefs}));
+  const changes=await Promise.allSettled([
+    api.pod.session.saveAppearance({procedureId:created.id,expectedRevision:1,preferences:{...prefs,tools:{size:1.2,opacity:.8}}}),
+    api.pod.session.saveAppearance({procedureId:nextClient.id,expectedRevision:1,preferences:{...prefs,tools:{size:.9,opacity:.9}}}),
+  ]);
+  assert.equal(changes.filter(r=>r.status==="fulfilled").length,1);
+  assert.equal(changes.filter(r=>r.status==="rejected").length,1);
+  await ensureSessionCockpitSchema();
+  assert.equal((await api.pod.session.getAppearance({procedureId:created.id})).revision,2);
+  assert.equal(await stock(vaseline.id),100);
+  console.log("PASS: artist appearance persists across clients, isolated by artist and tenant, concurrent edits guarded, restart preserves preferences and stock");
   await Promise.all([1, 2].map(() => api.pod.session.addMaterial({ procedureId: created.id, tenantMaterialId: diluent.id })));
   assert.equal((await api.pod.session.get({ procedureId: created.id })).sessionMaterials.filter(m => m.tenantMaterialId === diluent.id).length, 1);
   assert.equal(await stock(diluent.id), 100);

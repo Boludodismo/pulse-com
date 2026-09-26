@@ -1,3 +1,8 @@
+import { materialSymbol, materialSymbolLabels, recordedColor, recipeDisplayColor } from "@shared/sessionAppearance";
+import SessionMaterialIcon from "./SessionMaterialIcon";
+import SessionMaterialHint from "./SessionMaterialHint";
+import SessionAppearancePanel from "./SessionAppearancePanel";
+import { useSessionAppearance } from "./useSessionAppearance";
 import { imageSamplePoint, samplePixelRegion, averageSamplePixels, imageSampleMarker, type SampleSource } from "@shared/sessionColorSampling";
 import { visualLayerStack } from "@shared/sessionVisualLayers";
 import SessionLayerPanel from "./SessionLayerPanel";
@@ -7,21 +12,21 @@ import SessionMaterialQuantity from "@/components/SessionMaterialQuantity";
 import { SESSION_CUP_ML, SESSION_DROPS_PER_ML, inkStockQuantity, isSessionCartridge, validateSessionUnit, isSessionOintment, isSessionDiluent, isSessionCup, isSessionInk, sessionCupSize } from "@shared/sessionInkQuantity";
 import { createPortal } from "react-dom";
 import {useEffect,useMemo,useRef,useState,type CSSProperties,type PointerEvent as RP,type WheelEvent as RW} from "react";
-import {ArrowLeft,Home,Undo2,Redo2,Minus,Eye,EyeOff,Plus,Pause,Play,Package,Camera,Square,StickyNote,RotateCcw,RotateCw,Palette,Pipette,X,Search,Droplets,Check,Layers3,ChevronLeft,ChevronRight,Maximize2,Minimize2} from "lucide-react";
+import {ArrowLeft,Home,Undo2,Redo2,Minus,Eye,EyeOff,Plus,Pause,Play,Package,Camera,Square,StickyNote,RotateCcw,RotateCw,Palette,Pipette,X,Search,Droplets,Check,Layers3,ChevronLeft,ChevronRight,Maximize2,Minimize2,Settings2} from "lucide-react";
 import {toast} from "sonner";
 import {trpc} from "@/lib/trpc";
 import TemporaryColorSampler, { type ColorValue } from "./TemporaryColorSampler";
 import "./session-cockpit-v2.css";
 
 type Kind="cartridge"|"ink"|"diluent"|"ointment"|"protection"|"cup";
-type Material={id:string;name:string;short:string;kind:Kind;unit:string;color?:string;detail:string;brand?:string|null;configuration?:string|null;notes?:string|null};
+type Material={category?:string|null;id:string;name:string;short:string;kind:Kind;unit:string;color?:string;detail:string;brand?:string|null;configuration?:string|null;notes?:string|null};
 type Cup="P"|"M"|"G"|"GG";
 type Ingredient={materialId:string;drops:number};
 type View={x:number;y:number;scale:number;rotation:number};
 type Sample={source?:SampleSource|null;id:string;code:string;hex:string;rgb:[number,number,number];cmyk:[number,number,number,number];lab:[number,number,number];xPct:number;yPct:number};
 type ReferenceDraft=ColorValue&{xPct:number;yPct:number;source:SampleSource;requestId:string};
 type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
-type Sheet="preparation"|"materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|null;
+type Sheet="preparation"|"materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|"appearance"|null;
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
 type RecipeAction={kind:"recipe";recipeId:number;label:string;payload:{procedureId:number;sampleId?:number;cupSize:Cup|null;dropsPerMl:number;cupTenantMaterialId?:number;ingredients:{tenantMaterialId:number;drops:number}[]}};
 type StockAction=QuickAction|RecipeAction;
@@ -44,9 +49,8 @@ function lab(r:number,g:number,b:number):[number,number,number]{const lin=(v:num
 function parseHexColor(value?:string){if(!value||!/^#[0-9a-f]{6}$/i.test(value))return null;return[parseInt(value.slice(1,3),16),parseInt(value.slice(3,5),16),parseInt(value.slice(5,7),16)] as [number,number,number]}
 function familyForColor(hexValue?:string,stored?:any){let values:[number,number,number,number]|null=null;if(stored)values=[Number(stored.cyan),Number(stored.magenta),Number(stored.yellow),Number(stored.black)];else{const rgb=parseHexColor(hexValue);if(rgb)values=cmyk(...rgb)}if(!values)return null;const [C,M,Y,K]=values;if(K>=65)return"K";const rgb=parseHexColor(stored?.hex||hexValue);if(rgb&&rgb.every(v=>v>=225))return"W";const max=Math.max(C,M,Y);if(max===C)return"C";if(max===M)return"M";return"Y"}
 function inferKind(name:string,category?:string|null):Kind{const m={name,category,unit:""};if(isSessionCartridge(m))return"cartridge";if(isSessionCup(m))return"cup";if(isSessionOintment(m))return"ointment";if(isSessionDiluent(m))return"diluent";if(isSessionInk(m))return"ink";if(/cartucho|agulha|needle|round liner|round shader|magnum|\brl\b|\brs\b/i.test(name+" "+category))return"cartridge";return"protection"}
-function guessColor(name:string){const t=name.toLowerCase();if(/white|branco/.test(t))return"#f4f4f5";if(/black|preto/.test(t))return"#111111";if(/navy|marinho/.test(t))return"#14213d";if(/orange|laranja/.test(t))return"#f97316";if(/olive|oliva/.test(t))return"#65743a";if(/red|vermelh/.test(t))return"#b91c1c";if(/blue|azul/.test(t))return"#2563eb";if(/green|verde/.test(t))return"#16a34a";if(/yellow|amarel/.test(t))return"#eab308";return undefined}
 function shortName(name:string,configuration?:string|null){if(configuration?.trim())return configuration.trim().slice(0,7).toUpperCase();const m=name.toUpperCase().match(/\b\d{1,2}(?:RL|RS|M1|CM|RM)\b/);if(m)return m[0];return name.replace(/[^A-Za-z0-9]/g,"").slice(0,4).toUpperCase()||"ITEM"}
-function toMaterial(raw:any):Material{return{id:String(raw.id),name:String(raw.name||"Material"),short:shortName(String(raw.name||""),raw.configuration),kind:inferKind(String(raw.name||""),raw.category),unit:String(raw.unit||"unidade"),color:guessColor(String(raw.name||"")),detail:[raw.brand,raw.configuration,raw.lot?"Lote "+raw.lot:null].filter(Boolean).join(" · ")||"Estoque ativo",brand:raw.brand,configuration:raw.configuration,notes:raw.notes}}
+function toMaterial(raw:any):Material{return{id:String(raw.id),name:String(raw.name||"Material"),short:shortName(String(raw.name||""),raw.configuration),kind:inferKind(String(raw.name||""),raw.category),unit:String(raw.unit||"unidade"),category:raw.category,color:recordedColor(raw.hex||raw.color),detail:[raw.brand,raw.configuration,raw.lot?"Lote "+raw.lot:null].filter(Boolean).join(" · ")||"Estoque ativo",brand:raw.brand,configuration:raw.configuration,notes:raw.notes}}
 function canvasSafeSource(value:string|null|undefined){
   if(!value)return null;
   try{
@@ -81,6 +85,7 @@ export type SessionCockpitV2Props={
 
 export default function SessionCockpitV2(props:SessionCockpitV2Props){
 const procedureId=props.procedureId;
+const appearance=useSessionAppearance(procedureId);
 const session=trpc.pod.session.get.useQuery({procedureId},{enabled:!!procedureId});
 const proc=session.data?.procedure;
 const client=trpc.clients.getById.useQuery({id:props.clientId},{enabled:!!props.clientId});
@@ -118,9 +123,16 @@ const found=useMemo(()=>{const q=search.toLowerCase();return stock.filter(m=>!ac
 
 const [view,setView]=useState<View>(V0),vr=useRef(view);vr.current=view;
 const [vu,setVu]=useState<View[]>([]),[vredo,setVredo]=useState<View[]>([]);
-const [lmin,setLmin]=useState(()=>window.matchMedia("(max-width: 620px)").matches),[rmin,setRmin]=useState(()=>window.matchMedia("(max-width: 620px)").matches),[lex,setLex]=useState(false),[rex,setRex]=useState(false);
+const {materials:materialAppearance,layers:layerAppearance,tools:toolAppearance,palette:paletteAppearance}=appearance.value;
+function setDock(key:"materials"|"layers",field:"size"|"opacity"|"expanded"|"collapsed",value:number|boolean|((previous:boolean)=>boolean)){
+  appearance.change(previous=>({...previous,[key]:{...previous[key],[field]:typeof value==="function"?value(Boolean(previous[key][field])):value}}));
+}
+const lmin=materialAppearance.collapsed,rmin=layerAppearance.collapsed,lex=materialAppearance.expanded,rex=layerAppearance.expanded;
+const setLmin=(v:boolean|((p:boolean)=>boolean))=>setDock("materials","collapsed",v),setRmin=(v:boolean|((p:boolean)=>boolean))=>setDock("layers","collapsed",v);
+const setLex=(v:boolean|((p:boolean)=>boolean))=>setDock("materials","expanded",v),setRex=(v:boolean|((p:boolean)=>boolean))=>setDock("layers","expanded",v);
+const lop=materialAppearance.opacity,rop=layerAppearance.opacity,lscale=materialAppearance.size,rscale=layerAppearance.size;
+const setLop=(v:number)=>setDock("materials","opacity",v),setRop=(v:number)=>setDock("layers","opacity",v),setLscale=(v:number)=>setDock("materials","size",v),setRscale=(v:number)=>setDock("layers","size",v);
 const [focusMode,setFocusMode]=useState(false),[cleanMode,setCleanMode]=useState(false);
-const [lop,setLop]=useState(.9),[rop,setRop]=useState(.9),[lscale,setLscale]=useState(1),[rscale,setRscale]=useState(1);
 const [layerLocal,setLayerLocal]=useState<Record<string,{opacity?:number;isVisible?:boolean}>>({});
 const [selectedLayerKey,setSelectedLayerKey]=useState("reference");
 const [samplingError,setSamplingError]=useState<string|null>(null);
@@ -494,7 +506,7 @@ async function uploadReference(file:File){
 async function finalPhoto(file:File){if(file.size>16*1024*1024)return toast.error("Foto acima de 16 MB.");const b64=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(r.error);r.onload=()=>resolve(String(r.result).split(",")[1]||"");r.readAsDataURL(file)});try{await uploadImage.mutateAsync({procedureId,imageBase64:b64,mimeType:file.type||"image/jpeg",imageType:"final"});await utils.pod.session.get.invalidate({procedureId});toast.success("Foto final arquivada na sessão.")}catch(e:any){toast.error(e.message)}}
 if(session.isLoading||!proc)return <div className="cockpit-lab" style={{display:"grid",placeItems:"center"}}>Abrindo sessão…</div>;
 
-const panel=(o:number,s:number,side:"left"|"right")=>({"--panel-alpha":o,transform:"scale("+s+")",transformOrigin:side==="left"?"left top":"right top"} as CSSProperties);
+const panel=(o:number,s:number,side:"left"|"right")=>({"--panel-alpha":o,"--dock-scale":s} as CSSProperties);
 const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP,pct=cup?Math.round(ml/CUP[cup]*100):0,cupDropCapacity=cup?Math.floor(CUP[cup]/DROP):Infinity,ingredientLimit=500;
 const refSrc=proc.referenceImageUrl?String(proc.referenceImageUrl):(props.originalSrc?String(props.originalSrc):null);
 const canvasRefSrc=canvasSafeSource(refSrc);
@@ -505,17 +517,19 @@ const stackLayers=visualLayerStack(visualLayers.length?visualLayers:[
 const panelLayers=layerOrder?layerOrder.map(key=>stackLayers.find(layer=>layer.layerKey===key)).filter(Boolean):stackLayers;
 const orderedLayers=[...panelLayers].reverse();
 
-return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
+return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opacity,"--tools-size":toolAppearance.size,"--palette-alpha":paletteAppearance.opacity,"--palette-size":paletteAppearance.size} as CSSProperties} ref={cockpitRoot} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
 <header className="cockpit-top">
 <button type="button" aria-label="Voltar à sessão" className="cockpit-icon" onClick={props.onClose}><ArrowLeft size={18}/></button>
 <button className="cockpit-icon" onClick={vundo} disabled={!vu.length} title="Desfazer imagem"><Undo2 size={18}/></button><button className="cockpit-icon" onClick={vred} disabled={!vredo.length} title="Refazer imagem"><Redo2 size={18}/></button>
 <div className="cockpit-client"><strong>{client.data?.name||"Cliente"}</strong><small>{props.title} {proc.bodyLocation?"· "+proc.bodyLocation:""}</small></div>
+<button type="button" className="cockpit-icon" aria-label="Preferências visuais" title="Preferências visuais" onClick={()=>setSheet("appearance")}><Settings2 size={18}/></button>
 <button className="cockpit-icon desktop-only" onClick={()=>{setNote(String(proc.notes||""));setSheet("notes")}}><StickyNote size={17}/></button><div className="cockpit-status"><i/><b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.running?"EM ANDAMENTO":props.started?"PAUSADA":"NÃO INICIADA"}</span></div>
 </header>
-{focusMode&&<div className="focus-toolbar">
+{focusMode&&<><div className="focus-timer"><span className="cockpit-status"><i/><b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.running?"EM ANDAMENTO":props.started?"PAUSADA":"NÃO INICIADA"}</span></span></div><div className="focus-toolbar">
+  <button type="button" aria-label="Preferências visuais" title="Preferências visuais" onClick={()=>setSheet("appearance")}><Settings2 size={17}/></button>
   <button onClick={()=>void exitFocusMode()} title="Sair do modo foco"><Minimize2 size={17}/><span>Sair</span></button>
   <button className={cleanMode?"active":""} onClick={()=>setCleanMode(v=>!v)} title={cleanMode?"Mostrar painéis":"Imagem limpa"}>{cleanMode?<Eye size={17}/>:<EyeOff size={17}/>}<span>{cleanMode?"Painéis":"Limpar"}</span></button>
-</div>}
+</div></>}
 
 <main ref={stage} className="cockpit-stage" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
 <div className="cockpit-anamnese">Sessão #{procedureId}</div>
@@ -549,15 +563,28 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 </main>
 
 <aside className={"cockpit-dock left "+(lmin?"minimized ":"")+(lex?"expanded":"")} style={panel(lop,lscale,"left")}>
-<header><button type="button" aria-label={lmin?"Abrir materiais":"Recolher materiais"} onClick={()=>{setLmin(v=>!v);if(lmin&&window.matchMedia("(max-width: 620px)").matches){setLex(true);setRmin(true)}}}>{lmin?<Package size={18}/>:<Minus size={16}/>}</button><strong>Materiais</strong><button type="button" aria-label="Expandir ou compactar materiais" onClick={()=>setLex(v=>!v)}>{lex?<ChevronLeft size={16}/>:<ChevronRight size={16}/>}</button></header>
-<div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={lscale} onChange={e=>setLscale(+e.target.value)}/><output>{Math.round(lscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={lop} onChange={e=>setLop(+e.target.value)}/><output>{Math.round(lop*100)}</output></label></div>
-<div className="dock-body">{mats.map(m=><button key={m.id} disabled={props.finished||consumeAuto.isPending||!stock.some(x=>x.id===m.id)} title={`${m.name} · ${m.unit}`} aria-label={`Registrar consumo de ${m.name}`} className={"material-card "+(totals[m.id]?"active":"")} onClick={()=>useMat(m)}><span className="material-glyph" style={m.color?{background:m.color,color:m.color==="#f4f4f5"?"#18181b":"white"}:undefined}>{m.kind==="ink"||m.kind==="diluent"?<Droplets size={17}/>:m.short}</span>{lex&&<span className="material-meta"><b>{m.name}</b><small>{`Previsto: ${m.plannedQuantity} ${m.unit}`}</small></span>}{!!totals[m.id]&&<span className="material-count">✓ {Number(totals[m.id]).toLocaleString("pt-BR",{maximumFractionDigits:3})} {m.unit}</span>}</button>)}<button className="dock-add" onClick={()=>setSheet("materials")}><Plus size={18}/>{lex&&" Adicionar"}</button></div>
+<header><button type="button" aria-label={lmin?"Abrir materiais":"Recolher materiais"} onClick={()=>{setLmin(v=>!v);if(lmin&&window.matchMedia("(max-width: 620px)").matches){setLex(true);setRmin(true)}}}>{lmin?<><Package size={18}/><span>Materiais</span></>:<Minus size={16}/>}</button><strong>Materiais</strong><button type="button" aria-label="Expandir ou compactar materiais" onClick={()=>setLex(v=>!v)}>{lex?<ChevronLeft size={16}/>:<ChevronRight size={16}/>}</button></header>
+<div className="dock-controls"><label>Tamanho <input aria-label="Tamanho do painel de materiais" type="range" min=".85" max="1.35" step=".05" value={lscale} onChange={e=>setLscale(+e.target.value)}/><output>{Math.round(lscale*100)}%</output></label><label>Fundo <input aria-label="Opacidade do painel de materiais" type="range" min=".4" max="1" step=".05" value={lop} onChange={e=>setLop(+e.target.value)}/><output>{Math.round(lop*100)}%</output></label><button type="button" className="save-appearance-link" onClick={()=>setSheet("appearance")}><Settings2 size={13}/> Salvar preferências</button></div>
+<div className="dock-body">{mats.map(m=>{
+  const symbol=materialSymbol(m),label=materialSymbolLabels[symbol];
+  const color=recordedColor(materialColorMap[m.id]?.hex||m.color);
+  const linkedCups=m.kind==="cup"?recipes.filter(r=>r.status==="active"&&String(r.cupTenantMaterialId)===m.id).map(r=>({code:r.code,...recipeDisplayColor(r,samples)})):[];
+  const description=[m.detail,`Previsto: ${m.plannedQuantity} ${m.unit}`,`Utilizado: ${Number(totals[m.id]||0).toLocaleString("pt-BR",{maximumFractionDigits:3})} ${m.unit}`,m.kind==="ink"?(color?`Cor registrada: ${color}`:"Cor ainda não registrada"):null,...linkedCups.map(c=>`${c.code}: ${c.label}${c.color?" · "+c.color:""}`)].filter(Boolean).join("\n");
+  return <SessionMaterialHint key={m.id} title={m.name} description={description} opacity={toolAppearance.opacity}>
+    <button disabled={props.finished||consumeAuto.isPending||!stock.some(x=>x.id===m.id)} aria-label={`Registrar consumo de ${m.name}`} className={"material-card "+(totals[m.id]?"active":"")} onClick={()=>useMat(m)}>
+      <span className="material-glyph"><SessionMaterialIcon symbol={symbol} color={symbol==="ink"?color:linkedCups.length===1?linkedCups[0].color:undefined}/><span className="material-symbol-label">{label}{m.kind==="cup"&&sessionCupSize(m)?" "+sessionCupSize(m):""}</span></span>
+      {lex&&<span className="material-meta"><b>{m.name}</b><small>{`Previsto: ${m.plannedQuantity} ${m.unit}`}</small></span>}
+      {linkedCups.length>1&&<span className="material-cup-colors">{linkedCups.map(c=><span key={c.code} aria-label={`${c.code}: ${c.label}`}><SessionMaterialIcon symbol="cup" color={c.color}/><small>{c.code}</small></span>)}</span>}
+      {!!totals[m.id]&&<span className="material-count">✓ {Number(totals[m.id]).toLocaleString("pt-BR",{maximumFractionDigits:3})} {m.unit}</span>}
+    </button>
+  </SessionMaterialHint>;
+})}<button className="dock-add" onClick={()=>setSheet("materials")}><Plus size={18}/>{lex&&" Adicionar"}</button></div>
 <div className="dock-undo"><button onClick={()=>void undoStock()} disabled={!undoStack.length}><Undo2 size={16}/></button><button onClick={()=>void redoStock()} disabled={!redoStack.length}><Redo2 size={16}/></button></div>
 </aside>
 
 <aside className={"cockpit-dock right "+(rmin?"minimized ":"")+(rex?"expanded":"")} style={panel(rop,rscale,"right")}>
-<header><button type="button" aria-label={rmin?"Abrir camadas":"Recolher camadas"} onClick={()=>{setRmin(v=>!v);if(rmin&&window.matchMedia("(max-width: 620px)").matches){setRex(true);setLmin(true)}}}>{rmin?<Layers3 size={18}/>:<Minus size={16}/>}</button><strong>Camadas</strong><button type="button" aria-label="Expandir ou compactar camadas" onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
-<div className="dock-controls"><label>Escala <input type="range" min=".9" max="1.1" step=".05" value={rscale} onChange={e=>setRscale(+e.target.value)}/><output>{Math.round(rscale*100)}</output></label><label>Fundo <input type="range" min=".35" max="1" step=".05" value={rop} onChange={e=>setRop(+e.target.value)}/><output>{Math.round(rop*100)}</output></label></div>
+<header><button type="button" aria-label={rmin?"Abrir camadas":"Recolher camadas"} onClick={()=>{setRmin(v=>!v);if(rmin&&window.matchMedia("(max-width: 620px)").matches){setRex(true);setLmin(true)}}}>{rmin?<><Layers3 size={18}/><span>Camadas</span></>:<Minus size={16}/>}</button><strong>Camadas</strong><button type="button" aria-label="Expandir ou compactar camadas" onClick={()=>setRex(v=>!v)}>{rex?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button></header>
+<div className="dock-controls"><label>Tamanho <input aria-label="Tamanho do painel de camadas" type="range" min=".85" max="1.35" step=".05" value={rscale} onChange={e=>setRscale(+e.target.value)}/><output>{Math.round(rscale*100)}%</output></label><label>Fundo <input aria-label="Opacidade do painel de camadas" type="range" min=".4" max="1" step=".05" value={rop} onChange={e=>setRop(+e.target.value)}/><output>{Math.round(rop*100)}%</output></label><button type="button" className="save-appearance-link" onClick={()=>setSheet("appearance")}><Settings2 size={13}/> Salvar preferências</button></div>
 <div className="dock-body"><SessionLayerPanel
   layers={panelLayers.map((layer:any)=>({layerKey:String(layer.layerKey),name:String(layer.name),src:layer.layerKey==="reference"?canvasRefSrc:layer.layerKey==="samples"?null:canvasSafeSource(layer.imageUrl),opacity:layerOpacity(layer),visible:layerVisible(layer)}))}
   busy={layerBusy||visualLayerQuery.isLoading||addVisualLayerMutation.isPending||removeVisualLayerMutation.isPending}
@@ -590,6 +617,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 <input ref={finalInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void finalPhoto(f);e.currentTarget.value=""}}/>
 <footer className="cockpit-bottom"><button type="button" aria-label={timerLabel} disabled={props.finished||props.timerBusy} onClick={()=>void toggleTimer()}>{props.running?<Pause size={18}/>:<Play size={18}/>}<span className="button-label">{props.running?"PAUSAR":props.started?"RETOMAR":"INICIAR"}</span></button><button type="button" aria-label="Buscar materiais no estoque" onClick={()=>setSheet("materials")}><Package size={18}/><span className="button-label">ESTOQUE</span></button><button type="button" aria-label="Adicionar foto da sessão" onClick={()=>finalInput.current?.click()}><Camera size={18}/><span className="button-label">FOTO</span></button><button type="button" aria-label="Revisar conclusão da sessão" className="finish" onClick={()=>setSheet("finish")}><Square size={17}/><span className="button-label">CONCLUIR</span></button></footer>
 
+{sheet==="appearance"&&<SessionAppearancePanel value={appearance.value} onChange={appearance.change} artistName={appearance.artistName} canSave={appearance.canSave} busy={appearance.busy} dirty={appearance.dirty} onSave={()=>void appearance.save()} onReload={()=>void appearance.reload()} onReset={appearance.reset} onClose={()=>setSheet(null)}/>}
 {sheet==="layerAdd"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Nova camada visual</h3><p>Adicione uma imagem independente. O arquivo será exibido como enviado, sem filtros. Você controla a ordem, a opacidade e a visibilidade.</p>
 <div className="sheet-grid">{[
   {type:"contrast",name:"Contraste",desc:"Versão preparada para leitura de contraste"},
@@ -620,7 +648,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
   <div className="recipe-sample-meta"><strong>{sample.code}</strong><span>{sample.code.startsWith("P")?"Cor preparada antes da sessão":"Referência retirada da imagem"}</span><small>{sample.hex.toUpperCase()} · RGB {sample.rgb.join(" / ")} · CMYK {sample.cmyk.join(" / ")}</small></div>
 </div>}
 <button className="sheet-option" onClick={()=>{setCup(null);setRecipeCupMaterialId("")}}>Sem recipiente definido</button><div className="sheet-grid cup-grid">{(["P","M","G","GG"] as Cup[]).map(c=><button key={c} className={"sheet-option "+(cup===c?"selected":"")} onClick={()=>{setCup(c);setRecipeCupMaterialId("")}}><b>Batoque {c}</b><small>{CUP[c]} ml · ~{Math.floor(CUP[c]/DROP)} gotas</small></button>)}</div>
-{cup&&<><div className="recipe-cup-visual" aria-label={`Batoque ${cup}, capacidade ${CUP[cup]} ml`} style={{width:56+Math.sqrt(CUP[cup])*22,height:42+Math.sqrt(CUP[cup])*18}}><div style={{height:`${Math.min(100,pct)}%`,background:sample?.hex||ings.filter(i=>stock.find(m=>m.id===i.materialId)?.kind==="ink").map(i=>materialColorMap[i.materialId]?.hex||stock.find(m=>m.id===i.materialId)?.color).find(Boolean)||"#777"}}/></div><p>Cor de referência; confirme o resultado real da mistura.</p><label>Baixar um batoque do estoque (opcional)<select className="search-input" value={recipeCupMaterialId} onChange={e=>setRecipeCupMaterialId(e.target.value)}><option value="">Já separado / não baixar outro</option>{stock.filter(m=>m.kind==="cup"&&sessionCupSize(m)===cup).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label></>}
+{cup&&<><div className="recipe-cup-visual" aria-label={`Batoque ${cup}, capacidade ${CUP[cup]} ml`} style={{width:56+Math.sqrt(CUP[cup])*22,height:42+Math.sqrt(CUP[cup])*18}}><div style={{height:`${Math.min(100,pct)}%`,background:sample?.hex||"#777"}}/></div><p>Cor de referência; confirme o resultado real da mistura.</p><label>Baixar um batoque do estoque (opcional)<select className="search-input" value={recipeCupMaterialId} onChange={e=>setRecipeCupMaterialId(e.target.value)}><option value="">Já separado / não baixar outro</option>{stock.filter(m=>m.kind==="cup"&&sessionCupSize(m)===cup).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label></>}
 <div className="stock-colors-title"><strong>Paleta-base</strong><small>CMYK + Branco</small></div>
 <div className="color-family-strip">{COLOR_FAMILIES.map(f=><button key={f.key} className={"color-family-chip "+(familyFilter===f.key?"selected":"")} onClick={()=>setFamilyFilter(v=>v===f.key?null:f.key)}><i style={{background:f.hex}}/><span>{f.label}</span></button>)}</div>
 <div className="stock-colors-title"><strong>Cores do estoque</strong><small>{familyFilter?"Filtro "+familyFilter:"Todas as tintas cadastradas"}</small></div>
@@ -628,7 +656,7 @@ return createPortal(<div style={viewport} ref={cockpitRoot} className={"cockpit-
 {visibleRecipeColors.map(m=>{const row=ings.find(x=>x.materialId===m.id),value=row?.drops??0,stored=materialColorMap[m.id],swatch=m.kind==="diluent"?undefined:stored?.hex||m.color;return <div className="mix-ingredient" key={m.id}>
   <div className="mix-ingredient-head with-swatch">
     <span className={"material-color-square "+(!swatch?"unknown":"")} style={swatch?{background:swatch}:undefined}>{!swatch?"?":""}</span>
-    <span className="mix-ingredient-name">{m.name}<small>{m.kind==="diluent"?"Aditivo independente":stored?"Amostra tonal salva":swatch?"Cor estimada pelo nome":"Sem amostra tonal"}</small></span>
+    <span className="mix-ingredient-name">{m.name}<small>{m.kind==="diluent"?"Aditivo independente":stored?"Amostra tonal salva":swatch?"Cor cadastrada":"Sem amostra tonal"}</small></span>
     {m.kind!=="diluent"?<button className="material-color-calibrate" title="Fotografar e calibrar a cor desta tinta" onClick={()=>openColorPhoto({kind:"material",materialId:Number(m.id),name:m.name})}><Camera size={16}/></button>:<span aria-hidden="true"/>}
     <div className="mix-number-wrap"><input aria-label={"Gotas de "+m.name} type="number" inputMode="numeric" pattern="[0-9]*" min="1" max={ingredientLimit} placeholder="0" value={row?String(row.drops):""} onFocus={e=>{const el=e.currentTarget.closest(".mix-ingredient");setTimeout(()=>el?.scrollIntoView({block:"center",behavior:"smooth"}),180)}} onChange={e=>{const raw=e.target.value;if(raw==="")return setIng(m.id,0);const n=Math.min(ingredientLimit,Math.max(0,Math.floor(Number(raw)||0)));setIng(m.id,n)}}/><span>gt</span></div>
   </div>

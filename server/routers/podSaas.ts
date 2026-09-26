@@ -21,6 +21,7 @@ import {materialDescription} from "../../shared/materialDescription";
 import { TECHNICAL_CATALOG_2026, canAddCatalogItemToOperationalStock } from "../../shared/technicalCatalog2026";
 import { assertOwnArtist, canUseMaterial, isInventoryManager, requireInventoryArtist, requireMaterialForArtist, requireOwnedMaterial, type InventoryDatabase, type InventoryContext } from "../inventoryAccess";
 import { TRPCError } from "@trpc/server";
+import { sessionAppearanceSchema } from "../../shared/sessionAppearance";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, getTableColumns } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -49,6 +50,7 @@ import {
   suppliers,
   studioMaterialArtists,
   studios,
+  artistSessionAppearance,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { hasModulePermission, type SaasModule } from "../saas";
@@ -841,6 +843,37 @@ export const podSaasRouter = router({
   }),
 
   session: router({
+    getAppearance: tenantProcedure.input(z.object({procedureId:z.number().int().positive()})).query(async({ctx,input})=>{
+      await requireModule(ctx,"pod");
+      const database=await requireDatabase();
+      const procedure=await requireProcedure(database,input.procedureId,ctx);
+      const artistId=ctx.artistId??procedure.artistId;
+      if(!artistId)return {artistId:null,artistName:null,preferences:null,revision:0};
+      await requireInventoryArtist(database,ctx.studioId,artistId);
+      const [artist]=await database.select({name:artists.name}).from(artists).where(and(eq(artists.id,artistId),eq(artists.studioId,ctx.studioId))).limit(1);
+      const [row]=await database.select().from(artistSessionAppearance).where(and(eq(artistSessionAppearance.studioId,ctx.studioId),eq(artistSessionAppearance.artistId,artistId))).limit(1);
+      let preferences=null;
+      try{const parsed=sessionAppearanceSchema.safeParse(JSON.parse(row?.preferences??"null"));if(parsed.success)preferences=parsed.data;}catch{/* Invalid older preferences use the default layout. */}
+      return {artistId,artistName:artist.name,preferences,revision:row?.revision??0};
+    }),
+    saveAppearance: tenantProcedure.input(z.object({procedureId:z.number().int().positive(),expectedRevision:z.number().int().min(0),preferences:sessionAppearanceSchema})).mutation(async({ctx,input})=>{
+      await requireModule(ctx,"pod",true);
+      const database=await requireDatabase();
+      return database.transaction(async tx=>{
+        const procedure=await requireProcedure(tx as unknown as typeof database,input.procedureId,ctx);
+        const artistId=ctx.artistId??procedure.artistId;
+        if(!artistId)throw new TRPCError({code:"BAD_REQUEST",message:"Defina o artista da sessão para salvar as preferências."});
+        await requireInventoryArtist(tx as unknown as typeof database,ctx.studioId,artistId);
+        await tx.select({id:artists.id}).from(artists).where(and(eq(artists.id,artistId),eq(artists.studioId,ctx.studioId))).for("update");
+        const [row]=await tx.select().from(artistSessionAppearance).where(and(eq(artistSessionAppearance.studioId,ctx.studioId),eq(artistSessionAppearance.artistId,artistId))).for("update");
+        if((row?.revision??0)!==input.expectedRevision)throw new TRPCError({code:"CONFLICT",message:"As preferências foram alteradas em outra sessão. Recarregue as salvas antes de tentar novamente."});
+        const revision=(row?.revision??0)+1;
+        const values={preferences:JSON.stringify(input.preferences),revision,updatedByUserId:ctx.user.id};
+        if(row)await tx.update(artistSessionAppearance).set(values).where(and(eq(artistSessionAppearance.id,row.id),eq(artistSessionAppearance.studioId,ctx.studioId)));
+        else await tx.insert(artistSessionAppearance).values({studioId:ctx.studioId,artistId,...values});
+        return {artistId,revision,preferences:input.preferences};
+      });
+    }),
     clientMaterials:tenantProcedure.input(z.object({clientId:z.number().int().positive()})).query(async({ctx,input})=>{
       await requireModule(ctx,"clients");await requireModule(ctx,"pod");const d=await requireDatabase();
       const client=(await d.select({id:clients.id}).from(clients).where(and(eq(clients.id,input.clientId),eq(clients.studioId,ctx.studioId))).limit(1))[0];

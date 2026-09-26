@@ -170,6 +170,15 @@ export async function ensureSessionCockpitSchema() {
     const [cupColumn] = await connection.query<RowDataPacket[]>("SHOW COLUMNS FROM procedure_ink_recipes LIKE 'cupSize'");
     if (cupColumn[0]?.Null === "NO") await connection.query("ALTER TABLE procedure_ink_recipes MODIFY COLUMN cupSize VARCHAR(8) NULL, MODIFY COLUMN cupCapacityMl DECIMAL(8,3) NULL");
 
+    await connection.query(`CREATE TABLE IF NOT EXISTS artist_session_appearance (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      studioId INT NOT NULL, artistId INT NOT NULL,
+      preferences TEXT NOT NULL, revision INT NOT NULL DEFAULT 1,
+      updatedByUserId INT NOT NULL,
+      updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY artist_session_appearance_scope_unique(studioId,artistId)
+    ) ENGINE=InnoDB`);
+
     console.log("[Session Cockpit V2] Schema ready.");
   } finally {
     await connection

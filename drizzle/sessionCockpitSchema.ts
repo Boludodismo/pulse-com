@@ -7,8 +7,17 @@ import {
   timestamp,
   index,
   uniqueIndex,
+  text,
 } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
+
+export const artistSessionAppearance = mysqlTable("artist_session_appearance", {
+  id: int().autoincrement().primaryKey(),
+  studioId: int().notNull(), artistId: int().notNull(),
+  preferences: text().notNull(), revision: int().default(1).notNull(),
+  updatedByUserId: int().notNull(),
+  updatedAt: timestamp({mode:"string"}).defaultNow().onUpdateNow().notNull(),
+}, t => [uniqueIndex("artist_session_appearance_scope_unique").on(t.studioId,t.artistId)]);
 
 export const procedureColorSamples = mysqlTable(
   "procedure_color_samples",
