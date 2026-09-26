@@ -19,6 +19,11 @@ describe("session appearance",()=>{
     ["Clip cord","cable"],["Pedal","pedal"],["Coletor de agulhas","sharps"],["Caneta para pele","marker"],
     ["Apoio de braço","armrest"],["Material personalizado sem categoria","other"],
   ])("renders the material symbol for %s",(name,symbol)=>expect(materialSymbol({name})).toBe(symbol));
+  it("prioritizes the item over broad categories and uses categories only as fallback",()=>{
+    expect(materialSymbol({name:"Luva nitrílica preta P",category:"Proteção e barreira"})).toBe("gloves");
+    expect(materialSymbol({name:"Máscara descartável",category:"Proteção e barreira"})).toBe("mask");
+    expect(materialSymbol({name:"Branco Real",category:"Tinta"})).toBe("ink");
+  });
   it("never substitutes guessed pigments or blends reference colors",()=>{
     expect(recordedColor("azul")).toBeUndefined();expect(recordedColor("#12ABef")).toBe("#12ABEF");
     expect(recipeDisplayColor({},[])).toEqual({color:undefined,label:"Cor ainda não registrada"});

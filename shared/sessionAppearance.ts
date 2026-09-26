@@ -16,7 +16,8 @@ export function defaultSessionAppearance(compact = false): SessionAppearance {
 
 export type MaterialSymbol = "liner" | "magnum" | "shader" | "needle" | "ink" | "cup" | "cream" | "gloves" | "diluent" | "soap" | "spray" | "paper" | "stencil" | "transfer" | "film" | "tape" | "mask" | "razor" | "gauze" | "apron" | "bag" | "sharps" | "pipette" | "machine" | "power" | "cable" | "pedal" | "marker" | "armrest" | "other";
 export function materialSymbol(material: {name: string; category?: string | null; configuration?: string | null}): MaterialSymbol {
-  const t = `${material.name} ${material.category || ""} ${material.configuration || ""}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  // The specific item takes precedence over a broad inventory category.
+  const t = `${material.name} ${material.configuration || ""}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   if (/coletor|perfuro|descarpack/.test(t)) return "sharps";
   if (/protetor|barreira|capa/.test(t)) return "film";
   if (/maquina|pen rotativa/.test(t)) return "machine";
@@ -49,7 +50,7 @@ export function materialSymbol(material: {name: string; category?: string | null
   if (/saco|sacola/.test(t)) return "bag";
   if (/pipeta|conta.gotas/.test(t)) return "pipette";
   if (/tinta|pigmento|\bink\b/.test(t)) return "ink";
-  return "other";
+  return material.category ? materialSymbol({name: material.category}) : "other";
 }
 export const materialSymbolLabels: Record<MaterialSymbol,string> = {
   liner:"RL", magnum:"MAG", shader:"RS", needle:"Agulha", ink:"Tinta", cup:"Batoque", cream:"Creme", gloves:"Luvas", diluent:"Diluente", soap:"Sabão", spray:"Solução", paper:"Papel", stencil:"Stencil", transfer:"Transfer", film:"Proteção", tape:"Bandagem", mask:"Máscara", razor:"Lâmina", gauze:"Gaze", apron:"Campo", bag:"Saco", sharps:"Coletor", pipette:"Pipeta", machine:"Máquina", power:"Fonte", cable:"Cabo", pedal:"Pedal", marker:"Caneta", armrest:"Apoio", other:"Insumo",
