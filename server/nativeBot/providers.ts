@@ -73,6 +73,8 @@ export async function zapi(
   return data;
 }
 export async function getBotQr(s: BotSettings) {
+  if (s.wa_instance?.startsWith("meta:"))
+    throw new BotProviderError("A conexão oficial da Meta usa token e webhook, sem QR neste painel.");
   const data = await zapi(s, "qr-code");
   if (
     typeof data?.value !== "string" ||

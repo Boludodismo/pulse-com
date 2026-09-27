@@ -1334,6 +1334,18 @@ function Connections({
   done: () => Promise<unknown>;
 }) {
   const [wa, setWa] = useState({ instanceId: "", token: "", clientToken: "" });
+  const [provider, setProvider] = useState<"zapi" | "meta">(
+    s.connection?.whatsappProvider || "zapi"
+  );
+  const [meta, setMeta] = useState({
+    phoneNumberId: "",
+    accessToken: "",
+    appSecret: "",
+  });
+  const metaSave = trpc.nativeBot.saveMetaWhatsapp.useMutation({
+    onError: err,
+  });
+  const savedMeta = s.connection?.whatsappProvider === "meta";
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(s.connection?.aiModel || "gpt-4.1-mini");
   const [limit, setLimit] = useState(s.connection?.aiDailyLimit || 200);
@@ -1351,7 +1363,11 @@ function Connections({
       await done();
       if (r.connected) {
         setQrImage(null);
-        toast.success("WhatsApp conectado e recebimento configurado.");
+        toast.success(
+          r.webhookReady
+            ? "WhatsApp validado e webhook configurado."
+            : "Credenciais Meta validadas. Configure o webhook no painel da Meta para receber mensagens."
+        );
       } else
         toast.info(
           "O provedor ainda não confirmou a conexão. Leia o QR e tente novamente."
@@ -1368,12 +1384,25 @@ function Connections({
   const saveWa = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await waSave.mutateAsync(wa);
+      if (
+        s.connection?.whatsappConfigured &&
+        !window.confirm(
+          "Substituir a conexão do Tatuei Bot? Os envios pendentes serão cancelados. As conexões da Central de Mensagens não serão alteradas."
+        )
+      )
+        return;
+      if (provider === "meta") await metaSave.mutateAsync(meta);
+      else await waSave.mutateAsync(wa);
+      setMeta({ phoneNumberId: "", accessToken: "", appSecret: "" });
       setWa({ instanceId: "", token: "", clientToken: "" });
       setReplace(false);
       setQrImage(null);
       await done();
-      toast.success("Credenciais salvas. Gere o QR para continuar.");
+      toast.success(
+        provider === "meta"
+          ? "Credenciais salvas. Valide a conexão e configure o webhook na Meta."
+          : "Credenciais salvas. Gere o QR para continuar."
+      );
     } catch {}
   };
   const saveAi = async (e: React.FormEvent) => {
@@ -1394,7 +1423,7 @@ function Connections({
       <div className="bot-grid">
         <Panel
           title="WhatsApp do estúdio"
-          sub="Conexão por QR usando uma instância Z-API."
+          sub="Escolha Z-API ou WhatsApp Business oficial da Meta."
           extra={
             <Badge
               variant={
@@ -1404,7 +1433,9 @@ function Connections({
               }
             >
               {s.connection?.whatsappStatus === "connected"
-                ? "Conectado"
+                ? savedMeta && !s.connection.webhookReady
+                  ? "Webhook pendente"
+                  : "Conectado"
                 : s.connection?.whatsappConfigured
                   ? "Aguardando conexão"
                   : "Não configurado"}
@@ -1412,47 +1443,125 @@ function Connections({
           }
         >
           <Notice>
-            Este conector exige conta e credenciais próprias da Z-API, um
-            serviço externo. Ele não é a API oficial da Meta. Use uma instância
-            dedicada ao Bot Tatuei.
+            {(
+              replace || !s.connection?.whatsappConfigured
+                ? provider === "meta"
+                : savedMeta
+            )
+              ? "Conexão oficial pela WhatsApp Cloud API. Use um número e aplicativo Meta dedicados ao Tatuei Bot; não substitua um webhook usado por outro atendimento."
+              : "Este conector exige conta e credenciais próprias da Z-API, um serviço externo. Use uma instância dedicada ao Bot Tatuei."}
           </Notice>
           {!s.connection?.whatsappConfigured || replace ? (
             <form onSubmit={saveWa}>
-              <Field id="wa-instance" label="ID da instância">
-                <Input
-                  id="wa-instance"
-                  required
-                  value={wa.instanceId}
-                  onChange={e => setWa({ ...wa, instanceId: e.target.value })}
-                  autoComplete="off"
-                />
+              <Field id="wa-provider" label="Conexão do WhatsApp">
+                <select
+                  id="wa-provider"
+                  className="bot-select"
+                  value={provider}
+                  onChange={e => setProvider(e.target.value as "zapi" | "meta")}
+                  disabled={waSave.isPending || metaSave.isPending}
+                >
+                  <option value="zapi">Z-API — conexão por QR</option>
+                  <option value="meta">WhatsApp Business oficial — Meta</option>
+                </select>
               </Field>
-              <Field id="wa-token" label="Token da instância">
-                <Input
-                  id="wa-token"
-                  type="password"
-                  required
-                  value={wa.token}
-                  onChange={e => setWa({ ...wa, token: e.target.value })}
-                  autoComplete="new-password"
-                />
-              </Field>
-              <Field
-                id="wa-client-token"
-                label="Token de segurança da conta (Client-Token)"
-              >
-                <Input
-                  id="wa-client-token"
-                  type="password"
-                  required
-                  value={wa.clientToken}
-                  onChange={e => setWa({ ...wa, clientToken: e.target.value })}
-                  autoComplete="new-password"
-                />
-              </Field>
+              {provider === "meta" ? (
+                <>
+                  <Field
+                    id="meta-number"
+                    label="ID do número (Phone Number ID)"
+                    hint="Copie o identificador em WhatsApp → Configuração da API na Meta. Não é o telefone com DDD."
+                  >
+                    <Input
+                      id="meta-number"
+                      required
+                      inputMode="numeric"
+                      pattern="[0-9]{5,30}"
+                      value={meta.phoneNumberId}
+                      onChange={e =>
+                        setMeta({ ...meta, phoneNumberId: e.target.value })
+                      }
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <Field
+                    id="meta-token"
+                    label="Token de acesso da Meta"
+                    hint="Use um token de usuário do sistema com acesso ao número e permissão de mensagens; tokens temporários expiram."
+                  >
+                    <Input
+                      id="meta-token"
+                      required
+                      type="password"
+                      value={meta.accessToken}
+                      onChange={e =>
+                        setMeta({ ...meta, accessToken: e.target.value })
+                      }
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                  <Field
+                    id="meta-secret"
+                    label="Chave secreta do aplicativo (App Secret)"
+                    hint="Disponível nas configurações básicas do aplicativo Meta. Protege o recebimento das mensagens."
+                  >
+                    <Input
+                      id="meta-secret"
+                      required
+                      type="password"
+                      value={meta.appSecret}
+                      onChange={e =>
+                        setMeta({ ...meta, appSecret: e.target.value })
+                      }
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field id="wa-instance" label="ID da instância">
+                    <Input
+                      id="wa-instance"
+                      required
+                      value={wa.instanceId}
+                      onChange={e =>
+                        setWa({ ...wa, instanceId: e.target.value })
+                      }
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <Field id="wa-token" label="Token da instância">
+                    <Input
+                      id="wa-token"
+                      type="password"
+                      required
+                      value={wa.token}
+                      onChange={e => setWa({ ...wa, token: e.target.value })}
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                  <Field
+                    id="wa-client-token"
+                    label="Token de segurança da conta (Client-Token)"
+                  >
+                    <Input
+                      id="wa-client-token"
+                      type="password"
+                      required
+                      value={wa.clientToken}
+                      onChange={e =>
+                        setWa({ ...wa, clientToken: e.target.value })
+                      }
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                </>
+              )}
               <div className="bot-actions">
-                <Button disabled={waSave.isPending}>
-                  {waSave.isPending ? "Salvando…" : "Salvar credenciais"}
+                <Button disabled={waSave.isPending || metaSave.isPending}>
+                  {waSave.isPending || metaSave.isPending
+                    ? "Salvando…"
+                    : "Salvar credenciais"}
                 </Button>
                 {replace && (
                   <Button
@@ -1468,13 +1577,16 @@ function Connections({
           ) : (
             <div className="bot-stack">
               <p className="bot-hint">
-                Credenciais protegidas no servidor. O QR é solicitado
-                diretamente ao provedor e expira conforme a sessão.
+                {savedMeta
+                  ? `Meta oficial · ID ${s.connection?.metaPhoneNumberId}${s.connection?.whatsappPhone ? ` · ${s.connection.whatsappPhone}` : ""}. Credenciais protegidas no servidor.`
+                  : "Credenciais protegidas no servidor. O QR é solicitado diretamente ao provedor e expira conforme a sessão."}
               </p>
               <div className="bot-actions">
-                <Button onClick={() => qr.mutate()} disabled={qr.isPending}>
-                  {qr.isPending ? "Solicitando QR…" : "Gerar QR de conexão"}
-                </Button>
+                {!savedMeta && (
+                  <Button onClick={() => qr.mutate()} disabled={qr.isPending}>
+                    {qr.isPending ? "Solicitando QR…" : "Gerar QR de conexão"}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   onClick={() => verify.mutate()}
@@ -1482,18 +1594,69 @@ function Connections({
                 >
                   {verify.isPending
                     ? "Verificando…"
-                    : "Validar conexão e recebimento"}
+                    : savedMeta
+                      ? "Validar conexão Meta"
+                      : "Validar conexão e recebimento"}
                 </Button>
               </div>
-              <p className="bot-hint">
-                Validar configura o recebimento desta instância para o Bot
-                Tatuei, substituindo seu webhook anterior.
-              </p>
+              {savedMeta ? (
+                <>
+                  <Field
+                    id="meta-webhook-url"
+                    label="URL de retorno do webhook"
+                  >
+                    <Input
+                      id="meta-webhook-url"
+                      readOnly
+                      value={s.connection?.metaWebhookUrl || ""}
+                      onFocus={e => e.target.select()}
+                    />
+                  </Field>
+                  <Field
+                    id="meta-verify-token"
+                    label="Token de verificação do webhook"
+                  >
+                    <Input
+                      id="meta-verify-token"
+                      readOnly
+                      value={s.connection?.metaVerifyToken || ""}
+                      onFocus={e => e.target.select()}
+                    />
+                  </Field>
+                  <p className="bot-hint">
+                    No aplicativo da Meta, em WhatsApp → Configuração, copie a
+                    URL e o token acima, clique em Verificar e salvar e assine o
+                    campo messages. Depois, valide a conexão neste painel. O
+                    token de verificação é diferente do token de acesso.
+                  </p>
+                  <p className="bot-hint">
+                    {s.connection?.webhookReady
+                      ? "Webhook verificado pela Meta."
+                      : "Aguardando a verificação do webhook pela Meta."}{" "}
+                    O bot responde dentro de 24 horas da última mensagem do
+                    cliente. Envios fora desse prazo exigem modelos aprovados,
+                    ainda não disponíveis neste conector do bot.
+                  </p>
+                </>
+              ) : (
+                <p className="bot-hint">
+                  Validar configura o recebimento desta instância para o Bot
+                  Tatuei, substituindo seu webhook anterior.
+                </p>
+              )}
               <div className="bot-actions">
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setReplace(true)}
+                  onClick={() => {
+                    setProvider(s.connection?.whatsappProvider || "zapi");
+                    setMeta({
+                      phoneNumberId: s.connection?.metaPhoneNumberId || "",
+                      accessToken: "",
+                      appSecret: "",
+                    });
+                    setReplace(true);
+                  }}
                 >
                   Trocar credenciais
                 </Button>

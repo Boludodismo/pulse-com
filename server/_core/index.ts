@@ -1,3 +1,4 @@
+import { receiveMetaWebhook, verifyMetaWebhook } from "../nativeBot/metaWebhook";
 import { ensureNativeBotSchema } from "../nativeBot/database";
 import { receiveNativeBotWebhook } from "../nativeBot/webhook";
 import { startNativeBotWorker } from "../nativeBot/worker";
@@ -63,6 +64,14 @@ async function startServer() {
   const server = createServer(app);
   startNativeBotWorker();
   app.use("/api/native-bot/webhook", express.json({ limit: "256kb" }));
+  app.use("/api/native-bot/meta/webhook", express.json({
+    limit: "256kb",
+    verify: (req, _res, buffer) => {
+      (req as express.Request & { metaRawBody?: Buffer }).metaRawBody = Buffer.from(buffer);
+    },
+  }));
+  app.get("/api/native-bot/meta/webhook/:key", verifyMetaWebhook);
+  app.post("/api/native-bot/meta/webhook/:key", receiveMetaWebhook);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({
     limit: "50mb",
