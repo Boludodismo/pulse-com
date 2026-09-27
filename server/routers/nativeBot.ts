@@ -1,3 +1,11 @@
+import {
+  isMetaBot,
+  metaCredentialsSchema,
+  metaWebhookUrl,
+  verifyMetaBot,
+  metaWindowOpen,
+  META_WINDOW_ERROR,
+} from "../nativeBot/meta";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -60,6 +68,10 @@ function publicConnection(s: Awaited<ReturnType<typeof settings>>) {
     aiUsed: s.ai_used,
     aiDay: s.ai_day,
     whatsappConfigured: !!s.wa_secret,
+    whatsappProvider: isMetaBot(s) ? ("meta" as const) : ("zapi" as const),
+    metaPhoneNumberId: isMetaBot(s) ? s.wa_instance!.slice(5) : null,
+    metaWebhookUrl: isMetaBot(s) ? metaWebhookUrl(s) : null,
+    metaVerifyToken: isMetaBot(s) ? s.webhook_key : null,
     whatsappStatus: s.wa_status,
     whatsappPhone: s.wa_phone,
     webhookReady: !!s.webhook_ready,
@@ -561,6 +573,11 @@ export const nativeBotRouter = router({
           cv.last_inbound_at &&
           Date.parse(cv.last_inbound_at.replace(" ", "T") + "Z") >
             Date.now() - 86400000;
+        if (isMetaBot(s) && !metaWindowOpen(cv.last_inbound_at))
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: META_WINDOW_ERROR,
+          });
         if (!consent?.enabled && !recent)
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -660,6 +677,70 @@ export const nativeBotRouter = router({
       );
       return { ok: true };
     }),
+  saveMetaWhatsapp: base
+    .input(metaCredentialsSchema)
+    .mutation(async ({ ctx, input }) => {
+      assertBotManager(ctx.user);
+      const a = await accessBot(ctx.user);
+      const instance = `meta:${input.phoneNumberId}`;
+      // Do not redirect a number used by another active integration.
+      const conflicts = await rows(
+        "SELECT id FROM whatsapp_integrations WHERE provider='meta' AND instanceId=? AND is_enabled=1",
+        [input.phoneNumberId]
+      );
+      const otherBots = await rows(
+        "SELECT studio_id FROM tatuei_bot_settings WHERE wa_instance=? AND studio_id<>? AND wa_secret IS NOT NULL",
+        [instance, ctx.studioId]
+      );
+      if (conflicts.length || otherBots.length)
+        throw new TRPCError({
+          code: "CONFLICT",
+          message:
+            "Este número Meta já está vinculado a outra integração. Use um número dedicado ao Tatuei Bot.",
+        });
+      const webhookKey =
+        a.settings.wa_instance === instance && a.settings.webhook_key
+          ? a.settings.webhook_key
+          : randomBytes(32).toString("base64url");
+      if (!metaWebhookUrl({ ...a.settings, webhook_key: webhookKey }))
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message:
+            "O endereço HTTPS do CRM precisa estar configurado no servidor.",
+        });
+      await botTransaction(async c => {
+        await exec(
+          "UPDATE tatuei_bot_settings SET wa_secret=?,wa_instance=?,wa_status='disconnected',wa_phone=NULL,webhook_key=?,webhook_ready=0,last_error=NULL WHERE studio_id=?",
+          [
+            sealBotSecret(JSON.stringify(input), ctx.studioId),
+            instance,
+            webhookKey,
+            ctx.studioId,
+          ],
+          c
+        );
+        await exec(
+          "UPDATE tatuei_bot_messages SET status='canceled',error='Conexão do WhatsApp atualizada.' WHERE studio_id=? AND status='queued'",
+          [ctx.studioId],
+          c
+        );
+        if (a.settings.wa_instance !== instance)
+          await exec(
+            "UPDATE tatuei_bot_conversations SET last_inbound_at=NULL,revision=revision+1 WHERE studio_id=?",
+            [ctx.studioId],
+            c
+          );
+        await botAudit(
+          ctx.studioId,
+          0,
+          "Credenciais Meta salvas",
+          "Conexão oficial aguardando validação e webhook.",
+          ctx.user.id,
+          c
+        );
+      });
+      return { ok: true };
+    }),
   saveWhatsapp: base
     .input(waCredentialsSchema)
     .mutation(async ({ ctx, input }) => {
@@ -685,6 +766,10 @@ export const nativeBotRouter = router({
           ctx.studioId,
         ]
       );
+      await exec(
+        "UPDATE tatuei_bot_messages SET status='canceled',error='Conexão do WhatsApp atualizada.' WHERE studio_id=? AND status='queued'",
+        [ctx.studioId]
+      );
       await botAudit(
         ctx.studioId,
         0,
@@ -707,13 +792,28 @@ export const nativeBotRouter = router({
     assertBotManager(ctx.user);
     const a = await accessBot(ctx.user);
     try {
+      if (isMetaBot(a.settings)) {
+        const result = await verifyMetaBot(a.settings);
+        await exec(
+          "UPDATE tatuei_bot_settings SET wa_status='connected',wa_phone=?,last_error=NULL WHERE studio_id=? AND wa_secret=?",
+          [result.phone, ctx.studioId, a.settings.wa_secret]
+        );
+        await botAudit(
+          ctx.studioId,
+          0,
+          "Credenciais Meta validadas",
+          "Número confirmado pela API oficial.",
+          ctx.user.id
+        );
+        return { connected: true, webhookReady: !!a.settings.webhook_ready };
+      }
       const status = await zapi(a.settings, "status");
       if (status.connected !== true) {
         await exec(
           "UPDATE tatuei_bot_settings SET wa_status='disconnected' WHERE studio_id=?",
           [ctx.studioId]
         );
-        return { connected: false };
+        return { connected: false, webhookReady: false };
       }
       const baseUrl = process.env.APP_BASE_URL?.trim().replace(/\/$/, "");
       if (!baseUrl || !baseUrl.startsWith("https://"))
@@ -733,8 +833,13 @@ export const nativeBotRouter = router({
         "Recebimento de mensagens configurado.",
         ctx.user.id
       );
-      return { connected: true };
+      return { connected: true, webhookReady: true };
     } catch (e) {
+      if (isMetaBot(a.settings))
+        await exec(
+          "UPDATE tatuei_bot_settings SET wa_status='disconnected' WHERE studio_id=? AND wa_secret=?",
+          [ctx.studioId, a.settings.wa_secret]
+        );
       await exec(
         "UPDATE tatuei_bot_settings SET last_error=? WHERE studio_id=?",
         [safeBotError(e), ctx.studioId]

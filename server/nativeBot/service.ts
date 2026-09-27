@@ -1,3 +1,4 @@
+import { isMetaBot, sendMetaBot, metaWindowOpen, META_WINDOW_ERROR } from "./meta";
 import { randomBytes } from "node:crypto";
 import {
   botConfigSchema,
@@ -363,6 +364,7 @@ export async function validateBotDelivery(
   )
     return "Bot pausado ou WhatsApp não conectado.";
   if (cv.opted_out) return "Cliente interrompeu as mensagens.";
+  if (isMetaBot(s) && !metaWindowOpen(cv.last_inbound_at)) return META_WINDOW_ERROR;
   if (m.expected_revision !== cv.revision)
     return "O responsável ou modo de atendimento mudou.";
   const ctx = await contextForConversation(cv, c);
@@ -432,10 +434,12 @@ export async function deliverBotMessage(m: any, c: BotConnection) {
   );
   if (claim.affectedRows !== 1) return;
   try {
-    const response = await zapi(s, "send-text", "POST", {
-      phone: cv.phone,
-      message: m.body,
-    });
+    const response = isMetaBot(s)
+      ? await sendMetaBot(s, cv.phone, m.body, cv.last_inbound_at)
+      : await zapi(s, "send-text", "POST", {
+          phone: cv.phone,
+          message: m.body,
+        });
     const id = response?.messageId || response?.zaapId;
     if (typeof id !== "string" || !id)
       throw new BotProviderError(
