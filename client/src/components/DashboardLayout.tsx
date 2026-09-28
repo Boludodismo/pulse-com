@@ -1,3 +1,4 @@
+import { TatueiBotIcon } from "./TatueiBotIcon";
 import { InventoryNoticeIndicator } from "./InventoryNotices";
 import {trpc} from '@/lib/trpc';
 import {isInvitedArtist,artistRouteModule} from '@shared/artistInvitations';
@@ -41,12 +42,15 @@ import { Button } from "./ui/button";
 import GlobalSearch from "./GlobalSearch";
 
 const menuItems = [
+  { icon: TatueiBotIcon, label: "Bot Tatuei", path: "/bot-tatuei", roles: ["superadmin", "admin", "collaborator"] },
   { icon: FileText, label: "Históricos anteriores", path: "/historicos-anteriores", roles: ["superadmin"] },
   { icon: MessageSquare, label: "Central Inteligente", path: "/intelligent-inbox", roles: ["superadmin", "admin", "collaborator"] },
   { icon: LayoutDashboard, label: "Dashboard", path: "/", roles: ["superadmin", "admin", "collaborator"] },
   { icon: Users, label: "Clientes", path: "/clients", roles: ["superadmin", "admin", "collaborator"] },
+  { icon: FileText, label: "Orçamentos", path: "/quotes", roles: ["superadmin", "admin", "collaborator"] },
   { icon: ArrowUpDown, label: "Importar / Exportar", path: "/contacts/import-export", roles: ["superadmin", "admin"] },
   { icon: Calendar, label: "Agenda", path: "/schedule", roles: ["superadmin", "admin", "collaborator"] },
+  { icon: Stethoscope, label: "Sessão Tattoo", path: "/procedures", roles: ["superadmin", "admin", "collaborator"] },
   { icon: Palette, label: "Artistas", path: "/artists", roles: ["superadmin", "admin"] },
   { icon: Calendar, label: "Calendário Visual", path: "/calendar", roles: ["superadmin", "admin", "collaborator"] },
   { icon: BarChart3, label: "Relatórios", path: "/reports", roles: ["superadmin", "admin"] },
@@ -54,7 +58,6 @@ const menuItems = [
   { icon: Bell, label: "Notificações", path: "/notifications", roles: ["superadmin", "admin", "collaborator"] },
   { icon: MessageSquare, label: "Central de Mensagens", path: "/messaging", roles: ["superadmin", "admin"] },
   { icon: AlertTriangle, label: "Alertas de Risco", path: "/risk-alerts", roles: ["superadmin", "admin", "collaborator"] },
-  { icon: Stethoscope, label: "POD Session", path: "/procedures", roles: ["superadmin", "admin", "collaborator"] },
   { icon: Package, label: "Estoque", path: "/stock", roles: ["superadmin", "admin"] },
   { icon: Truck, label: "Fornecedores", path: "/suppliers", roles: ["superadmin", "admin"] },
   { icon: UserCog, label: "Usuários", path: "/users", roles: ["superadmin", "admin"] },

@@ -414,6 +414,48 @@
       "when": 1789028452000,
       "tag": "0058_appointment_artist_card_choice",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "5",
+      "when": 1789028500000,
+      "tag": "0059_artist_card_presentation",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "5",
+      "when": 1789862400000,
+      "tag": "0060_quote_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "5",
+      "when": 1789866000000,
+      "tag": "0061_quote_public_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "5",
+      "when": 1789952400000,
+      "tag": "0062_session_cockpit_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "5",
+      "when": 1790254800000,
+      "tag": "0063_session_optional_cup",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "5",
+      "when": 1790391600000,
+      "tag": "0064_quote_flexible_payload",
+      "breakpoints": true
     }
   ]
 }

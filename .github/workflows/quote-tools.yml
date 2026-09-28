@@ -1,0 +1,36 @@
+name: Quote tools release checks
+on:
+  push:
+    branches: ['feat/quote-tools-protected-art-20260926', 'feat/quote-image-descriptions-20260926', 'feat/client-quote-history-20260926']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test-only-password
+          MYSQL_DATABASE: quote_release_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ptest-only-password"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:test-only-password@127.0.0.1:3306/quote_release_test
+      OUTBOUND_MESSAGING_DISABLED: 'true'
+      SCHEDULER_MODE: disabled
+      VITE_AUTH_MODE: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable && corepack prepare pnpm@10.4.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit --target ES2022 --incremental false
+      - run: pnpm exec vitest run server/quoteTools.test.ts server/quoteRouter.test.ts server/quoteHistory.test.ts server/quoteDeliveryRouter.test.ts server/quotePreview.test.ts server/customerCare.test.ts server/storage.s3.test.ts server/sessionMaterials.test.ts server/messaging.job-claim.test.ts server/messaging.tenant-selection.test.ts server/privateConnectionAccess.test.ts
+      - run: pnpm tsx scripts/test-quote-payload.ts
+      - run: pnpm build

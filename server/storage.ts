@@ -198,6 +198,21 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
   };
 }
 
+export async function storageDelete(relKey: string): Promise<void> {
+  const key = normalizeKey(relKey);
+  if (!key || ENV.storageProvider === "disabled") return;
+
+  if (ENV.storageProvider === "s3") {
+    const { client, bucket } = getS3Config();
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    return;
+  }
+
+  // The legacy Manus proxy does not expose a delete helper in this CRM.
+  // Keep this operation explicit instead of silently pretending deletion occurred.
+  throw new Error("Storage delete is not supported by the configured provider");
+}
+
 // Fail startup before receiving traffic if the dedicated bucket is misconfigured.
 export async function checkS3Storage(): Promise<void> {
   if (ENV.storageProvider !== "s3") throw new Error("S3 is required for storage validation");

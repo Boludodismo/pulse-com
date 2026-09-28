@@ -1,3 +1,6 @@
+import ClientQuoteHistory from "@/components/quotes/ClientQuoteHistory";
+import {ClientConsentButton} from "@/components/WhatsappConsentPanel";
+import ClientColorHistory from "@/components/ClientColorHistory";
 import ClientMaterialHistory from "@/components/ClientMaterialHistory";
 import { EditClientDialog } from "@/components/EditClientDialog";
 import ImportedClientRecords from '@/components/ImportedClientRecords';
@@ -524,6 +527,8 @@ export default function ClientProfile() {
     );
   }
 
+  if(client.mergedIntoId) return <Card><CardHeader><CardTitle>Cadastro unificado</CardTitle></CardHeader><CardContent className="space-y-3"><p>O histórico deste cadastro foi reunido no cliente #{client.mergedIntoId}.</p><Button onClick={()=>setLocation(`/clients/${client.mergedIntoId}`)}>Abrir cadastro principal</Button></CardContent></Card>;
+
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Header */}
@@ -544,7 +549,7 @@ export default function ClientProfile() {
         </Badge>
       </div>
 
-      <div className="flex justify-end"><EditClientDialog client={client} /></div>
+      <div className="flex justify-end gap-2"><ClientConsentButton clientId={clientId} name={client.name} /><EditClientDialog client={client} /></div>
 
       {/* Client Info */}
       <Card>
@@ -636,6 +641,7 @@ export default function ClientProfile() {
       <ClientCare clientId={clientId} />
       <Tabs defaultValue={can("appointments")?"appointments":"gallery"} className="w-full">
         <TabsList className="flex w-full bg-zinc-800 rounded-lg p-1 min-h-[44px] overflow-x-auto">
+          {can("quotes") && <TabsTrigger value="quotes" className="flex-1 min-w-fit text-xs sm:text-sm py-2">Orçamentos</TabsTrigger>}
           {can("appointments") && <TabsTrigger value="appointments" className="flex-1 min-w-fit text-xs sm:text-sm py-2">
             <span className="hidden sm:inline">Agendamentos</span>
             <span className="sm:hidden text-[11px]">Agenda</span>
@@ -679,10 +685,12 @@ export default function ClientProfile() {
             )}
           </TabsTrigger>
           {can("pod") && <TabsTrigger value="procedures" className="flex-1 text-xs sm:text-sm py-2">
-            <span className="hidden sm:inline-flex items-center gap-1"><Stethoscope className="w-3 h-3" />POD</span>
-            <span className="sm:hidden">POD</span>
+            <span className="hidden sm:inline-flex items-center gap-1"><Stethoscope className="w-3 h-3" />Sessões e materiais</span>
+            <span className="sm:hidden">Sessões</span>
           </TabsTrigger>}
         </TabsList>
+
+        {can("quotes") && <TabsContent value="quotes"><ClientQuoteHistory clientId={clientId}/></TabsContent>}
 
         {/* Agendamentos Tab */}
         {can("appointments") && <TabsContent value="appointments">
@@ -1651,6 +1659,7 @@ export default function ClientProfile() {
         {/* ── Prontuário Técnico (POD Session) ── */}
         {can("pod") && <TabsContent value="procedures">
           <ClientMaterialHistory clientId={clientId}/>
+          <ClientColorHistory clientId={clientId}/>
           <ProceduresTab clientId={clientId} clientName={client?.name ?? ""} />
         </TabsContent>}
       </Tabs>

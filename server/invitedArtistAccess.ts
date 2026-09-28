@@ -7,7 +7,7 @@ import * as schema from '../drizzle/schema';
 
 type User = { id: number; openId: string; role: string; studioId: number | null; artistId: number | null };
 const denied = () => new TRPCError({code:'FORBIDDEN',message:'Seu acesso não permite esta operação. Solicite a permissão ao proprietário.'});
-const self = new Set(['artistInvitations.access','users.changePassword','artists.list','artists.getById','artists.uploadAvatar','studioRelations.card','studioRelations.saveCard','studioRelations.uploadWork','studioRelations.removeWork','intelligentInbox.access']);
+const self = new Set(['artistInvitations.access','users.changePassword','artists.list','artists.getById','artists.uploadAvatar','studioRelations.card','studioRelations.saveCard','studioRelations.uploadWork','studioRelations.removeWork','studioRelations.uploadPresentationMedia','studioRelations.updateMediaFocal','studioRelations.removePresentationMedia','studioRelations.reorderWorks','intelligentInbox.access']);
 const routes: Record<string, SaasModule> = {};
 function group(prefix: string, module: SaasModule, operations: string[]) { for (const operation of operations) routes[prefix+'.'+operation]=module; }
 group('clients','clients',['list','search','getById','create','update','delete']);
@@ -22,9 +22,12 @@ group('anamnese','anamnesis',['getByClientId','getRequestsByClientId','updateSub
 // These newer routers already perform tenant and object checks. Legacy global
 // dashboards/search/stock/admin routes intentionally are not allowlisted.
 export function invitedRoutePermission(path: string): SaasModule | 'self' | null {
+  // Bot Tatuei performs its own studio, artist and per-action permission checks.
+  if (path.startsWith('nativeBot.')) return 'self';
   if (self.has(path)) return 'self';
   if (path==='messaging.getReminderIndicators' || path==='procedures.listLinkedAppointmentIds' || path==='appointments.reminders.list') return 'appointments';
   if (path.startsWith('intelligentInbox.')) return 'intelligent_inbox';
+  if (path.startsWith('quotes.')) return 'quotes';
   if (path.startsWith('pod.catalog.') || path.startsWith('pod.inventory.')) return 'stock';
   if (path.startsWith('pod.planning.')) return 'appointments';
   if (path.startsWith('pod.session.') || path.startsWith('procedures.')) return 'pod';
@@ -51,7 +54,10 @@ export async function assertInvitedArtistAccess(user: User, path: string, type: 
     if (!row) throw denied(); return row as any;
   };
   if (input.clientId != null) await client(input.clientId);
-  if (input.appointmentId != null) await tenantRow(schema.appointments,input.appointmentId);
+  if (input.appointmentId != null) {
+    const appointment = await tenantRow(schema.appointments,input.appointmentId);
+    if (appointment.artistId !== user.artistId) throw denied();
+  }
   if (input.calendarId != null) {
     const [row] = await db.select({id:schema.calendars.id}).from(schema.calendars).where(and(eq(schema.calendars.id,input.calendarId),eq(schema.calendars.userId,user.id))).limit(1);
     if (!row) throw denied();
@@ -62,9 +68,15 @@ export async function assertInvitedArtistAccess(user: User, path: string, type: 
     if (row.artistId !== user.artistId) throw denied();
   }
   if (path === 'appointments.create' && input.artistId !== user.artistId) throw denied();
+  const appointmentData = input.data && typeof input.data === 'object' ? input.data as Record<string, any> : undefined;
+  if (path === 'appointments.update' && appointmentData?.artistId != null && appointmentData.artistId !== user.artistId) throw denied();
   if (path.startsWith('appointments.') && input.artist != null) {
     const row = await tenantRow(schema.artists,user.artistId);
     if (input.artist !== row.name) throw denied();
+  }
+  if (path === 'appointments.update' && appointmentData?.artist != null) {
+    const row = await tenantRow(schema.artists,user.artistId);
+    if (appointmentData.artist !== row.name) throw denied();
   }
   if (path.startsWith('clients.') && input.id != null) await client(input.id);
   if (path.startsWith('transactions.') && input.id != null) await tenantRow(schema.transactions,input.id);

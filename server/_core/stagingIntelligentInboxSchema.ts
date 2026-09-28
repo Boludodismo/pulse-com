@@ -45,14 +45,24 @@ export async function ensureStagingIntelligentInboxSchema() {
         if (!columns[0]) throw new Error("Existing RBAC schema missing.");
         const current = String(columns[0].Type);
         const members = Array.from(current.matchAll(/'([^']+)'/g), m => m[1]);
-        if (!members.length)
+        const desired = Array.from(statement.matchAll(/'([^']+)'/g), m => m[1]);
+        if (!members.length || !desired.length)
           throw new Error(
             "Unexpected RBAC column type; manual review required."
           );
-        // Refuse a narrowing conversion; never discard an existing module.
-        if (members.some(m => !statement.includes("'" + m + "'")))
-          throw new Error("Unexpected RBAC modules; manual review required.");
-        if (!current.includes("'inbox_suggestions'")) await c.query(statement);
+        // Preserve every module already present (for example quotes) and add only
+        // the inbox modules missing from this older imported staging database.
+        const merged = Array.from(new Set([...members, ...desired]));
+        if (merged.length !== members.length) {
+          const enumSql = merged
+            .map(value => "'" + value.replace(/'/g, "''") + "'")
+            .join(",");
+          await c.query(
+            "ALTER TABLE user_module_permissions MODIFY COLUMN module ENUM(" +
+              enumSql +
+              ") NOT NULL"
+          );
+        }
       } else
         throw new Error("Unexpected statement in isolated inbox migration.");
     }

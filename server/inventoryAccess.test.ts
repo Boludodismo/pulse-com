@@ -216,25 +216,25 @@ describe("Estoque individual e fornecimento", () => {
         .session.consume({
           procedureId: 60,
           tenantMaterialId: 50,
-          quantity: "2.5",
+          quantity: "2",
         })
-    ).resolves.toMatchObject({ remainingQuantity: "7.500" });
+    ).resolves.toMatchObject({ remainingQuantity: "8.000" });
     expect(writes[0]).toMatchObject({
       table: tenantMaterials,
-      values: { currentQuantity: "7.500" },
+      values: { currentQuantity: "8.000" },
     });
     expect(writes[1]).toMatchObject({
       table: procedureInventoryConsumptions,
       values: {
         tenantMaterialId: 50,
         artistId: 20,
-        quantity: "2.500",
-        totalCostSnapshot: "5.0000",
+        quantity: "2.000",
+        totalCostSnapshot: "4.0000",
       },
     });
     expect(writes[2]).toMatchObject({
       table: tenantInventoryMovements,
-      values: { tenantMaterialId: 50, type: "consumo", newQuantity: "7.500" },
+      values: { tenantMaterialId: 50, type: "consumo", newQuantity: "8.000" },
     });
   });
   it("não permite saldo negativo", async () => {
@@ -263,10 +263,10 @@ describe("Estoque individual e fornecimento", () => {
           artistId: 20,
           tenantMaterialId: 50,
           status: "consumido",
-          quantity: "2.500",
+          quantity: "2.000",
         },
       ],
-      [{ ...material, currentQuantity: "7.500" }],
+      [{ ...material, currentQuantity: "8.000" }],
     ]);
     await expect(
       podSaasRouter
@@ -296,6 +296,25 @@ describe("Catálogo técnico atualizado", () => {
     const blocked = TECHNICAL_CATALOG_2026.findIndex(i => i.evidenceStatus === "bloqueado" || i.anvisaStatus === "bloqueado");
     expect(blocked).toBeGreaterThanOrEqual(0);
     for (const technicalCatalogIndex of [blocked, 909]) await expect(podSaasRouter.createCaller(admin).inventory.create({ technicalCatalogIndex, name: "Teste", currentQuantity: "1", unitCost: "1" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(writes).toHaveLength(0);
+  });
+});
+
+describe("unidades no consumo real", () => {
+  const proc = {id:60,studioId:10,artistId:20,clientId:30,status:"em_andamento"};
+  it.each(["consume", "consumeAuto"] as const)("%s rejeita cartucho em gramas sem gravar", async method => {
+    const {writes}=database([[proc],[{...material,name:"Cartucho Magnum Electric Ink",category:"Cartuchos",unit:"g"}],[{id:20}],[{artistId:20}]]);
+    await expect(podSaasRouter.createCaller(artistContext).session[method]({procedureId:60,tenantMaterialId:50,quantity:"1"})).rejects.toThrow("por unidade");
+    expect(writes).toHaveLength(0);
+  });
+  it.each(["consume", "consumeAuto"] as const)("%s rejeita fração de cartucho", async method => {
+    const {writes}=database([[proc],[{...material,name:"Cartucho Magnum",unit:"un"}],[{id:20}],[{artistId:20}]]);
+    await expect(podSaasRouter.createCaller(artistContext).session[method]({procedureId:60,tenantMaterialId:50,quantity:"0.5"})).rejects.toThrow("inteira");
+    expect(writes).toHaveLength(0);
+  });
+  it.each(["consume", "consumeAuto"] as const)("%s rejeita lote em gramas para saldo em unidades", async method => {
+    const {writes}=database([[proc],[{...material,name:"Cartucho Magnum",unit:"un"}],[{id:20}],[{artistId:20}],[{id:9,remainingQuantity:"10.000",unitSnapshot:"g",unitCost:"2.0000"}]]);
+    await expect(podSaasRouter.createCaller(artistContext).session[method]({procedureId:60,tenantMaterialId:50,quantity:"1",...(method==="consume"?{batchId:9}:{})})).rejects.toThrow("diverge");
     expect(writes).toHaveLength(0);
   });
 });

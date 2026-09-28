@@ -4,6 +4,7 @@ import { type Server } from "http";
 import { nanoid } from "nanoid";
 import path from "path";
 import { fileURLToPath } from "url";
+import { registerCoresReader } from "../learning/coresReader";
 
 // Vite is only available in development
 let createViteServer: any = null;
@@ -99,6 +100,8 @@ export function serveStatic(app: Express) {
     );
   }
 
+  // Isolated public learning route, before the CRM single-page fallback.
+  registerCoresReader(app);
   app.use(express.static(distPath));
 
   // fall through to index.html if the file doesn't exist

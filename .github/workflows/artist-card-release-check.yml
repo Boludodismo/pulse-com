@@ -1,0 +1,102 @@
+name: Artist card release checks
+on:
+  push:
+    branches: [release/artist-card-live-2026-09-19]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ephemeral-test-only
+          MYSQL_DATABASE: artist_card_release_test
+        ports: ['3306:3306']
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -pephemeral-test-only" --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      OUTBOUND_MESSAGING_DISABLED: 'true'
+      SCHEDULER_MODE: disabled
+      VITE_AUTH_MODE: local
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Locked dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+          pnpm install --frozen-lockfile
+      - name: Protected modules unchanged
+        run: |
+          python3 - <<'PY'
+          import subprocess,pathlib
+          base='7928a2fe81263c0293d4a4a63330cadfb18764fe'
+          p='server/routers/studioRelations.ts'
+          a=subprocess.check_output(['git','show',base+':'+p]).decode();b=pathlib.Path(p).read_text()
+          assert a[a.index(' procurement:'):]==b[b.index(' procurement:'):]
+          for p in ['client/src/App.tsx','client/src/pages/Artists.tsx','server/routers.ts','server/storage.ts','server/_core/index.ts','package.json','pnpm-lock.yaml','dist/index.js']:
+            assert subprocess.check_output(['git','show',base+':'+p])==pathlib.Path(p).read_bytes(),p
+          print('Protected sources preserved')
+          PY
+      - name: Type diagnostics against baseline
+        run: |
+          set +e
+          pnpm check > /tmp/card-release-types.txt 2>&1
+          RESULT=$?
+          set -e
+          cat /tmp/card-release-types.txt
+          if [ "$RESULT" != 0 ]; then
+            git worktree add --detach /tmp/card-release-base 7928a2fe81263c0293d4a4a63330cadfb18764fe
+            ln -s "$GITHUB_WORKSPACE/node_modules" /tmp/card-release-base/node_modules
+            (cd /tmp/card-release-base; pnpm check > /tmp/card-release-base-types.txt 2>&1) || true
+            python3 - <<'PY'
+          import pathlib,re
+          def errors(path): return set(re.sub(r'\(\d+,\d+\)','(line)',s) for s in pathlib.Path(path).read_text().splitlines() if 'error TS' in s)
+          current=errors('/tmp/card-release-types.txt');base=errors('/tmp/card-release-base-types.txt');added=current-base
+          print('Baseline diagnostics:',len(base),'Current:',len(current),'New:',len(added))
+          for line in sorted(added): print(line)
+          assert current and base and not added
+          PY
+          fi
+      - name: Contracts and neighboring regressions
+        run: pnpm exec vitest run --config vitest.artist-card.config.ts server/artistCardEditorial.test.ts server/appointmentTime.test.ts server/messaging/outboundSafety.test.ts
+      - name: Real MySQL migration twice and encrypted recovery roundtrip
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import mysql from 'mysql2/promise';
+          import {migrateCardPresentation,encryptCardSnapshot,decryptCardSnapshot} from './server/artistCardRelease.mjs';
+          const db=await mysql.createConnection('mysql://root:ephemeral-test-only@127.0.0.1:3306/artist_card_release_test');
+          try{
+            await db.query('CREATE TABLE artist_cards (id int PRIMARY KEY,token varchar(64) NOT NULL,description text)');
+            await db.query('INSERT INTO artist_cards VALUES (1,?,?),(2,?,?)',['a'.repeat(48),'Biografia original','b'.repeat(48),'Outra biografia']);
+            const [before]=await db.query('SELECT id,token,description FROM artist_cards ORDER BY id');
+            await migrateCardPresentation(db);await migrateCardPresentation(db);
+            const [after]=await db.query('SELECT id,token,description FROM artist_cards ORDER BY id');assert.deepEqual(after,before);
+            const [values]=await db.query('SELECT presentation FROM artist_cards');assert.ok(values.every(x=>x.presentation===null));
+            await db.query('UPDATE artist_cards SET presentation=? WHERE id=1',[JSON.stringify({version:1,education:'Formação preservada'})]);
+            await migrateCardPresentation(db);const [preserved]=await db.query('SELECT presentation FROM artist_cards WHERE id=1');assert.equal(JSON.parse(preserved[0].presentation).education,'Formação preservada');
+            const plain=Buffer.from(JSON.stringify({rows:before,label:'fotografias e formação'}));const secret='non-production-test-secret-of-at-least-32-characters';const encoded=encryptCardSnapshot(plain,secret);
+            assert.ok(decryptCardSnapshot(encoded,secret).equals(plain));assert.ok(!encoded.includes(Buffer.from('Biografia original')));assert.throws(()=>decryptCardSnapshot(encoded,'wrong-secret'));
+            const corrupt=Buffer.from(encoded);corrupt[corrupt.length-1]^=1;assert.throws(()=>decryptCardSnapshot(corrupt,secret));
+            console.log('PASS: additive migration repeated, old tokens/texts/new data preserved, encrypted recovery and tamper rejection');
+          }finally{await db.end();}
+          JS
+      - name: Full production build, no deploy
+        run: pnpm build
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artist-card-release-diagnostics
+          path: |
+            /tmp/card-release-types.txt
+            /tmp/card-release-base-types.txt
+          if-no-files-found: ignore

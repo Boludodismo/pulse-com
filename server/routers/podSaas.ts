@@ -1,5 +1,13 @@
+import type { SampleSource } from "../../shared/sessionColorSampling";
+import { completeVisualLayerOrder, visualLayerStack, validateVisualLayerOrder } from "../../shared/sessionVisualLayers";
+import { readSessionMaterials, snapshotSessionMaterials } from "../sessionMaterials";
+import { defaultSessionQuantity } from "../../shared/sessionMaterialDefaults";
+import { validateRecipeMaterial } from "../../shared/sessionPreparation";
+import { SESSION_CUP_ML, SESSION_DROPS_PER_ML, sessionCupSize, isSessionCup, validateSessionUnit, validateSessionConsumption } from "../../shared/sessionInkQuantity";
+import { importTestInventory } from "../inventoryTestImport";
+import { resolveProcedureArtist } from "../procedureArtist";
 import { appointmentKitsRouter } from "./appointmentKits";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { inventoryMaterialRegistrations } from "../../drizzle/appointmentKitSchema";
 import { syncMaterialRegistrationNotices } from "../materialRegistrationNotices";
 import { inventoryLoans } from "../../drizzle/inventoryWorkflowSchema";
@@ -13,6 +21,7 @@ import {materialDescription} from "../../shared/materialDescription";
 import { TECHNICAL_CATALOG_2026, canAddCatalogItemToOperationalStock } from "../../shared/technicalCatalog2026";
 import { assertOwnArtist, canUseMaterial, isInventoryManager, requireInventoryArtist, requireMaterialForArtist, requireOwnedMaterial, type InventoryDatabase, type InventoryContext } from "../inventoryAccess";
 import { TRPCError } from "@trpc/server";
+import { sessionAppearanceSchema } from "../../shared/sessionAppearance";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, getTableColumns } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -26,6 +35,14 @@ import {
   materialCatalogItems,
   procedureInventoryConsumptions,
   procedurePauses,
+  procedureColorSamples,
+  procedureInkRecipes,
+  procedureInkRecipeItems,
+  procedureInkRecipeResults,
+  tenantMaterialColorSamples,
+  procedureVisualLayers,
+  procedureImages,
+  procedureEvents,
   technicalProcedures,
   tenantInventoryMovements,
   tenantMaterials,
@@ -33,16 +50,82 @@ import {
   suppliers,
   studioMaterialArtists,
   studios,
+  artistSessionAppearance,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { hasModulePermission, type SaasModule } from "../saas";
 import { router, superAdminProcedure, tenantProcedure } from "../_core/trpc";
 import { sendAndLog } from "../messaging/service";
 import { normalizeBrazilianPhone } from "../messaging/phone";
+import { storageDelete } from "../storage";
+
+// Lock the session before checking a retry key; event and stock commit atomically.
+async function readStockReplay<T>(tx: any, procedureId: number, kind: string, input: {requestId?:string}) : Promise<T|null> {
+  if (!input.requestId) return null;
+  await tx.select({id:technicalProcedures.id}).from(technicalProcedures).where(eq(technicalProcedures.id,procedureId)).for("update");
+  const eventType=`${kind}:${input.requestId}`;
+  const [event]=await tx.select().from(procedureEvents).where(and(eq(procedureEvents.procedureId,procedureId),eq(procedureEvents.eventType,eventType))).limit(1).for("update");
+  if(!event)return null;
+  const stored=JSON.parse(event.payload||"null");
+  if(stored.hash!==createHash("sha256").update(JSON.stringify(input)).digest("hex"))throw new TRPCError({code:"CONFLICT",message:"Esta operação já foi registrada com outros dados."});
+  return stored.result as T;
+}
+async function saveStockReplay(tx:any,procedureId:number,kind:string,input:{requestId?:string},result:unknown){
+  if(input.requestId)await tx.insert(procedureEvents).values({procedureId,eventType:`${kind}:${input.requestId}`,payload:JSON.stringify({hash:createHash("sha256").update(JSON.stringify(input)).digest("hex"),result})});
+}
 
 const quantitySchema = z.string().regex(/^\d{1,9}(?:\.\d{1,3})?$/, "Informe uma quantidade positiva com até três casas decimais.");
 const costSchema = z.string().regex(/^\d{1,8}(?:\.\d{1,4})?$/, "Informe um custo não negativo com até quatro casas decimais.");
 const dateTimeSchema = z.string().datetime({ offset: true }).optional();
+const colorValueSchema = z.object({
+  hex: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  red: z.number().int().min(0).max(255),
+  green: z.number().int().min(0).max(255),
+  blue: z.number().int().min(0).max(255),
+  cyan: z.number().int().min(0).max(100),
+  magenta: z.number().int().min(0).max(100),
+  yellow: z.number().int().min(0).max(100),
+  black: z.number().int().min(0).max(100),
+  labL: z.number().min(0).max(100),
+  labA: z.number().min(-160).max(160),
+  labB: z.number().min(-160).max(160),
+});
+
+const sampleSourceInputSchema = z.object({
+  layerKey:z.string().min(1).max(80), imageKey:z.string().max(500).nullable(),
+  imageXPct:z.number().min(0).max(100),imageYPct:z.number().min(0).max(100),
+  width:z.number().int().positive().max(100000),height:z.number().int().positive().max(100000),
+});
+const storedSampleSourceSchema=sampleSourceInputSchema.extend({layerName:z.string().min(1).max(160),sampleId:z.number().int().positive()});
+
+const SESSION_CUP_CAPACITY_ML = SESSION_CUP_ML;
+type SessionCupSize = keyof typeof SESSION_CUP_CAPACITY_ML;
+
+function recipeStockQuantity(unit: string, drops: number, dropsPerMl: number) {
+  const normalized = unit.trim().toLowerCase();
+  const estimatedMl = drops / dropsPerMl;
+  if (normalized === "ml" || normalized.includes("mililit")) {
+    return { quantity: estimatedMl.toFixed(3), estimatedMl };
+  }
+  if (
+    normalized === "drop" ||
+    normalized === "drops" ||
+    normalized === "gt" ||
+    normalized.includes("gota")
+  ) {
+    return { quantity: drops.toFixed(3), estimatedMl };
+  }
+  throw new TRPCError({
+    code: "BAD_REQUEST",
+    message: "Para usar pigmentos em receitas, configure a unidade do material como ml ou gotas.",
+  });
+}
+
+function nextSessionCode(prefix: "C" | "M", previous?: string | null) {
+  const parsed = previous?.startsWith(prefix) ? previous.match(/(\d+)$/) : null;
+  const next = parsed ? Number(parsed[1]) + 1 : 1;
+  return prefix + String(next).padStart(2, "0");
+}
 
 function nowSql() {
   return new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -122,10 +205,11 @@ async function requireProcedure(database: Awaited<ReturnType<typeof requireDatab
   const procedure = (await database.select().from(technicalProcedures).where(and(
     eq(technicalProcedures.id, procedureId),
     eq(technicalProcedures.studioId, ctx.studioId),
-  )).limit(1))[0];
+  )).limit(1).for("update"))[0];
   if (!procedure) throw new TRPCError({ code: "NOT_FOUND", message: "Sessão POD não encontrada nesta empresa." });
-  assertOwnArtist(ctx, procedure.artistId);
-  return procedure;
+  const resolved = await resolveProcedureArtist(database, procedure);
+  assertOwnArtist(ctx, resolved.artistId ?? null);
+  return { ...procedure, ...resolved };
 }
 
 function calculateTiming(startedAt: string | null, finishedAt: string | null, pauses: Array<{ startedAt: string; endedAt: string | null }>) {
@@ -223,6 +307,10 @@ export const podSaasRouter = router({
   }),
 
   inventory: router({
+    importTestCatalog: tenantProcedure.input(z.object({artistId:z.number().int().positive(),profile:z.literal("session").optional(),offset:z.number().int().min(0).max(TECHNICAL_CATALOG_2026.length-1)})).mutation(async ({ctx,input})=>{
+      await requireModule(ctx,"stock",true);
+      return importTestInventory(await requireDatabase(),ctx,input);
+    }),
     loans: inventoryLoansRouter,
     notices: inventoryNoticesRouter,
     list: tenantProcedure.input(z.object({ artistId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {
@@ -237,6 +325,109 @@ export const podSaasRouter = router({
       return materials.map(material => ({ ...material, loan: loans.find(l => l.receivedMaterialId === material.id) ?? null, suppliedTo: allocations.filter(a => a.tenantMaterialId === material.id).map(a => a.artistId) }))
         .filter(material => artistId == null || canUseMaterial(material.ownerArtistId, material.suppliedTo, artistId));
     }),
+
+    materialColorSamples: tenantProcedure
+      .input(z.object({ artistId: z.number().int().positive().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        await requireModule(ctx, "stock");
+        const database = await requireDatabase();
+        const artistId = input?.artistId ?? (isInventoryManager(ctx) ? null : ctx.artistId);
+        assertOwnArtist(ctx, artistId);
+        const colors = await database
+          .select()
+          .from(tenantMaterialColorSamples)
+          .where(eq(tenantMaterialColorSamples.studioId, ctx.studioId))
+          .orderBy(asc(tenantMaterialColorSamples.tenantMaterialId));
+        if (artistId == null) return colors;
+
+        const allocations = await database.select().from(studioMaterialArtists)
+          .where(eq(studioMaterialArtists.studioId, ctx.studioId));
+        const materials = await database.select({
+          id: tenantMaterials.id,
+          ownerArtistId: tenantMaterials.ownerArtistId,
+        }).from(tenantMaterials).where(and(
+          eq(tenantMaterials.studioId, ctx.studioId),
+          eq(tenantMaterials.isActive, 1),
+        ));
+        const allowed = new Set(materials
+          .filter(material => canUseMaterial(
+            material.ownerArtistId,
+            allocations.filter(a => a.tenantMaterialId === material.id).map(a => a.artistId),
+            artistId,
+          ))
+          .map(material => material.id));
+        return colors.filter(color => allowed.has(color.tenantMaterialId));
+      }),
+
+    saveMaterialColorSample: tenantProcedure
+      .input(z.object({
+        tenantMaterialId: z.number().int().positive(),
+        artistId: z.number().int().positive().optional(),
+        source: z.enum(["photo", "manual", "catalog"]).default("photo"),
+        color: colorValueSchema,
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "stock", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const material = (await tx.select().from(tenantMaterials).where(and(
+            eq(tenantMaterials.id, input.tenantMaterialId),
+            eq(tenantMaterials.studioId, ctx.studioId),
+            eq(tenantMaterials.isActive, 1),
+          )).limit(1))[0];
+          if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Tinta não encontrada no estoque." });
+
+          const resolvedArtistId = input.artistId ?? ctx.artistId ?? null;
+          await requireMaterialForArtist(
+            tx as unknown as InventoryDatabase,
+            ctx,
+            material,
+            resolvedArtistId,
+          );
+
+          const existing = (await tx.select({ id: tenantMaterialColorSamples.id })
+            .from(tenantMaterialColorSamples)
+            .where(and(
+              eq(tenantMaterialColorSamples.studioId, ctx.studioId),
+              eq(tenantMaterialColorSamples.tenantMaterialId, material.id),
+            )).limit(1))[0];
+
+          const values = {
+            artistId: resolvedArtistId,
+            source: input.source,
+            hex: input.color.hex.toUpperCase(),
+            red: input.color.red,
+            green: input.color.green,
+            blue: input.color.blue,
+            cyan: input.color.cyan,
+            magenta: input.color.magenta,
+            yellow: input.color.yellow,
+            black: input.color.black,
+            labL: input.color.labL.toFixed(3),
+            labA: input.color.labA.toFixed(3),
+            labB: input.color.labB.toFixed(3),
+            createdByUserId: ctx.user.id,
+          };
+
+          if (existing) {
+            await tx.update(tenantMaterialColorSamples).set(values)
+              .where(and(
+                eq(tenantMaterialColorSamples.id, existing.id),
+                eq(tenantMaterialColorSamples.studioId, ctx.studioId),
+              ));
+            return { id: existing.id, tenantMaterialId: material.id, updated: true };
+          }
+
+          const inserted = await tx.insert(tenantMaterialColorSamples).values({
+            studioId: ctx.studioId,
+            tenantMaterialId: material.id,
+            ...values,
+          });
+          const id = insertId(inserted);
+          if (!id) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar a amostra tonal." });
+          return { id, tenantMaterialId: material.id, updated: false };
+        });
+      }),
 
     movements: tenantProcedure.input(z.object({ tenantMaterialId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       await requireModule(ctx, "stock");
@@ -256,6 +447,28 @@ export const podSaasRouter = router({
         await tx.delete(studioMaterialArtists).where(and(eq(studioMaterialArtists.studioId, ctx.studioId), eq(studioMaterialArtists.tenantMaterialId, material.id)));
         if (artistIds.length) await tx.insert(studioMaterialArtists).values(artistIds.map(artistId => ({ studioId: ctx.studioId, tenantMaterialId: material.id, artistId })));
         return { artistIds };
+      });
+    }),
+
+    importUpdate: tenantProcedure.input(z.object({
+      tenantMaterialId:z.number().int().positive(),
+      metadata:z.object({codigo_barras:z.string().trim().min(1).max(120).optional(),anvisa_rotulo:z.string().trim().min(1).max(120).optional(),observacoes:z.string().trim().min(1).max(1500).optional()}).optional(),
+      fields:z.object({name:z.string().trim().min(2).max(255).optional(),category:z.string().trim().min(1).max(120).optional(),brand:z.string().trim().min(1).max(120).optional(),line:z.string().trim().min(1).max(120).optional(),model:z.string().trim().min(1).max(120).optional(),configuration:z.string().trim().min(1).max(120).optional(),diameter:z.string().trim().min(1).max(40).optional(),gauge:z.string().trim().min(1).max(20).optional(),taper:z.string().trim().min(1).max(80).optional(),purchaseUnit:z.string().trim().min(1).max(50).optional(),needleCount:z.number().int().min(1).max(1000).optional(),packageQuantity:z.number().int().min(1).max(100000).optional()}).strict(),
+    })).mutation(async({ctx,input})=>{
+      await requireModule(ctx,"stock",true);const database=await requireDatabase();
+      return database.transaction(async tx=>{
+        const [material]=await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id,input.tenantMaterialId),eq(tenantMaterials.studioId,ctx.studioId),eq(tenantMaterials.isActive,1))).limit(1).for("update");
+        if(!material)throw new TRPCError({code:"NOT_FOUND",message:"Material não encontrado."});
+        assertOwnArtist(ctx,material.ownerArtistId);await assertNotLoanStock(tx,ctx.studioId,material.id);await assertNoPendingLoan(tx,ctx.studioId,material.id);
+        const patch:any={...input.fields};
+        if(input.metadata&&Object.keys(input.metadata).length){
+          let notes:any={};try{const parsed=JSON.parse(material.notes||"{}");notes=parsed&&typeof parsed==="object"&&!Array.isArray(parsed)?parsed:{textoAnterior:material.notes};}catch{notes={textoAnterior:material.notes};}
+          const previous=notes.leituraPlanilha&&typeof notes.leituraPlanilha==="object"?notes.leituraPlanilha:{};
+          notes.leituraPlanilha={...previous,...input.metadata};patch.notes=JSON.stringify(notes);
+          if(patch.notes.length>4000)throw new TRPCError({code:"BAD_REQUEST",message:"Observações excedem o espaço disponível no cadastro."});
+        }
+        if(Object.keys(patch).length)await tx.update(tenantMaterials).set(patch).where(and(eq(tenantMaterials.id,material.id),eq(tenantMaterials.studioId,ctx.studioId)));
+        return {id:material.id};
       });
     }),
 
@@ -317,6 +530,7 @@ export const podSaasRouter = router({
       )).limit(1))[0] : null;
       if (input.catalogItemId && !catalogItem) throw new TRPCError({ code: "NOT_FOUND", message: "Item de catálogo não encontrado." });
 
+      validateSessionUnit({ name: technical?.name ?? catalogItem?.name ?? input.name!, unit: technical?.baseUnit ?? input.unit ?? catalogItem?.defaultUnit ?? "unidade" });
       const inserted = await tx.insert(tenantMaterials).values({
         studioId: ctx.studioId,
         ownerArtistId: input.ownerArtistId,
@@ -467,6 +681,7 @@ export const podSaasRouter = router({
         const batches=await tx.select({id:inventoryBatches.id}).from(inventoryBatches).where(and(eq(inventoryBatches.studioId,ctx.studioId),eq(inventoryBatches.tenantMaterialId,existing.id))).limit(1);
         if(Number(existing.currentQuantity)>0||batches.length)throw new TRPCError({code:"BAD_REQUEST",message:"Não altere a unidade de um material com saldo ou lotes recebidos. Cadastre uma variante com a nova unidade."});
       }
+      validateSessionUnit(input);
       const { tenantMaterialId, expiresAt, ...fields } = input;
       const result = await tx.update(tenantMaterials).set({
         ...fields,
@@ -628,6 +843,37 @@ export const podSaasRouter = router({
   }),
 
   session: router({
+    getAppearance: tenantProcedure.input(z.object({procedureId:z.number().int().positive()})).query(async({ctx,input})=>{
+      await requireModule(ctx,"pod");
+      const database=await requireDatabase();
+      const procedure=await requireProcedure(database,input.procedureId,ctx);
+      const artistId=ctx.artistId??procedure.artistId;
+      if(!artistId)return {artistId:null,artistName:null,preferences:null,revision:0};
+      await requireInventoryArtist(database,ctx.studioId,artistId);
+      const [artist]=await database.select({name:artists.name}).from(artists).where(and(eq(artists.id,artistId),eq(artists.studioId,ctx.studioId))).limit(1);
+      const [row]=await database.select().from(artistSessionAppearance).where(and(eq(artistSessionAppearance.studioId,ctx.studioId),eq(artistSessionAppearance.artistId,artistId))).limit(1);
+      let preferences=null;
+      try{const parsed=sessionAppearanceSchema.safeParse(JSON.parse(row?.preferences??"null"));if(parsed.success)preferences=parsed.data;}catch{/* Invalid older preferences use the default layout. */}
+      return {artistId,artistName:artist.name,preferences,revision:row?.revision??0};
+    }),
+    saveAppearance: tenantProcedure.input(z.object({procedureId:z.number().int().positive(),expectedRevision:z.number().int().min(0),preferences:sessionAppearanceSchema})).mutation(async({ctx,input})=>{
+      await requireModule(ctx,"pod",true);
+      const database=await requireDatabase();
+      return database.transaction(async tx=>{
+        const procedure=await requireProcedure(tx as unknown as typeof database,input.procedureId,ctx);
+        const artistId=ctx.artistId??procedure.artistId;
+        if(!artistId)throw new TRPCError({code:"BAD_REQUEST",message:"Defina o artista da sessão para salvar as preferências."});
+        await requireInventoryArtist(tx as unknown as typeof database,ctx.studioId,artistId);
+        await tx.select({id:artists.id}).from(artists).where(and(eq(artists.id,artistId),eq(artists.studioId,ctx.studioId))).for("update");
+        const [row]=await tx.select().from(artistSessionAppearance).where(and(eq(artistSessionAppearance.studioId,ctx.studioId),eq(artistSessionAppearance.artistId,artistId))).for("update");
+        if((row?.revision??0)!==input.expectedRevision)throw new TRPCError({code:"CONFLICT",message:"As preferências foram alteradas em outra sessão. Recarregue as salvas antes de tentar novamente."});
+        const revision=(row?.revision??0)+1;
+        const values={preferences:JSON.stringify(input.preferences),revision,updatedByUserId:ctx.user.id};
+        if(row)await tx.update(artistSessionAppearance).set(values).where(and(eq(artistSessionAppearance.id,row.id),eq(artistSessionAppearance.studioId,ctx.studioId)));
+        else await tx.insert(artistSessionAppearance).values({studioId:ctx.studioId,artistId,...values});
+        return {artistId,revision,preferences:input.preferences};
+      });
+    }),
     clientMaterials:tenantProcedure.input(z.object({clientId:z.number().int().positive()})).query(async({ctx,input})=>{
       await requireModule(ctx,"clients");await requireModule(ctx,"pod");const d=await requireDatabase();
       const client=(await d.select({id:clients.id}).from(clients).where(and(eq(clients.id,input.clientId),eq(clients.studioId,ctx.studioId))).limit(1))[0];
@@ -649,7 +895,9 @@ export const podSaasRouter = router({
       referenceImageKey: z.string().trim().max(500).optional(),
     })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "pod", true);
-      const database = await requireDatabase();
+      const connection = await requireDatabase();
+      return connection.transaction(async tx => {
+      const database = tx as unknown as typeof connection;
       const client = (await database.select({ id: clients.id }).from(clients).where(and(
         eq(clients.id, input.clientId), eq(clients.studioId, ctx.studioId),
       )).limit(1))[0];
@@ -685,7 +933,11 @@ export const podSaasRouter = router({
         referenceImageUrl: appointment?.referenceImageUrl ?? input.referenceImageUrl ?? null,
         referenceImageKey: appointment?.referenceImageKey ?? input.referenceImageKey ?? null,
       });
-      return { id: insertId(inserted) };
+      const id = insertId(inserted);
+      if(!id)throw new TRPCError({code:"INTERNAL_SERVER_ERROR",message:"Não foi possível criar a sessão."});
+      await snapshotSessionMaterials(database, { id, studioId: ctx.studioId, appointmentId: appointment?.id ?? null });
+      return { id };
+      });
     }),
 
     get: tenantProcedure.input(z.object({ procedureId: z.number().int().positive() })).query(async ({ ctx, input }) => {
@@ -701,8 +953,964 @@ export const podSaasRouter = router({
       const plannedMaterials = procedure.appointmentId ? await database.select().from(appointmentPlannedMaterials).where(and(
         eq(appointmentPlannedMaterials.studioId, ctx.studioId), eq(appointmentPlannedMaterials.appointmentId, procedure.appointmentId),
       )) : [];
-      return { procedure, pauses, consumptions, plannedMaterials, timing: calculateTiming(procedure.startedAt, procedure.finishedAt, pauses) };
+      const { materials: sessionMaterials } = await readSessionMaterials(database, procedure);
+      return { procedure, pauses, consumptions, plannedMaterials, sessionMaterials, timing: calculateTiming(procedure.startedAt, procedure.finishedAt, pauses) };
     }),
+
+    addMaterial: tenantProcedure.input(z.object({ procedureId: z.number().int().positive(), tenantMaterialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      await requireModule(ctx, "pod", true);
+      const database = await requireDatabase();
+      return database.transaction(async tx => {
+        const db = tx as unknown as typeof database;
+        const procedure = await requireProcedure(db, input.procedureId, ctx);
+        await tx.select({ id: technicalProcedures.id }).from(technicalProcedures).where(eq(technicalProcedures.id, procedure.id)).for("update");
+        if (procedure.status === "finalizado") throw new TRPCError({ code: "BAD_REQUEST", message: "Sessão finalizada." });
+        const material = (await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id, input.tenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId), eq(tenantMaterials.isActive, 1))).limit(1))[0];
+        if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado." });
+        await requireMaterialForArtist(db, ctx, material, procedure.artistId);
+        validateSessionUnit(material);
+        const materials = await snapshotSessionMaterials(db, procedure);
+        if (!materials.some(m => m.tenantMaterialId === material.id)) await tx.insert(procedureEvents).values({ procedureId: procedure.id, eventType: "session_material_added", payload: JSON.stringify({ tenantMaterialId: material.id, name: material.name, unit: material.unit, quantity: defaultSessionQuantity(material) }) });
+        return { ok: true };
+      });
+    }),
+
+    listVisualLayers: tenantProcedure
+      .input(z.object({ procedureId: z.number().int().positive() }))
+      .query(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod");
+        const database = await requireDatabase();
+        const procedure = await requireProcedure(database, input.procedureId, ctx);
+        const stored = await database.select().from(procedureVisualLayers).where(and(
+          eq(procedureVisualLayers.studioId, ctx.studioId),
+          eq(procedureVisualLayers.procedureId, procedure.id),
+        )).orderBy(asc(procedureVisualLayers.sortOrder), asc(procedureVisualLayers.id));
+
+        const referenceSettings = stored.find(layer => layer.layerKey === "reference");
+        const sampleSettings = stored.find(layer => layer.layerKey === "samples");
+        const extras = stored.filter(layer => layer.layerKey !== "reference" && layer.layerKey !== "samples");
+        return [
+          {
+            id: referenceSettings?.id ?? null,
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            layerKey: "reference",
+            name: referenceSettings?.name ?? "Referência principal",
+            layerType: "reference",
+            imageUrl: procedure.referenceImageUrl ?? null,
+            imageKey: procedure.referenceImageKey ?? null,
+            opacity: referenceSettings?.opacity ?? 100,
+            isVisible: referenceSettings?.isVisible ?? 1,
+            sortOrder: referenceSettings?.sortOrder ?? 0,
+          },
+          ...extras,
+          {
+            id: sampleSettings?.id ?? null,
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            layerKey: "samples",
+            name: sampleSettings?.name ?? "Amostras de cor",
+            layerType: "samples",
+            imageUrl: null,
+            imageKey: null,
+            opacity: sampleSettings?.opacity ?? 100,
+            isVisible: sampleSettings?.isVisible ?? 1,
+            sortOrder: sampleSettings?.sortOrder ?? 900,
+          },
+        ].sort((a, b) => Number(a.sortOrder) - Number(b.sortOrder));
+      }),
+
+    updateVisualLayer: tenantProcedure
+      .input(z.object({
+        procedureId: z.number().int().positive(),
+        layerKey: z.string().trim().min(1).max(80),
+        name: z.string().trim().min(1).max(160).optional(),
+        opacity: z.number().int().min(0).max(100).optional(),
+        isVisible: z.boolean().optional(),
+        sortOrder: z.number().int().min(-1000).max(5000).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const procedure = await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            input.procedureId,
+            ctx,
+          );
+          await tx.select({ id: technicalProcedures.id }).from(technicalProcedures)
+            .where(eq(technicalProcedures.id, procedure.id)).for("update");
+          const existing = (await tx.select().from(procedureVisualLayers).where(and(
+            eq(procedureVisualLayers.studioId, ctx.studioId),
+            eq(procedureVisualLayers.procedureId, procedure.id),
+            eq(procedureVisualLayers.layerKey, input.layerKey),
+          )).limit(1).for("update"))[0];
+
+          const values = {
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.opacity !== undefined ? { opacity: input.opacity } : {}),
+            ...(input.isVisible !== undefined ? { isVisible: input.isVisible ? 1 : 0 } : {}),
+            ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+          };
+
+          if (existing) {
+            await tx.update(procedureVisualLayers).set(values).where(and(
+              eq(procedureVisualLayers.id, existing.id),
+              eq(procedureVisualLayers.studioId, ctx.studioId),
+            ));
+            return { id: existing.id, layerKey: existing.layerKey };
+          }
+
+          if (input.layerKey !== "reference" && input.layerKey !== "samples") {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Camada não encontrada." });
+          }
+
+          const isReference = input.layerKey === "reference";
+          const inserted = await tx.insert(procedureVisualLayers).values({
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            layerKey: input.layerKey,
+            name: input.name ?? (isReference ? "Referência principal" : "Amostras de cor"),
+            layerType: isReference ? "reference" : "samples",
+            imageUrl: null,
+            imageKey: null,
+            opacity: input.opacity ?? 100,
+            isVisible: input.isVisible === false ? 0 : 1,
+            sortOrder: input.sortOrder ?? (isReference ? 0 : 900),
+            createdByUserId: ctx.user.id,
+          });
+          return { id: insertId(inserted), layerKey: input.layerKey };
+        });
+      }),
+
+    reorderVisualLayers: tenantProcedure
+      .input(z.object({
+        procedureId: z.number().int().positive(),
+        orderedKeys: z.array(z.string().min(1).max(80)).min(2).max(500),
+        expectedKeys: z.array(z.string().min(1).max(80)).min(2).max(500),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const procedure = await requireProcedure(tx as unknown as typeof database, input.procedureId, ctx);
+          await tx.select({ id: technicalProcedures.id }).from(technicalProcedures)
+            .where(eq(technicalProcedures.id, procedure.id)).for("update");
+          const stored = await tx.select().from(procedureVisualLayers).where(and(
+            eq(procedureVisualLayers.studioId, ctx.studioId),
+            eq(procedureVisualLayers.procedureId, procedure.id),
+          )).orderBy(asc(procedureVisualLayers.sortOrder), asc(procedureVisualLayers.id)).for("update");
+          const current = visualLayerStack(completeVisualLayerOrder(stored)).map(layer => layer.layerKey);
+          try { validateVisualLayerOrder(current, input.orderedKeys, input.expectedKeys); }
+          catch (error) { throw new TRPCError({ code: "CONFLICT", message: (error as Error).message }); }
+          for (const [index, layerKey] of input.orderedKeys.entries()) {
+            const sortOrder = input.orderedKeys.length - 1 - index;
+            const existing = stored.find(layer => layer.layerKey === layerKey);
+            if (existing) {
+              await tx.update(procedureVisualLayers).set({ sortOrder }).where(and(
+                eq(procedureVisualLayers.id, existing.id), eq(procedureVisualLayers.studioId, ctx.studioId),
+              ));
+            } else {
+              const isReference = layerKey === "reference";
+              await tx.insert(procedureVisualLayers).values({
+                studioId: ctx.studioId, procedureId: procedure.id, clientId: procedure.clientId,
+                artistId: procedure.artistId, layerKey,
+                name: isReference ? "Referência principal" : "Amostras de cor",
+                layerType: isReference ? "reference" : "samples", sortOrder, createdByUserId: ctx.user.id,
+              });
+            }
+          }
+          return { orderedKeys: input.orderedKeys };
+        });
+      }),
+
+    addVisualLayer: tenantProcedure
+      .input(z.object({
+        procedureId: z.number().int().positive(),
+        name: z.string().trim().min(1).max(160),
+        layerType: z.enum(["contrast", "stencil", "stencil_overlay", "image"]),
+        imageUrl: z.string().trim().min(1).max(3000),
+        imageKey: z.string().trim().min(1).max(500),
+        opacity: z.number().int().min(0).max(100).default(100),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const procedure = await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            input.procedureId,
+            ctx,
+          );
+          await tx.select({ id: technicalProcedures.id }).from(technicalProcedures)
+            .where(eq(technicalProcedures.id, procedure.id)).for("update");
+          const existingLayers = await tx.select({
+            layerKey: procedureVisualLayers.layerKey,
+            sortOrder: procedureVisualLayers.sortOrder,
+          }).from(procedureVisualLayers).where(and(
+            eq(procedureVisualLayers.studioId, ctx.studioId),
+            eq(procedureVisualLayers.procedureId, procedure.id),
+          )).for("update");
+          const previousExtraOrder = completeVisualLayerOrder(existingLayers)
+            .filter(layer => layer.layerKey !== "samples")
+            .reduce((max, layer) => Math.max(max, Number(layer.sortOrder ?? 0)), 0);
+          const layerKey = "layer-" + randomUUID();
+          const inserted = await tx.insert(procedureVisualLayers).values({
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            layerKey,
+            name: input.name,
+            layerType: input.layerType,
+            imageUrl: input.imageUrl,
+            imageKey: input.imageKey,
+            opacity: input.opacity,
+            isVisible: 1,
+            sortOrder: previousExtraOrder + 1,
+            createdByUserId: ctx.user.id,
+          });
+          const id = insertId(inserted);
+          if (!id) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível criar a camada." });
+          return { id, layerKey };
+        });
+      }),
+
+    removeVisualLayer: tenantProcedure
+      .input(z.object({ procedureId: z.number().int().positive(), layerKey: z.string().trim().min(1).max(80) }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        if (input.layerKey === "reference" || input.layerKey === "samples") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "As camadas-base podem ser ocultadas, mas não removidas." });
+        }
+        const database = await requireDatabase();
+        const layer = await database.transaction(async tx => {
+          const procedure = await requireProcedure(tx as unknown as typeof database, input.procedureId, ctx);
+          await tx.select({ id: technicalProcedures.id }).from(technicalProcedures)
+            .where(eq(technicalProcedures.id, procedure.id)).for("update");
+          const existing = (await tx.select().from(procedureVisualLayers).where(and(
+            eq(procedureVisualLayers.studioId, ctx.studioId),
+            eq(procedureVisualLayers.procedureId, procedure.id),
+            eq(procedureVisualLayers.layerKey, input.layerKey),
+          )).limit(1).for("update"))[0];
+          if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Camada não encontrada." });
+          await tx.delete(procedureVisualLayers).where(and(
+            eq(procedureVisualLayers.id, existing.id), eq(procedureVisualLayers.studioId, ctx.studioId),
+          ));
+          return existing;
+        });
+        if (layer.imageKey) {
+          await database.delete(procedureImages).where(and(
+            eq(procedureImages.procedureId, input.procedureId),
+            eq(procedureImages.imageKey, layer.imageKey),
+          )).catch(() => undefined);
+          await storageDelete(layer.imageKey).catch(error => {
+            console.warn("[Visual layer] Could not delete stored object:", error);
+          });
+        }
+        return { id: layer.id, layerKey: layer.layerKey };
+      }),
+
+    listColorSamples: tenantProcedure
+      .input(z.object({ procedureId: z.number().int().positive() }))
+      .query(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod");
+        const database = await requireDatabase();
+        await requireProcedure(database, input.procedureId, ctx);
+        const rows = await database
+          .select()
+          .from(procedureColorSamples)
+          .where(and(
+            eq(procedureColorSamples.studioId, ctx.studioId),
+            eq(procedureColorSamples.procedureId, input.procedureId),
+          ))
+          .orderBy(asc(procedureColorSamples.id));
+        const events=await database.select({payload:procedureEvents.payload}).from(procedureEvents).where(and(
+          eq(procedureEvents.procedureId,input.procedureId),eq(procedureEvents.eventType,"color_sample_source"),
+        ));
+        const sources=new Map<number,SampleSource>();
+        for(const event of events){
+          try{const parsed=storedSampleSourceSchema.safeParse(JSON.parse(event.payload||"null"));
+            if(parsed.success){const {sampleId,...source}=parsed.data;sources.set(sampleId,source)}
+          }catch{/* Older events without valid source metadata keep their original values. */}
+        }
+        return rows.map(row=>({...row,source:sources.get(row.id)??null}));
+      }),
+
+    saveColorSample: tenantProcedure
+      .input(z.object({
+        procedureId: z.number().int().positive(),
+        hex: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+        red: z.number().int().min(0).max(255),
+        green: z.number().int().min(0).max(255),
+        blue: z.number().int().min(0).max(255),
+        cyan: z.number().int().min(0).max(100),
+        magenta: z.number().int().min(0).max(100),
+        yellow: z.number().int().min(0).max(100),
+        black: z.number().int().min(0).max(100),
+        labL: z.number().min(0).max(100),
+        labA: z.number().min(-160).max(160),
+        labB: z.number().min(-160).max(160),
+        xPct: z.number().min(0).max(100),
+        yPct: z.number().min(0).max(100),
+        sampleSize: z.literal(5).default(5),
+        requestId:z.string().uuid().optional(),
+        source:sampleSourceInputSchema.optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const procedure = await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            input.procedureId,
+            ctx,
+          );
+          const locked=(await tx.select().from(technicalProcedures).where(eq(technicalProcedures.id,procedure.id)).for("update"))[0];
+          const replay=await readStockReplay<{id:number;code:string;source:SampleSource|null}>(tx,procedure.id,"sample",input);
+          if(replay)return replay;
+          let source:SampleSource|null=null;
+          if(input.source){
+            const layer=(await tx.select().from(procedureVisualLayers).where(and(
+              eq(procedureVisualLayers.studioId,ctx.studioId),eq(procedureVisualLayers.procedureId,procedure.id),eq(procedureVisualLayers.layerKey,input.source.layerKey),
+            )).limit(1).for("update"))[0];
+            const isReference=input.source.layerKey==="reference";
+            if(input.source.layerKey==="samples"||(!isReference&&!layer))throw new TRPCError({code:"BAD_REQUEST",message:"Selecione uma camada de imagem desta sessão."});
+            const imageKey=isReference?locked.referenceImageKey:layer.imageKey;
+            const imageUrl=isReference?locked.referenceImageUrl:layer.imageUrl;
+            if(!imageUrl||(layer&&(!layer.isVisible||layer.opacity===0)))throw new TRPCError({code:"BAD_REQUEST",message:"A camada selecionada está oculta ou não contém imagem."});
+            if(imageKey!==input.source.imageKey)throw new TRPCError({code:"CONFLICT",message:"A imagem desta camada mudou. Selecione novamente a cor."});
+            source={...input.source,layerName:layer?.name??"Referência principal"};
+          }
+          if (locked.status === "finalizado")
+            throw new TRPCError({ code: "BAD_REQUEST", message: "A sessão já foi finalizada." });
+          const previous = (await tx
+            .select({ code: procedureColorSamples.code })
+            .from(procedureColorSamples)
+            .where(and(
+              eq(procedureColorSamples.studioId, ctx.studioId),
+              eq(procedureColorSamples.procedureId, procedure.id),
+            ))
+            .orderBy(desc(procedureColorSamples.id))
+            .limit(1).for("update"))[0];
+          const code = nextSessionCode("C", previous?.code);
+          const inserted = await tx.insert(procedureColorSamples).values({
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            code,
+            hex: input.hex.toUpperCase(),
+            red: input.red,
+            green: input.green,
+            blue: input.blue,
+            cyan: input.cyan,
+            magenta: input.magenta,
+            yellow: input.yellow,
+            black: input.black,
+            labL: input.labL.toFixed(3),
+            labA: input.labA.toFixed(3),
+            labB: input.labB.toFixed(3),
+            xPct: input.xPct.toFixed(4),
+            yPct: input.yPct.toFixed(4),
+            sampleSize: 5,
+            createdByUserId: ctx.user.id,
+          });
+          const id = insertId(inserted);
+          if (!id) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar a amostra." });
+          if(source)await tx.insert(procedureEvents).values({procedureId:procedure.id,eventType:"color_sample_source",payload:JSON.stringify({sampleId:id,...source})});
+          const result={id,code,source};
+          await saveStockReplay(tx,procedure.id,"sample",input,result);
+          return result;
+        });
+      }),
+
+    listInkRecipes: tenantProcedure
+      .input(z.object({ procedureId: z.number().int().positive() }))
+      .query(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod");
+        const database = await requireDatabase();
+        await requireProcedure(database, input.procedureId, ctx);
+        const recipes = await database
+          .select()
+          .from(procedureInkRecipes)
+          .where(and(
+            eq(procedureInkRecipes.studioId, ctx.studioId),
+            eq(procedureInkRecipes.procedureId, input.procedureId),
+          ))
+          .orderBy(asc(procedureInkRecipes.id));
+        if (!recipes.length) return [];
+        const items = await database
+          .select()
+          .from(procedureInkRecipeItems)
+          .where(and(
+            eq(procedureInkRecipeItems.studioId, ctx.studioId),
+            inArray(procedureInkRecipeItems.recipeId, recipes.map(recipe => recipe.id)),
+          ))
+          .orderBy(asc(procedureInkRecipeItems.id));
+        const results = await database
+          .select()
+          .from(procedureInkRecipeResults)
+          .where(and(
+            eq(procedureInkRecipeResults.studioId, ctx.studioId),
+            inArray(procedureInkRecipeResults.recipeId, recipes.map(recipe => recipe.id)),
+          ));
+        return recipes.map(recipe => ({
+          ...recipe,
+          items: items.filter(item => item.recipeId === recipe.id),
+          result: results.find(result => result.recipeId === recipe.id) ?? null,
+        }));
+      }),
+
+    saveInkRecipeResult: tenantProcedure
+      .input(z.object({
+        recipeId: z.number().int().positive(),
+        color: colorValueSchema,
+        note: z.string().trim().max(500).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const recipe = (await tx.select().from(procedureInkRecipes).where(and(
+            eq(procedureInkRecipes.id, input.recipeId),
+            eq(procedureInkRecipes.studioId, ctx.studioId),
+          )).limit(1))[0];
+          if (!recipe) throw new TRPCError({ code: "NOT_FOUND", message: "Mistura não encontrada." });
+          await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            recipe.procedureId,
+            ctx,
+          );
+
+          const existing = (await tx.select({ id: procedureInkRecipeResults.id })
+            .from(procedureInkRecipeResults)
+            .where(and(
+              eq(procedureInkRecipeResults.studioId, ctx.studioId),
+              eq(procedureInkRecipeResults.recipeId, recipe.id),
+            )).limit(1))[0];
+
+          const values = {
+            procedureId: recipe.procedureId,
+            clientId: recipe.clientId,
+            artistId: recipe.artistId,
+            hex: input.color.hex.toUpperCase(),
+            red: input.color.red,
+            green: input.color.green,
+            blue: input.color.blue,
+            cyan: input.color.cyan,
+            magenta: input.color.magenta,
+            yellow: input.color.yellow,
+            black: input.color.black,
+            labL: input.color.labL.toFixed(3),
+            labA: input.color.labA.toFixed(3),
+            labB: input.color.labB.toFixed(3),
+            note: input.note ?? null,
+            createdByUserId: ctx.user.id,
+          };
+
+          if (existing) {
+            await tx.update(procedureInkRecipeResults).set(values)
+              .where(and(
+                eq(procedureInkRecipeResults.id, existing.id),
+                eq(procedureInkRecipeResults.studioId, ctx.studioId),
+              ));
+            return { id: existing.id, recipeId: recipe.id, updated: true };
+          }
+
+          const inserted = await tx.insert(procedureInkRecipeResults).values({
+            studioId: ctx.studioId,
+            recipeId: recipe.id,
+            ...values,
+          });
+          const id = insertId(inserted);
+          if (!id) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível salvar a amostra da mistura." });
+          return { id, recipeId: recipe.id, updated: false };
+        });
+      }),
+
+    recipeLibrary: tenantProcedure
+      .input(z.object({ artistId: z.number().int().positive().optional(), limit: z.number().int().min(1).max(100).default(30) }).optional())
+      .query(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod");
+        const database = await requireDatabase();
+        const artistId = input?.artistId ?? ctx.artistId ?? null;
+        assertOwnArtist(ctx, artistId);
+        const recipes = await database.select().from(procedureInkRecipes)
+          .where(and(
+            eq(procedureInkRecipes.studioId, ctx.studioId),
+            artistId == null ? undefined : eq(procedureInkRecipes.artistId, artistId),
+          ))
+          .orderBy(desc(procedureInkRecipes.id))
+          .limit(input?.limit ?? 30);
+        if (!recipes.length) return [];
+        const ids = recipes.map(recipe => recipe.id);
+        const items = await database.select().from(procedureInkRecipeItems)
+          .where(and(
+            eq(procedureInkRecipeItems.studioId, ctx.studioId),
+            inArray(procedureInkRecipeItems.recipeId, ids),
+          ))
+          .orderBy(asc(procedureInkRecipeItems.id));
+        const results = await database.select().from(procedureInkRecipeResults)
+          .where(and(
+            eq(procedureInkRecipeResults.studioId, ctx.studioId),
+            inArray(procedureInkRecipeResults.recipeId, ids),
+          ));
+        return recipes.map(recipe => ({
+          ...recipe,
+          items: items.filter(item => item.recipeId === recipe.id),
+          result: results.find(result => result.recipeId === recipe.id) ?? null,
+        }));
+      }),
+
+    saveInkRecipe: tenantProcedure
+      .input(z.object({
+        procedureId: z.number().int().positive(),
+        requestId: z.string().uuid().optional(),
+        sampleId: z.number().int().positive().optional(),
+        cupSize: z.enum(["P", "M", "G", "GG"]).nullable().default(null),
+        dropsPerMl: z.number().min(5).max(60).default(SESSION_DROPS_PER_ML),
+        cupTenantMaterialId: z.number().int().positive().optional(),
+        cupBatchId: z.number().int().positive().optional(),
+        ingredients: z.array(z.object({
+          tenantMaterialId: z.number().int().positive(),
+          batchId: z.number().int().positive().optional(),
+          drops: z.number().int().min(1).max(500),
+        })).min(1).max(24),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        await requireModule(ctx, "stock", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const procedure = await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            input.procedureId,
+            ctx,
+          );
+          const replay = await readStockReplay<{ id:number;code:string;estimatedMl:string;totalDrops:number;cupSize:SessionCupSize|null;consumptionIds:number[];cupConsumptionId:number|null }>(tx, procedure.id, "recipe", input);
+          if (replay) return replay;
+          if (procedure.status === "finalizado")
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível registrar mistura em uma sessão finalizada." });
+
+          if (input.sampleId) {
+            const linkedSample = (await tx
+              .select({ id: procedureColorSamples.id })
+              .from(procedureColorSamples)
+              .where(and(
+                eq(procedureColorSamples.id, input.sampleId),
+                eq(procedureColorSamples.studioId, ctx.studioId),
+                eq(procedureColorSamples.procedureId, procedure.id),
+              ))
+              .limit(1))[0];
+            if (!linkedSample)
+              throw new TRPCError({ code: "BAD_REQUEST", message: "A amostra de cor não pertence a esta sessão." });
+          }
+
+          const totalDrops = input.ingredients.reduce((sum, item) => sum + item.drops, 0);
+          const estimatedMl = totalDrops / input.dropsPerMl;
+          const cupCapacityMl = input.cupSize ? SESSION_CUP_CAPACITY_ML[input.cupSize] : null;
+          if (input.cupTenantMaterialId && !input.cupSize) throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione o tamanho do recipiente." });
+          if (new Set(input.ingredients.map(i => i.tenantMaterialId)).size !== input.ingredients.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Há ingredientes repetidos." });
+          if (cupCapacityMl !== null && estimatedMl > cupCapacityMl + 0.0005) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `A mistura estima ${estimatedMl.toFixed(2)} ml e ultrapassa o batoque ${input.cupSize} (${cupCapacityMl.toFixed(2)} ml).`,
+            });
+          }
+
+          const previousRecipe = (await tx
+            .select({ code: procedureInkRecipes.code })
+            .from(procedureInkRecipes)
+            .where(and(
+              eq(procedureInkRecipes.studioId, ctx.studioId),
+              eq(procedureInkRecipes.procedureId, procedure.id),
+            ))
+            .orderBy(desc(procedureInkRecipes.id))
+            .limit(1))[0];
+          const code = nextSessionCode("M", previousRecipe?.code);
+
+          const insertedRecipe = await tx.insert(procedureInkRecipes).values({
+            studioId: ctx.studioId,
+            procedureId: procedure.id,
+            clientId: procedure.clientId,
+            artistId: procedure.artistId,
+            sampleId: input.sampleId ?? null,
+            code,
+            cupSize: input.cupSize,
+            cupCapacityMl: cupCapacityMl?.toFixed(3) ?? null,
+            dropsPerMl: input.dropsPerMl.toFixed(3),
+            totalDrops,
+            estimatedMl: estimatedMl.toFixed(3),
+            cupTenantMaterialId: input.cupTenantMaterialId ?? null,
+            status: "active",
+            createdByUserId: ctx.user.id,
+          });
+          const recipeId = insertId(insertedRecipe);
+          if (!recipeId)
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível iniciar o registro da mistura." });
+
+          const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date());
+
+          const consumeOne = async (args: {
+            tenantMaterialId: number;
+            batchId?: number;
+            quantity: string;
+          }) => {
+            const material = (await tx
+              .select()
+              .from(tenantMaterials)
+              .where(and(
+                eq(tenantMaterials.id, args.tenantMaterialId),
+                eq(tenantMaterials.studioId, ctx.studioId),
+                eq(tenantMaterials.isActive, 1),
+              ))
+              .limit(1)
+              .for("update"))[0];
+            if (!material)
+              throw new TRPCError({ code: "NOT_FOUND", message: "Material da mistura não encontrado no estoque." });
+            await requireMaterialForArtist(
+              tx as unknown as InventoryDatabase,
+              ctx,
+              material,
+              procedure.artistId,
+            );
+
+            const quantity = decimalToScaled(args.quantity, 3);
+            const previousQuantity = decimalToScaled(material.currentQuantity, 3);
+            if (quantity <= 0 || previousQuantity < quantity)
+              throw new TRPCError({ code: "BAD_REQUEST", message: `Saldo insuficiente de ${material.name}.` });
+
+            const batches = await tx
+              .select()
+              .from(inventoryBatches)
+              .where(and(
+                eq(inventoryBatches.studioId, ctx.studioId),
+                eq(inventoryBatches.tenantMaterialId, material.id),
+              ))
+              .orderBy(asc(inventoryBatches.expiresAt), asc(inventoryBatches.id))
+              .for("update");
+
+            const tracked = batches.reduce(
+              (sum, batch) => sum + decimalToScaled(batch.remainingQuantity, 3),
+              0,
+            );
+            const untracked = previousQuantity - tracked;
+            let batch = args.batchId
+              ? batches.find(candidate => candidate.id === args.batchId)
+              : batches.find(candidate => {
+                  const expiry = candidate.expiresAt ? String(candidate.expiresAt).slice(0, 10) : null;
+                  return (!expiry || expiry >= today)
+                    && decimalToScaled(candidate.remainingQuantity, 3) >= quantity;
+                });
+
+            if (args.batchId && !batch)
+              throw new TRPCError({ code: "BAD_REQUEST", message: "O lote selecionado não pertence a este material." });
+
+            if (!batch && batches.length && untracked < quantity)
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `Nenhum lote válido de ${material.name} possui saldo suficiente. Selecione o lote utilizado.`,
+              });
+
+            const expiry = batch?.expiresAt ?? (!batch ? material.expiresAt : null);
+            if (expiry && String(expiry).slice(0, 10) < today)
+              throw new TRPCError({ code: "BAD_REQUEST", message: `O lote de ${material.name} está vencido.` });
+
+            validateSessionConsumption(material, args.quantity, batch);
+            const cost = batch?.unitCost ?? material.unitCost;
+            const persistedPrevious = scaledToDecimal(previousQuantity, 3);
+            const persistedNext = scaledToDecimal(previousQuantity - quantity, 3);
+
+            if (batch) {
+              const batchRemaining = decimalToScaled(batch.remainingQuantity, 3);
+              if (batchRemaining < quantity)
+                throw new TRPCError({ code: "BAD_REQUEST", message: `Saldo insuficiente no lote de ${material.name}.` });
+              await tx
+                .update(inventoryBatches)
+                .set({ remainingQuantity: scaledToDecimal(batchRemaining - quantity, 3) })
+                .where(and(
+                  eq(inventoryBatches.id, batch.id),
+                  eq(inventoryBatches.studioId, ctx.studioId),
+                ));
+            }
+
+            const stockUpdate = await tx
+              .update(tenantMaterials)
+              .set({ currentQuantity: persistedNext })
+              .where(and(
+                eq(tenantMaterials.id, material.id),
+                eq(tenantMaterials.studioId, ctx.studioId),
+                eq(tenantMaterials.currentQuantity, persistedPrevious),
+              ));
+            if (!isAffected(stockUpdate))
+              throw new TRPCError({ code: "CONFLICT", message: "O estoque mudou durante o registro da mistura. Tente novamente." });
+
+            const consumption = await tx.insert(procedureInventoryConsumptions).values({
+              procedureId: procedure.id,
+              studioId: ctx.studioId,
+              appointmentId: procedure.appointmentId,
+              clientId: procedure.clientId,
+              artistId: procedure.artistId,
+              tenantMaterialId: material.id,
+              plannedMaterialId: null,
+              nameSnapshot: batch?.nameSnapshot ?? material.name,
+              unitSnapshot: batch?.unitSnapshot ?? material.unit,
+              quantity: scaledToDecimal(quantity, 3),
+              unitCostSnapshot: scaledToDecimal(decimalToScaled(cost, 4), 4),
+              totalCostSnapshot: multiplyQuantityByCost(scaledToDecimal(quantity, 3), cost),
+              batchId: batch?.id ?? null,
+              supplierNameSnapshot: batch?.supplierName ?? null,
+              technicalSnapshot: batch?.technicalSnapshot ?? materialDescription(material),
+              lotSnapshot: batch?.lot ?? material.lot,
+              expiresAtSnapshot: batch?.expiresAt ?? material.expiresAt,
+              consumedAt: nowSql(),
+              createdByUserId: ctx.user.id,
+            });
+            const consumptionId = insertId(consumption);
+            if (!consumptionId)
+              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível registrar o consumo da mistura." });
+
+            await tx.insert(tenantInventoryMovements).values({
+              studioId: ctx.studioId,
+              tenantMaterialId: material.id,
+              type: "consumo",
+              quantity: scaledToDecimal(quantity, 3),
+              previousQuantity: persistedPrevious,
+              newQuantity: persistedNext,
+              sourceType: "procedure_recipe_consumption",
+              sourceId: consumptionId,
+              reason: `Mistura ${code} da sessão POD #${procedure.id}`,
+              createdByUserId: ctx.user.id,
+            });
+
+            return { material, batch, consumptionId };
+          };
+
+          const consumptionIds: number[] = [];
+          for (const ingredient of input.ingredients) {
+            const material = (await tx
+              .select()
+              .from(tenantMaterials)
+              .where(and(
+                eq(tenantMaterials.id, ingredient.tenantMaterialId),
+                eq(tenantMaterials.studioId, ctx.studioId),
+                eq(tenantMaterials.isActive, 1),
+              ))
+              .limit(1))[0];
+            if (!material)
+              throw new TRPCError({ code: "NOT_FOUND", message: "Pigmento ou diluente não encontrado." });
+
+            validateRecipeMaterial(material);
+            const converted = recipeStockQuantity(material.unit, ingredient.drops, input.dropsPerMl);
+            const consumed = await consumeOne({
+              tenantMaterialId: ingredient.tenantMaterialId,
+              batchId: ingredient.batchId,
+              quantity: converted.quantity,
+            });
+            consumptionIds.push(consumed.consumptionId);
+            await tx.insert(procedureInkRecipeItems).values({
+              studioId: ctx.studioId,
+              recipeId,
+              tenantMaterialId: consumed.material.id,
+              consumptionId: consumed.consumptionId,
+              batchId: consumed.batch?.id ?? null,
+              nameSnapshot: consumed.material.name,
+              brandSnapshot: consumed.material.brand ?? null,
+              lotSnapshot: consumed.batch?.lot ?? consumed.material.lot,
+              expiresAtSnapshot: consumed.batch?.expiresAt ?? consumed.material.expiresAt,
+              drops: ingredient.drops,
+              estimatedMl: converted.estimatedMl.toFixed(3),
+              percentage: ((ingredient.drops / totalDrops) * 100).toFixed(3),
+            });
+          }
+
+          let cupConsumptionId: number | null = null;
+          if (input.cupTenantMaterialId) {
+            const cupMaterial = (await tx.select().from(tenantMaterials).where(and(eq(tenantMaterials.id, input.cupTenantMaterialId), eq(tenantMaterials.studioId, ctx.studioId))).limit(1))[0];
+            if (!cupMaterial || !isSessionCup(cupMaterial) || sessionCupSize(cupMaterial) !== input.cupSize) throw new TRPCError({ code: "BAD_REQUEST", message: "O material selecionado não corresponde ao tamanho do batoque." });
+            const consumedCup = await consumeOne({
+              tenantMaterialId: input.cupTenantMaterialId,
+              batchId: input.cupBatchId,
+              quantity: "1.000",
+            });
+            cupConsumptionId = consumedCup.consumptionId;
+            consumptionIds.push(consumedCup.consumptionId);
+            await tx
+              .update(procedureInkRecipes)
+              .set({ cupConsumptionId })
+              .where(eq(procedureInkRecipes.id, recipeId));
+          }
+
+          const result = {
+            id: recipeId,
+            code,
+            estimatedMl: estimatedMl.toFixed(3),
+            totalDrops,
+            cupSize: input.cupSize,
+            consumptionIds,
+            cupConsumptionId,
+          };
+          await saveStockReplay(tx, procedure.id, "recipe", input, result);
+          return result;
+        });
+      }),
+
+    revertInkRecipe: tenantProcedure
+      .input(z.object({
+        recipeId: z.number().int().positive(),
+        reason: z.string().trim().min(2).max(255).default("Mistura desfeita na sessão"),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await requireModule(ctx, "pod", true);
+        await requireModule(ctx, "stock", true);
+        const database = await requireDatabase();
+        return database.transaction(async tx => {
+          const recipe = (await tx
+            .select()
+            .from(procedureInkRecipes)
+            .where(and(
+              eq(procedureInkRecipes.id, input.recipeId),
+              eq(procedureInkRecipes.studioId, ctx.studioId),
+            ))
+            .limit(1)
+            .for("update"))[0];
+          if (!recipe)
+            throw new TRPCError({ code: "NOT_FOUND", message: "Mistura não encontrada." });
+
+          await requireProcedure(
+            tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+            recipe.procedureId,
+            ctx,
+          );
+          if (recipe.status === "reverted")
+            return { id: recipe.id, alreadyReverted: true, restored: 0 };
+
+          const recipeItems = await tx
+            .select({ consumptionId: procedureInkRecipeItems.consumptionId })
+            .from(procedureInkRecipeItems)
+            .where(and(
+              eq(procedureInkRecipeItems.studioId, ctx.studioId),
+              eq(procedureInkRecipeItems.recipeId, recipe.id),
+            ));
+          const consumptionIds = Array.from(new Set([
+            ...recipeItems.map(item => item.consumptionId),
+            ...(recipe.cupConsumptionId ? [recipe.cupConsumptionId] : []),
+          ]));
+          const rows = consumptionIds.length
+            ? await tx
+                .select()
+                .from(procedureInventoryConsumptions)
+                .where(and(
+                  eq(procedureInventoryConsumptions.studioId, ctx.studioId),
+                  inArray(procedureInventoryConsumptions.id, consumptionIds),
+                  eq(procedureInventoryConsumptions.status, "consumido"),
+                ))
+                .orderBy(desc(procedureInventoryConsumptions.id))
+            : [];
+
+          let restored = 0;
+          for (const consumption of rows) {
+            const material = (await tx
+              .select()
+              .from(tenantMaterials)
+              .where(and(
+                eq(tenantMaterials.id, consumption.tenantMaterialId),
+                eq(tenantMaterials.studioId, ctx.studioId),
+              ))
+              .limit(1)
+              .for("update"))[0];
+            if (!material)
+              throw new TRPCError({ code: "CONFLICT", message: "Um material da mistura não existe mais; nenhuma alteração foi aplicada." });
+
+            const before = decimalToScaled(material.currentQuantity, 3);
+            const restore = decimalToScaled(consumption.quantity, 3);
+            const after = before + restore;
+            const persistedBefore = scaledToDecimal(before, 3);
+            const persistedAfter = scaledToDecimal(after, 3);
+
+            const stockUpdate = await tx
+              .update(tenantMaterials)
+              .set({ currentQuantity: persistedAfter })
+              .where(and(
+                eq(tenantMaterials.id, material.id),
+                eq(tenantMaterials.studioId, ctx.studioId),
+                eq(tenantMaterials.currentQuantity, persistedBefore),
+              ));
+            if (!isAffected(stockUpdate))
+              throw new TRPCError({ code: "CONFLICT", message: "O estoque mudou durante o desfazer. Tente novamente." });
+
+            if (consumption.batchId) {
+              const batch = (await tx
+                .select()
+                .from(inventoryBatches)
+                .where(and(
+                  eq(inventoryBatches.id, consumption.batchId),
+                  eq(inventoryBatches.studioId, ctx.studioId),
+                  eq(inventoryBatches.tenantMaterialId, material.id),
+                ))
+                .limit(1)
+                .for("update"))[0];
+              if (!batch)
+                throw new TRPCError({ code: "CONFLICT", message: "O lote original da mistura não foi encontrado." });
+              await tx
+                .update(inventoryBatches)
+                .set({
+                  remainingQuantity: scaledToDecimal(
+                    decimalToScaled(batch.remainingQuantity, 3) + restore,
+                    3,
+                  ),
+                })
+                .where(eq(inventoryBatches.id, batch.id));
+            }
+
+            const reversed = await tx
+              .update(procedureInventoryConsumptions)
+              .set({
+                status: "revertido",
+                reversedAt: nowSql(),
+                reversalReason: input.reason,
+                reversedByUserId: ctx.user.id,
+              })
+              .where(and(
+                eq(procedureInventoryConsumptions.id, consumption.id),
+                eq(procedureInventoryConsumptions.status, "consumido"),
+              ));
+            if (!isAffected(reversed))
+              throw new TRPCError({ code: "CONFLICT", message: "Um consumo da mistura já foi alterado por outra operação." });
+
+            await tx.insert(tenantInventoryMovements).values({
+              studioId: ctx.studioId,
+              tenantMaterialId: material.id,
+              type: "reversao",
+              quantity: scaledToDecimal(restore, 3),
+              previousQuantity: persistedBefore,
+              newQuantity: persistedAfter,
+              sourceType: "procedure_recipe_reversal",
+              sourceId: consumption.id,
+              reason: input.reason,
+              createdByUserId: ctx.user.id,
+            });
+            restored += 1;
+          }
+
+          await tx
+            .update(procedureInkRecipes)
+            .set({ status: "reverted", revertedAt: nowSql() })
+            .where(and(
+              eq(procedureInkRecipes.id, recipe.id),
+              eq(procedureInkRecipes.studioId, ctx.studioId),
+            ));
+
+          return { id: recipe.id, alreadyReverted: false, restored };
+        });
+      }),
 
     startPause: tenantProcedure.input(z.object({ procedureId: z.number().int().positive(), reason: z.string().trim().max(120).optional() })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "pod", true);
@@ -733,6 +1941,162 @@ export const podSaasRouter = router({
       return { id: openPause.id, endedAt };
     }),
 
+    consumeAuto: tenantProcedure.input(z.object({
+      procedureId: z.number().int().positive(),
+      requestId: z.string().uuid().optional(),
+      expectedUnit: z.string().max(50).optional(),
+      tenantMaterialId: z.number().int().positive(),
+      quantity: quantitySchema.refine((value) => decimalToScaled(value, 3) > 0, "A quantidade deve ser maior que zero."),
+    })).mutation(async ({ ctx, input }) => {
+      await requireModule(ctx, "pod", true);
+      await requireModule(ctx, "stock", true);
+      const database = await requireDatabase();
+      return database.transaction(async tx => {
+        const procedure = await requireProcedure(
+          tx as unknown as Awaited<ReturnType<typeof requireDatabase>>,
+          input.procedureId,
+          ctx,
+        );
+        const replay = await readStockReplay<{id:number;remainingQuantity:string;batchId:number|null;lot:string|null}>(tx, procedure.id, "consume", input);
+        if (replay) return replay;
+        if (procedure.status === "finalizado")
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível consumir materiais em uma sessão finalizada." });
+
+        const material = (await tx
+          .select()
+          .from(tenantMaterials)
+          .where(and(
+            eq(tenantMaterials.id, input.tenantMaterialId),
+            eq(tenantMaterials.studioId, ctx.studioId),
+            eq(tenantMaterials.isActive, 1),
+          ))
+          .limit(1)
+          .for("update"))[0];
+        if (!material)
+          throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado." });
+
+        await requireMaterialForArtist(
+          tx as unknown as InventoryDatabase,
+          ctx,
+          material,
+          procedure.artistId,
+        );
+
+        if(input.expectedUnit!==undefined&&input.expectedUnit!==material.unit)throw new TRPCError({code:"CONFLICT",message:"A unidade do material mudou. Revise a preparação antes de consumir."});
+        validateSessionConsumption(material, input.quantity);
+        const quantity = decimalToScaled(input.quantity, 3);
+        const previousQuantity = decimalToScaled(material.currentQuantity, 3);
+        if (previousQuantity < quantity)
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Saldo insuficiente de ${material.name}.` });
+
+        const batches = await tx
+          .select()
+          .from(inventoryBatches)
+          .where(and(
+            eq(inventoryBatches.studioId, ctx.studioId),
+            eq(inventoryBatches.tenantMaterialId, material.id),
+          ))
+          .orderBy(asc(inventoryBatches.expiresAt), asc(inventoryBatches.id))
+          .for("update");
+
+        const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date());
+        const tracked = batches.reduce(
+          (sum, batch) => sum + decimalToScaled(batch.remainingQuantity, 3),
+          0,
+        );
+        const untracked = previousQuantity - tracked;
+        const batch = batches.find(candidate => {
+          const expiry = candidate.expiresAt ? String(candidate.expiresAt).slice(0, 10) : null;
+          return (!expiry || expiry >= today)
+            && decimalToScaled(candidate.remainingQuantity, 3) >= quantity;
+        });
+
+        if (!batch && batches.length && untracked < quantity)
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Nenhum lote válido de ${material.name} possui saldo suficiente.`,
+          });
+
+        const expiry = batch?.expiresAt ?? (!batch ? material.expiresAt : null);
+        if (expiry && String(expiry).slice(0, 10) < today)
+          throw new TRPCError({ code: "BAD_REQUEST", message: `O lote de ${material.name} está vencido.` });
+
+        validateSessionConsumption(material, input.quantity, batch);
+        const cost = batch?.unitCost ?? material.unitCost;
+        const persistedPrevious = scaledToDecimal(previousQuantity, 3);
+        const persistedNext = scaledToDecimal(previousQuantity - quantity, 3);
+
+        if (batch) {
+          const batchRemaining = decimalToScaled(batch.remainingQuantity, 3);
+          await tx
+            .update(inventoryBatches)
+            .set({ remainingQuantity: scaledToDecimal(batchRemaining - quantity, 3) })
+            .where(and(
+              eq(inventoryBatches.id, batch.id),
+              eq(inventoryBatches.studioId, ctx.studioId),
+            ));
+        }
+
+        const stockUpdate = await tx
+          .update(tenantMaterials)
+          .set({ currentQuantity: persistedNext })
+          .where(and(
+            eq(tenantMaterials.id, material.id),
+            eq(tenantMaterials.studioId, ctx.studioId),
+            eq(tenantMaterials.currentQuantity, persistedPrevious),
+          ));
+        if (!isAffected(stockUpdate))
+          throw new TRPCError({ code: "CONFLICT", message: "O estoque mudou durante a operação. Tente novamente." });
+
+        const consumption = await tx.insert(procedureInventoryConsumptions).values({
+          procedureId: procedure.id,
+          studioId: ctx.studioId,
+          appointmentId: procedure.appointmentId,
+          clientId: procedure.clientId,
+          artistId: procedure.artistId,
+          tenantMaterialId: material.id,
+          plannedMaterialId: null,
+          nameSnapshot: batch?.nameSnapshot ?? material.name,
+          unitSnapshot: batch?.unitSnapshot ?? material.unit,
+          quantity: scaledToDecimal(quantity, 3),
+          unitCostSnapshot: scaledToDecimal(decimalToScaled(cost, 4), 4),
+          totalCostSnapshot: multiplyQuantityByCost(scaledToDecimal(quantity, 3), cost),
+          batchId: batch?.id ?? null,
+          supplierNameSnapshot: batch?.supplierName ?? null,
+          technicalSnapshot: batch?.technicalSnapshot ?? materialDescription(material),
+          lotSnapshot: batch?.lot ?? material.lot,
+          expiresAtSnapshot: batch?.expiresAt ?? material.expiresAt,
+          consumedAt: nowSql(),
+          createdByUserId: ctx.user.id,
+        });
+        const consumptionId = insertId(consumption);
+        if (!consumptionId)
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível registrar o consumo." });
+
+        await tx.insert(tenantInventoryMovements).values({
+          studioId: ctx.studioId,
+          tenantMaterialId: material.id,
+          type: "consumo",
+          quantity: scaledToDecimal(quantity, 3),
+          previousQuantity: persistedPrevious,
+          newQuantity: persistedNext,
+          sourceType: "procedure_consumption",
+          sourceId: consumptionId,
+          reason: `Consumo rápido na sessão POD #${procedure.id}`,
+          createdByUserId: ctx.user.id,
+        });
+
+        const result = {
+          id: consumptionId,
+          remainingQuantity: persistedNext,
+          batchId: batch?.id ?? null,
+          lot: batch?.lot ?? material.lot ?? null,
+        };
+        await saveStockReplay(tx, procedure.id, "consume", input, result);
+        return result;
+      });
+    }),
+
     consume: tenantProcedure.input(z.object({
       procedureId: z.number().int().positive(),
       tenantMaterialId: z.number().int().positive(),
@@ -751,6 +2115,7 @@ export const podSaasRouter = router({
         )).limit(1).for("update"))[0];
         if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material do estoque não encontrado nesta empresa." });
         await requireMaterialForArtist(tx as unknown as InventoryDatabase, ctx, material, procedure.artistId);
+        validateSessionConsumption(material, input.quantity);
         const quantity = decimalToScaled(input.quantity, 3);
         const previousQuantity = decimalToScaled(material.currentQuantity, 3);
         if (previousQuantity < quantity) throw new TRPCError({ code: "BAD_REQUEST", message: "Saldo insuficiente para confirmar este consumo." });
@@ -763,6 +2128,7 @@ export const podSaasRouter = router({
         const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Sao_Paulo'}).format(new Date());
         const expiry=batch?.expiresAt??(!batch?material.expiresAt:null);
         if(expiry&&String(expiry).slice(0,10)<today)throw new TRPCError({code:"BAD_REQUEST",message:"Este lote está vencido. Selecione outro material."});
+        validateSessionConsumption(material, input.quantity, batch);
         const cost=batch?.unitCost??material.unitCost;
         if(batch)await tx.update(inventoryBatches).set({remainingQuantity:scaledToDecimal(available-quantity,3)}).where(and(eq(inventoryBatches.id,batch.id),eq(inventoryBatches.studioId,ctx.studioId)));
 

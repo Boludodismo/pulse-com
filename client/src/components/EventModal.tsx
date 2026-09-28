@@ -25,6 +25,7 @@ interface EventModalProps {
   initialStartTime?: string;
   initialEndTime?: string;
   initialClientId?: number | null;
+  initialQuote?: {id:number;artistId:number;artistName:string;title:string;totalAmount:number};
   onSuccess?: () => void;
 }
 
@@ -36,6 +37,7 @@ export function EventModal({
   initialStartTime,
   initialEndTime,
   initialClientId,
+  initialQuote,
   onSuccess,
 }: EventModalProps) {
   const { notifySync } = useSyncToast();
@@ -52,6 +54,7 @@ export function EventModal({
     enabled: requiresStudioSelection,
   });
   const [clientId, setClientId] = useState<string>("");
+  const [quoteId, setQuoteId] = useState<string>("");
   const [calendarId, setCalendarId] = useState<string>("");
   const [date, setDate] = useState<string>("");
   const [startTime, setStartTime] = useState<string>("");
@@ -154,6 +157,10 @@ export function EventModal({
     { artistId: Number(artistId) },
     { enabled: isOpen && Boolean(artistId) },
   );
+  const quoteOptions = trpc.quotes.schedulingOptions.useQuery(
+    {clientId:Number(clientId),artistId:Number(artistId)},
+    {enabled:isOpen && Boolean(clientId) && Boolean(artistId) && canAccess("quotes",true) && Boolean(currentUser?.studioId)},
+  );
   // Buscar evento existente via lista (já está em cache)
   // CORREÇÃO 5: buscar apenas o agendamento específico em vez de carregar toda a lista
   // Reutiliza o cache já existente de appointments.list (sem nova requisição de rede)
@@ -228,6 +235,8 @@ export function EventModal({
       utils.appointments.list.invalidate();
       utils.appointments.getByClientId.invalidate();
       utils.appointments.getCalendarLinks.invalidate();
+      void utils.quotes.clientHistory.invalidate();
+      void utils.quotes.historyDetail.invalidate();
       onSuccess?.();
       onClose();
     },
@@ -318,6 +327,8 @@ export function EventModal({
       utils.appointments.list.invalidate();
       utils.appointments.getByClientId.invalidate();
       utils.appointments.getCalendarLinks.invalidate();
+      void utils.quotes.clientHistory.invalidate();
+      void utils.quotes.historyDetail.invalidate();
       onSuccess?.();
       onClose();
       resetForm();
@@ -336,6 +347,8 @@ export function EventModal({
       utils.appointments.list.invalidate();
       utils.appointments.getByClientId.invalidate();
       utils.appointments.getCalendarLinks.invalidate();
+      void utils.quotes.clientHistory.invalidate();
+      void utils.quotes.historyDetail.invalidate();
       onSuccess?.();
       onClose();
       resetForm();
@@ -355,6 +368,7 @@ export function EventModal({
     initializedForm.current = key;
     if (existingEvent) {
       setClientId(existingEvent.clientId.toString());
+      setQuoteId(existingEvent.quoteId?.toString() || "");
       setCalendarId(existingEvent.calendarId?.toString() || "");
       
       // CORREÇÃO TZ-1: usar split direto na string do banco (YYYY-MM-DD HH:mm:ss)
@@ -388,7 +402,14 @@ export function EventModal({
       setPaymentMethod((existingEvent as any).paymentMethod || "");
       setProcedureType((existingEvent as any).procedureType || "");
       setProcedureTypeOther((existingEvent as any).procedureTypeOther || "");
-    } else if (initialDate || initialClientId) {
+    } else if (initialDate || initialClientId || initialQuote) {
+      setQuoteId(initialQuote ? String(initialQuote.id) : "");
+      if (initialQuote) {
+        setArtistId(String(initialQuote.artistId));
+        setArtist(artists.find(a => a.id === initialQuote.artistId)?.name || initialQuote.artistName);
+        setService(initialQuote.title);
+        setTotalAmount((initialQuote.totalAmount / 100).toFixed(2));
+      }
       // Preencher com dados iniciais ao criar
       if (initialDate) {
         setDate(`${initialDate.getFullYear()}-${String(initialDate.getMonth() + 1).padStart(2, "0")}-${String(initialDate.getDate()).padStart(2, "0")}`);
@@ -404,12 +425,13 @@ export function EventModal({
         setClientId(initialClientId.toString());
       }
     }
-  }, [isOpen, eventId, existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, artists]);
+  }, [isOpen, eventId, existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, initialQuote, artists]);
 
   const resetForm = () => {
     setSaveError(null);
     setSelectedStudioId("");
     setClientId("");
+    setQuoteId("");
     setCalendarId("");
     setDate("");
     setStartTime("");
@@ -613,6 +635,7 @@ export function EventModal({
 
     const eventData: any = {
       clientId: parseInt(clientId),
+      quoteId: quoteId && canAccess("quotes",true) ? Number(quoteId) : undefined,
       studioId: requiresStudioSelection ? Number(selectedStudioId) : undefined,
       calendarId: calendarId ? parseInt(calendarId) : undefined,
       date: eventDateTime,  // String local: YYYY-MM-DD HH:mm:ss
@@ -648,6 +671,7 @@ export function EventModal({
       // Ao editar, incluir clientId se foi alterado
       const updateData: any = {
         clientId: Number(clientId),
+        ...(canAccess("quotes",true) ? {quoteId:quoteId ? Number(quoteId) : null} : {}),
         calendarId: calendarId ? Number(calendarId) : null,
         date: eventDateTime,  // String local: YYYY-MM-DD HH:mm:ss
         service,
@@ -824,7 +848,7 @@ export function EventModal({
               </div>
             )}
 
-            <Select value={clientId} onValueChange={setClientId}>
+            <Select value={clientId} onValueChange={value => { setClientId(value); setQuoteId(""); }}>
               <SelectTrigger>
                 <SelectValue placeholder="Selecione o cliente" />
               </SelectTrigger>
@@ -909,6 +933,17 @@ export function EventModal({
               );
             })()}
           </div>
+
+          {canAccess("quotes",true) && <div className="space-y-2">
+            <Label htmlFor="appointment-quote">Orçamento relacionado (opcional)</Label>
+            <select id="appointment-quote" className="w-full rounded-md border bg-background p-2 text-sm" value={quoteId} onChange={e=>setQuoteId(e.target.value)} disabled={!clientId || !artistId}>
+              <option value="">Sem vínculo com orçamento</option>
+              {quoteId && !quoteOptions.data?.some(q=>String(q.id)===quoteId) && <option value={quoteId}>Orçamento #{quoteId} vinculado</option>}
+              {quoteOptions.data?.map(q=><option key={q.id} value={q.id}>{q.quoteNumber} · válido até {q.validUntil.slice(0,10).split("-").reverse().join("/")}</option>)}
+            </select>
+            <p className="text-xs text-muted-foreground">Selecione o cliente e o artista. O vínculo atualiza o histórico ao salvar; não registra pagamento ou resposta.</p>
+            {quoteOptions.error && <p role="alert" className="text-xs">Não foi possível consultar os orçamentos.</p>}
+          </div>}
 
           {/* Calendário */}
           <div>
@@ -1044,6 +1079,7 @@ export function EventModal({
                 <Select value={artistId} onValueChange={(value) => {
                   const selected = artists.find((item) => String(item.id) === value);
                   setArtistId(value);
+                  setQuoteId("");
                   if (!eventId && materialDraft.items.some(m => m.tenantMaterialId)) { setMaterialDraft(current => ({ ...current, items: current.items.filter(m => !m.tenantMaterialId), operationKey: crypto.randomUUID() })); toast.info("Artista alterado. Selecione os materiais do estoque correspondente. Os itens pendentes foram mantidos."); }
                   setArtist(selected?.name ?? "");
                   setIncludeArtistCard(false);
@@ -1096,7 +1132,7 @@ export function EventModal({
               <Input
                 id="artist"
                 value={artist}
-                onChange={(e) => { setArtist(e.target.value); setArtistId(""); setIncludeArtistCard(false); }}
+                onChange={(e) => { setArtist(e.target.value); setArtistId(""); setQuoteId(""); setIncludeArtistCard(false); }}
                 placeholder="Nome do artista"
               />
             )}
