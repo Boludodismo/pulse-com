@@ -1,3 +1,4 @@
+import { resolveBotChannel } from "../messaging/channels";
 import { TRPCError } from "@trpc/server";
 import {
   botRoleIsManager,
@@ -22,6 +23,9 @@ export type BotActor = {
   artistId: number | null;
 };
 export type BotSettings = {
+  wa_integration_id?: number | null;
+  channelSandbox?: boolean;
+  channelTestPhone?: string | null;
   studio_id: number;
   enabled: number;
   ai_secret: string | null;
@@ -58,13 +62,14 @@ export async function settings(
     [studioId],
     c
   );
-  return (
+  const result = (
     await rows<BotSettings>(
       "SELECT * FROM tatuei_bot_settings WHERE studio_id=?",
       [studioId],
       c
     )
   )[0];
+  return resolveBotChannel(result,c);
 }
 export async function getProfile(
   studioId: number,

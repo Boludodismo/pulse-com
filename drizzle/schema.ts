@@ -777,6 +777,9 @@ export const artistNotificationSettings = mysqlTable("artist_notification_settin
 // ── Central de Mensagens / WhatsApp Automático ─────────────────────────────
 
 export const whatsappIntegrations = mysqlTable("whatsapp_integrations", {
+  encryptedProviderConfig: text("encrypted_provider_config"),
+  connectionState: varchar("connection_state", {length:24}).default('unconfigured').notNull(),
+  webhookReady: tinyint("webhook_ready").default(0).notNull(),
   id: int().autoincrement().notNull(),
   studioId: int("studio_id"),
   name: varchar({ length: 255 }).notNull().default('WhatsApp Principal'),

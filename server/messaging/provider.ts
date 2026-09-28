@@ -26,6 +26,8 @@ export interface ProviderConfig {
   provider: 'botconversa' | 'zapi' | 'meta';
   apiToken: string;
   phoneNumber: string;
+  clientToken?: string;
+  metaVersion?: "v23.0";
   instanceId?: string; // Z-API
 }
 

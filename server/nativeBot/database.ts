@@ -133,6 +133,19 @@ export async function ensureNativeBotSchema() {
       "tatuei_native_bot_schema",
       async c => {
         for (const ddl of BOT_DDL) await c.query(ddl);
+        for (const [table, column, definition] of [
+          ['tatuei_bot_settings','wa_integration_id','INT NULL'],
+          ['whatsapp_integrations','encrypted_provider_config','TEXT NULL'],
+          ['whatsapp_integrations','connection_state',"VARCHAR(24) NOT NULL DEFAULT 'unconfigured'"],
+          ['whatsapp_integrations','webhook_ready','TINYINT NOT NULL DEFAULT 0'],
+        ]) {
+          const columns=await rows('SHOW COLUMNS FROM `'+table+'` LIKE ?',[column],c);
+          if(!columns.length) await c.query('ALTER TABLE `'+table+'` ADD COLUMN `'+column+'` '+definition);
+        }
+        const {migrateLegacyBotChannels}=await import('../messaging/channels');
+        await c.beginTransaction();
+        try { await migrateLegacyBotChannels(c); await c.commit(); }
+        catch(e) { await c.rollback(); throw e; }
         schemaReady = true;
       },
       30

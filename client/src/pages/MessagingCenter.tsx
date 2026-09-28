@@ -1,7 +1,7 @@
 import WhatsappConsentPanel from "@/components/WhatsappConsentPanel";
 import CustomerCarePanel from "@/components/CustomerCarePanel";
 import { formatMessageTimestamp } from '@shared/studioClock';
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { downloadMessageHistoryCSV } from "@/lib/messagingHistoryCsv";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -116,7 +116,9 @@ const AVAILABLE_VARS = [
 
 // ─── Componente Principal ─────────────────────────────────────────────────────
 
-export default function MessagingCenter() {
+export default function MessagingCenter() { return <MessagingCenterContent />; }
+export function MessagingCenterContent({connectionsOnly=false}:{connectionsOnly?:boolean}) {
+  const Wrapper=connectionsOnly?Fragment:DashboardLayout;
   const utils = trpc.useUtils();
   const { user } = useAuth();
   const isSuperadmin = user?.role === "superadmin";
@@ -128,7 +130,7 @@ export default function MessagingCenter() {
   const [retryDialog, setRetryDialog] = useState(false);
   const [retryTarget, setRetryTarget] = useState<any>(null);
   const [retryConfirmation, setRetryConfirmation] = useState("");
-  const {data:automationSettings}=trpc.messaging.getAutomationSettings.useQuery();
+  const {data:automationSettings}=trpc.messaging.getAutomationSettings.useQuery(undefined,{enabled:!connectionsOnly});
   const historyQueryInput = useMemo(() => ({
     limit: 100,
     integrationId: historyIntegrationId === "all" ? undefined : Number(historyIntegrationId),
@@ -136,27 +138,31 @@ export default function MessagingCenter() {
   }), [historyIntegrationId, historyStatus]);
 
   // Queries
-  const { data: integrations = [], isLoading: loadingIntegrations } = trpc.messaging.listIntegrations.useQuery();
+  const { data: integrations = [], isLoading: loadingIntegrations } = trpc.messaging.listIntegrations.useQuery(undefined,{refetchOnWindowFocus:true,refetchInterval:15000});
   const { data: studios = [], isLoading: loadingStudios } = trpc.saas.studios.useQuery(undefined, { enabled: isSuperadmin });
-  const { data: templates = [], isLoading: loadingTemplates } = trpc.messaging.listTemplates.useQuery();
-  const { data: messageHistory = [], isLoading: loadingHistory } = trpc.messaging.listMessageHistory.useQuery(historyQueryInput);
+  const { data: templates = [], isLoading: loadingTemplates } = trpc.messaging.listTemplates.useQuery(undefined,{enabled:!connectionsOnly});
+  const { data: messageHistory = [], isLoading: loadingHistory } = trpc.messaging.listMessageHistory.useQuery(historyQueryInput,{enabled:!connectionsOnly});
 
   // Mutations
   const saveIntegration = trpc.messaging.saveIntegration.useMutation({
-    onSuccess: () => { utils.messaging.listIntegrations.invalidate(); toast.success("Integração salva!"); setIntegrationDialog(false); },
+    onSuccess: () => { utils.messaging.listIntegrations.invalidate(); utils.nativeBot.snapshot.invalidate(); toast.success("Integração salva!"); setIntegrationDialog(false); },
     onError: (e) => toast.error(e.message),
   });
+  const [qrImage,setQrImage]=useState<string|null>(null);
+  const selectChannel=trpc.nativeBot.selectWhatsappChannel.useMutation({onSuccess:()=>{utils.messaging.listIntegrations.invalidate();utils.nativeBot.snapshot.invalidate();toast.success('Canal do Bot atualizado.');},onError:e=>toast.error(e.message)});
+  const configureWebhook=trpc.messaging.configureChannelWebhook.useMutation({onSuccess:r=>{utils.messaging.listIntegrations.invalidate();utils.nativeBot.snapshot.invalidate();r.success?toast.success('Conexão validada.'):toast.error(r.error||'Falha ao validar.');},onError:e=>toast.error(e.message)});
+  const channelQr=trpc.messaging.channelQr.useMutation({onSuccess:r=>setQrImage(r.image),onError:e=>toast.error(e.message)});
   const activateIntegration = trpc.messaging.activateIntegration.useMutation({
-    onSuccess: () => { utils.messaging.listIntegrations.invalidate(); toast.success("Integração ativada!"); },
+    onSuccess: () => { utils.messaging.listIntegrations.invalidate(); utils.nativeBot.snapshot.invalidate(); toast.success("Integração ativada!"); },
     onError: (e) => toast.error(e.message),
   });
   const deleteIntegration = trpc.messaging.deleteIntegration.useMutation({
-    onSuccess: () => { utils.messaging.listIntegrations.invalidate(); toast.success("Integração removida."); },
+    onSuccess: () => { utils.messaging.listIntegrations.invalidate(); utils.nativeBot.snapshot.invalidate(); toast.success("Integração removida."); },
     onError: (e) => toast.error(e.message),
   });
   const testConnection = trpc.messaging.testConnection.useMutation({
     onSuccess: (r) => {
-      utils.messaging.listIntegrations.invalidate();
+      utils.messaging.listIntegrations.invalidate(); utils.nativeBot.snapshot.invalidate();
       if (r.success) toast.success("Conexão bem-sucedida!");
       else toast.error(`Falha: ${r.error}`);
     },
@@ -164,7 +170,7 @@ export default function MessagingCenter() {
   });
   const releaseProduction = trpc.messaging.releaseProduction.useMutation({
     onSuccess: (result) => {
-      utils.messaging.listIntegrations.invalidate();
+      utils.messaging.listIntegrations.invalidate(); utils.nativeBot.snapshot.invalidate();
       utils.messaging.listMessageHistory.invalidate();
       setProductionDialog(false);
       setProductionConfirmation("");
@@ -223,7 +229,7 @@ export default function MessagingCenter() {
   const [editingIntegration, setEditingIntegration] = useState<any>(null);
   const [integrationForm, setIntegrationForm] = useState({
     name: "", provider: "botconversa" as Provider,
-    phoneNumber: "", apiToken: "", instanceId: "", studioId: "", sandboxMode: true, sandboxTestPhone: "", webhookSecret: "",
+    phoneNumber: "", apiToken: "", instanceId: "", studioId: "", sandboxMode: true, sandboxTestPhone: "", webhookSecret: "", providerSecret: "",
   });
 
   const [templateDialog, setTemplateDialog] = useState(false);
@@ -244,7 +250,7 @@ export default function MessagingCenter() {
 
   function openNewIntegration() {
     setEditingIntegration(null);
-    setIntegrationForm({ name: "", provider: "botconversa", phoneNumber: "", apiToken: "", instanceId: "", studioId: "", sandboxMode: true, sandboxTestPhone: "", webhookSecret: "" });
+    setIntegrationForm({ name: "", provider: "botconversa", phoneNumber: "", apiToken: "", instanceId: "", studioId: "", sandboxMode: true, sandboxTestPhone: "", webhookSecret: "", providerSecret: "" });
     setIntegrationDialog(true);
   }
 
@@ -257,7 +263,7 @@ export default function MessagingCenter() {
       studioId: item.studioId ? String(item.studioId) : "",
       sandboxMode: item.sandboxMode !== 0,
       sandboxTestPhone: item.sandboxTestPhone ?? "",
-      webhookSecret: "",
+      webhookSecret: "", providerSecret: "",
     });
     setIntegrationDialog(true);
   }
@@ -275,6 +281,7 @@ export default function MessagingCenter() {
       instanceId: integrationForm.instanceId || undefined,
       sandboxTestPhone: integrationForm.sandboxTestPhone || undefined,
       webhookSecret: integrationForm.webhookSecret || undefined,
+      providerSecret: integrationForm.providerSecret || undefined,
     });
   }
 
@@ -307,8 +314,9 @@ export default function MessagingCenter() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <DashboardLayout>
+    <Wrapper>
       <div className="space-y-6 p-4 sm:p-6">
+        {!connectionsOnly && <>
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -341,9 +349,10 @@ export default function MessagingCenter() {
           </CardContent>
         </Card>
 
+        </>}
         {/* Tabs principais */}
         <Tabs defaultValue="integrations" className="space-y-4">
-          <TabsList className="flex w-full h-auto sm:h-12 bg-zinc-800 rounded-lg p-1 flex-wrap sm:flex-nowrap">
+          {!connectionsOnly && <TabsList className="flex w-full h-auto sm:h-12 bg-zinc-800 rounded-lg p-1 flex-wrap sm:flex-nowrap">
             <TabsTrigger value="integrations" className="flex-1 text-white data-[state=active]:bg-zinc-700 data-[state=active]:text-white text-xs sm:text-sm">
               <Plug className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" /><span className="hidden sm:inline">Provedores</span><span className="sm:hidden">Prov.</span>
             </TabsTrigger>
@@ -356,14 +365,14 @@ export default function MessagingCenter() {
             <TabsTrigger value="history" className="flex-1 text-white data-[state=active]:bg-zinc-700 data-[state=active]:text-white text-xs sm:text-sm">
               <History className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" /><span className="hidden sm:inline">Histórico</span><span className="sm:hidden">Hist.</span>
             </TabsTrigger>
-          </TabsList>
+          </TabsList>}
 
           {/* ── ABA PROVEDORES ─────────────────────────────────────────────── */}
           <TabsContent value="integrations" className="space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
-              <p className="text-zinc-400 text-xs sm:text-sm">Cada estúdio escolhe seu provedor e usa seu próprio número e credenciais. As opções disponíveis são WhatsApp Business (API da Meta), BotConversa e Z-API. Outros bots precisam de uma integração compatível antes de serem conectados.</p>
+              <p className="text-zinc-400 text-xs sm:text-sm">Canais conectados: este cadastro é compartilhado pela Central de Mensagens e pelo Bot Tatuei. Configure uma vez e selecione o canal que o Bot deve utilizar.</p>
               <Button onClick={openNewIntegration} className="bg-orange-600 hover:bg-orange-700 text-white w-full sm:w-auto text-xs sm:text-sm">
-                <Plus className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" /><span className="hidden sm:inline">Nova Integração</span><span className="sm:hidden">Nova</span>
+                <Plus className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" /><span className="hidden sm:inline">Novo canal</span><span className="sm:hidden">Nova</span>
               </Button>
             </div>
 
@@ -397,6 +406,15 @@ export default function MessagingCenter() {
                             <Phone className="h-3 w-3" /> {item.phoneNumber}
                           </p>
                           <div className="mt-2 space-y-1 text-xs text-zinc-400">
+                            {item.provider !== 'botconversa' && <>
+                              <p>Conexão: {item.connectionState === 'connected' ? 'Validada' : 'Aguardando validação'} · Recebimento: {item.webhookReady ? 'Configurado' : 'Pendente'}</p>
+                              {item.botSelected && <Badge>Canal do Bot Tatuei</Badge>}
+                              {item.connectionKey && <div className="space-y-1">
+                                <p>URL de recebimento:</p>
+                                <code className="block break-all select-all">{window.location.origin}/api/native-bot/{item.provider==='meta'?'meta/':''}webhook/{item.connectionKey}</code>
+                                {item.provider==='meta' && <><p>Token de verificação:</p><code className="block break-all select-all">{item.connectionKey}</code></>}
+                              </div>}
+                            </>}
                             <p>{item.sandboxMode ? "Homologação segura ativa" : "Produção liberada com opt-in obrigatório"}{item.sandboxTestPhone ? ` · teste: ${maskPhone(item.sandboxTestPhone)}` : ""}</p>
                             {item.provider === "botconversa" && item.connectionKey && (
                               <code className="block break-all rounded bg-zinc-800 px-2 py-1 text-[11px] text-orange-300">
@@ -411,6 +429,16 @@ export default function MessagingCenter() {
                           )}
                         </div>
                         <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          {item.provider !== 'botconversa' && <>
+                            <Button size="sm" variant="outline" disabled={selectChannel.isPending} onClick={()=>{
+                              if(window.confirm(item.botSelected?'Desvincular do Bot? O canal continuará disponível na Central.':'Usar este canal no Bot? As mensagens pendentes do canal anterior serão canceladas.')) selectChannel.mutate({id:item.botSelected?null:item.id});
+                            }}>{item.botSelected?'Desvincular do Bot':'Usar no Bot Tatuei'}</Button>
+                            {item.provider==='zapi' && <>
+                              <Button size="sm" variant="outline" disabled={channelQr.isPending} onClick={()=>channelQr.mutate({id:item.id})}>Gerar QR</Button>
+                              <Button size="sm" variant="outline" disabled={configureWebhook.isPending} onClick={()=>{if(window.confirm('Configurar o recebimento compartilhado neste CRM? Isso substitui o webhook desta instância no provedor.'))configureWebhook.mutate({id:item.id});}}>Configurar recebimento</Button>
+                            </>}
+                          </>}
+
                           {item.status !== "ativo" && (
                             <Button
                               size="sm"
@@ -419,7 +447,7 @@ export default function MessagingCenter() {
                               onClick={() => activateIntegration.mutate({ id: item.id })}
                               disabled={activateIntegration.isPending}
                             >
-                              <CheckCircle className="mr-1 h-3 w-3" /> Ativar
+                              <CheckCircle className="mr-1 h-3 w-3" /> Usar nos envios da Central
                             </Button>
                           )}
                           <Button
@@ -858,6 +886,11 @@ export default function MessagingCenter() {
               </div>
             )}
 
+            {integrationForm.provider !== 'botconversa' && <div className="space-y-1">
+              <Label>{integrationForm.provider==='meta'?'Chave secreta do aplicativo (App Secret)':'Client-Token da Z-API'}</Label>
+              <Input type="password" autoComplete="new-password" value={integrationForm.providerSecret} placeholder={editingIntegration?'Deixe em branco para manter':'Informe a chave do provedor'} onChange={e=>setIntegrationForm(f=>({...f,providerSecret:e.target.value}))}/>
+              <p className="text-xs text-zinc-400">Credenciais compartilhadas entre os menus, protegidas no servidor.</p>
+            </div>}
             {/* Instance ID (Z-API e Meta) */}
             {(integrationForm.provider === "zapi" || integrationForm.provider === "meta") && (
               <div className="space-y-1">
@@ -890,6 +923,7 @@ export default function MessagingCenter() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!qrImage} onOpenChange={open=>{if(!open)setQrImage(null);}}><DialogContent><DialogHeader><DialogTitle>Conectar WhatsApp</DialogTitle></DialogHeader>{qrImage && <img src={qrImage} alt="QR de conexão do WhatsApp" />}</DialogContent></Dialog>
       {/* ── DIALOG: Novo / Editar Template ───────────────────────────────────── */}
       <Dialog open={templateDialog} onOpenChange={setTemplateDialog}>
         <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-2xl">
@@ -1011,6 +1045,6 @@ export default function MessagingCenter() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </DashboardLayout>
+    </Wrapper>
   );
 }
