@@ -415,19 +415,10 @@ describe("configuração Meta pelo CRM", () => {
       return [];
     });
   });
-  it("salva credenciais criptografadas e não as devolve no painel", async () => {
-    await expect(caller().saveMetaWhatsapp(credentials)).resolves.toEqual({
-      ok: true,
-    });
-    const saved = db.exec.mock.calls.find(c => c[0].includes("SET wa_secret="));
-    expect(saved?.[1][0]).not.toContain(credentials.accessToken);
-    expect(JSON.parse(openBotSecret(saved?.[1][0], 7))).toEqual(credentials);
-    expect(() => openBotSecret(saved?.[1][0], 8)).toThrow();
-    const snapshot = await caller().snapshot({});
-    expect(snapshot.connection?.whatsappProvider).toBe("meta");
-    expect(snapshot.connection?.metaWebhookUrl).toContain(
-      "/api/native-bot/meta/webhook/"
-    );
+  it("orienta clientes antigos ao cadastro único sem criar credenciais paralelas", async () => {
+    await expect(caller().saveMetaWhatsapp(credentials)).rejects.toMatchObject({code:"BAD_REQUEST"});
+    expect(db.exec).not.toHaveBeenCalled();
+    const snapshot=await caller().snapshot({});
     expect(JSON.stringify(snapshot)).not.toContain(credentials.accessToken);
     expect(JSON.stringify(snapshot)).not.toContain(credentials.appSecret);
   });
@@ -447,7 +438,7 @@ describe("configuração Meta pelo CRM", () => {
       return [];
     });
     await expect(caller().saveMetaWhatsapp(credentials)).rejects.toMatchObject({
-      code: "CONFLICT",
+      code: "BAD_REQUEST",
     });
     expect(db.exec.mock.calls.some(c => c[0].includes("SET wa_secret="))).toBe(
       false

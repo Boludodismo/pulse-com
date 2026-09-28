@@ -74,8 +74,10 @@ export async function getIntegrationApiToken(integration: typeof whatsappIntegra
 /** Instancia um provedor sem expor o token fora da camada do servidor. */
 export async function getProviderForIntegration(integration: typeof whatsappIntegrations.$inferSelect): Promise<WhatsAppProvider> {
   return getProvider({
+    metaVersion: integration.provider === "meta" && integration.encryptedProviderConfig ? "v23.0" : undefined,
     provider: integration.provider,
     apiToken: await getIntegrationApiToken(integration),
+    clientToken: integration.provider === "zapi" && integration.encryptedProviderConfig ? JSON.parse(decryptIntegrationSecret(integration.encryptedProviderConfig)).clientToken : undefined,
     phoneNumber: integration.phoneNumber,
     instanceId: integration.instanceId ?? undefined,
   });

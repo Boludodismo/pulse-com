@@ -1,3 +1,7 @@
+import { deleteUnusedChannel, saveChannel, verifyChannel, channelById, channelBotSettings } from "../messaging/channels";
+import { rows as channelRows, exec as channelExec } from "../nativeBot/database";
+import { settings as botSettings } from "../nativeBot/access";
+import { getBotQr } from "../nativeBot/providers";
 import { assertPrivateConnectionAccess } from "../messaging/privateConnectionAccess";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -189,6 +193,8 @@ export const messagingRouter = router({
     const db = await getDb();
     if (!db) return [];
     const query = db.select({
+      connectionState: whatsappIntegrations.connectionState,
+      webhookReady: whatsappIntegrations.webhookReady,
       id: whatsappIntegrations.id,
       studioId: whatsappIntegrations.studioId,
       name: whatsappIntegrations.name,
@@ -211,7 +217,8 @@ export const messagingRouter = router({
     }).from(whatsappIntegrations);
     if (ctx.studioId != null) query.where(eq(whatsappIntegrations.studioId, ctx.studioId));
     const rows = await query.orderBy(desc(whatsappIntegrations.createdAt));
-    return rows.map(({ encryptedApiToken, ...integration }) => ({ ...integration, tokenMasked: maskSecret(encryptedApiToken) }));
+    const linked=await channelRows<{studio_id:number;wa_integration_id:number|null}>('SELECT studio_id,wa_integration_id FROM tatuei_bot_settings WHERE studio_id=?',[ctx.studioId]);
+    return rows.map(({ encryptedApiToken, ...integration }) => ({ ...integration, botSelected:linked.some(b=>b.studio_id===integration.studioId && b.wa_integration_id===integration.id), tokenMasked: maskSecret(encryptedApiToken) }));
   }),
 
   /** Salva ou atualiza uma integração */
@@ -228,6 +235,7 @@ export const messagingRouter = router({
         sandboxMode: z.boolean().default(true),
         sandboxTestPhone: z.string().optional(),
         webhookSecret: z.string().min(24).max(256).optional(),
+        providerSecret: z.string().max(512).optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
@@ -240,6 +248,13 @@ export const messagingRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "A empresa selecionada não existe ou não está disponível." });
       }
       const sandboxTestPhone = input.sandboxTestPhone ? normalizeBrazilianPhone(input.sandboxTestPhone) : null;
+      await botSettings(studioId);
+      if(input.provider !== 'botconversa') return saveChannel(studioId,{...input,provider:input.provider,sandboxTestPhone:sandboxTestPhone||undefined});
+      if(input.id) {
+        const old=await findScopedIntegration(db,input.id,ctx.studioId);
+        if(old.provider!=='botconversa') throw new TRPCError({code:'CONFLICT',message:'Crie outro canal para mudar de provedor.'});
+      }
+
 
       if (input.id) {
         const existing = await findScopedIntegration(db, input.id, ctx.studioId);
@@ -317,10 +332,7 @@ export const messagingRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const integration = await findScopedIntegration(db, input.id, ctx.studioId);
-      await db
-        .delete(whatsappIntegrations)
-        .where(eq(whatsappIntegrations.id, integration.id));
-      return { ok: true };
+      return deleteUnusedChannel(integration.studioId!,integration.id);
     }),
 
   /** Testa a conexão com o provedor */
@@ -331,6 +343,7 @@ export const messagingRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const integration = await findScopedIntegration(db, input.id, ctx.studioId);
+      if(integration.provider!=='botconversa' && integration.encryptedProviderConfig) return verifyChannel(integration.studioId!,integration.id);
       const provider = await getProviderForIntegration(integration);
 
       const result = await provider.testConnection();
@@ -351,6 +364,13 @@ export const messagingRouter = router({
       return result;
     }),
 
+  configureChannelWebhook: tenantProcedure.input(z.object({id:z.number().int().positive()})).mutation(async({ctx,input})=>{
+    requireIntegrationManager(ctx); return verifyChannel(ctx.studioId,input.id,true);
+  }),
+  channelQr: tenantProcedure.input(z.object({id:z.number().int().positive()})).mutation(async({ctx,input})=>{
+    requireIntegrationManager(ctx); const row=await channelById(ctx.studioId,input.id);
+    return getBotQr(channelBotSettings(await botSettings(ctx.studioId),row));
+  }),
   /** Remove somente a limitação de sandbox depois de validações operacionais. */
   releaseProduction: tenantProcedure
     .input(z.object({ id: z.number(), confirmation: z.literal("LIBERAR PRODUCAO") }))

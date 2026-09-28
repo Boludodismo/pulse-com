@@ -363,6 +363,7 @@ export async function validateBotDelivery(
     !s.webhook_ready
   )
     return "Bot pausado ou WhatsApp não conectado.";
+  if(s.channelSandbox && (!s.channelTestPhone || nativeBotPhone(s.channelTestPhone) !== cv.phone)) return "Canal em homologação: envio permitido somente ao telefone de teste.";
   if (cv.opted_out) return "Cliente interrompeu as mensagens.";
   if (isMetaBot(s) && !metaWindowOpen(cv.last_inbound_at)) return META_WINDOW_ERROR;
   if (m.expected_revision !== cv.revision)

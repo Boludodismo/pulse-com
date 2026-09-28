@@ -12,6 +12,7 @@ export class MetaProvider implements WhatsAppProvider {
   private baseUrl = "https://graph.facebook.com/v19.0";
 
   constructor(config: ProviderConfig) {
+    if(config.metaVersion) this.baseUrl = `https://graph.facebook.com/${config.metaVersion}`;
     this.accessToken = config.apiToken;
     this.phoneNumberId = config.instanceId ?? "";
   }

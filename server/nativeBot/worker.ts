@@ -1,3 +1,4 @@
+import { resolveBotChannel } from "../messaging/channels";
 import { botClock } from "../../shared/nativeBot";
 import {
   rows,
@@ -25,21 +26,27 @@ export function offsetBotDate(date: string, days: number) {
 export async function scheduleNativeBot(c: BotConnection) {
   const clock = botClock();
   const studios = await rows<BotSettings>(
-    "SELECT b.* FROM tatuei_bot_settings b JOIN studios s ON s.id=b.studio_id AND s.isActive=1 WHERE b.enabled=1 AND b.wa_status='connected' AND b.webhook_ready=1 AND b.wa_secret IS NOT NULL",
+    "SELECT b.* FROM tatuei_bot_settings b JOIN studios s ON s.id=b.studio_id AND s.isActive=1 WHERE b.enabled=1 AND (b.wa_integration_id IS NOT NULL OR (b.wa_status='connected' AND b.webhook_ready=1 AND b.wa_secret IS NOT NULL))",
     [],
     c
   );
-  for (const s of studios) {
+  for (const raw of studios) {
+    const s=await resolveBotChannel(raw,c);
+    if(!s.wa_secret || s.wa_status!=="connected" || !s.webhook_ready) continue;
     const profiles = await rows(
       "SELECT artist_id FROM tatuei_bot_profiles WHERE studio_id=? AND (artist_id=0 OR enabled=1)",
       [s.studio_id],
       c
     );
+    const [central]=s.wa_integration_id?await rows(
+      "SELECT a.* FROM message_automation_settings a JOIN whatsapp_integrations i ON i.studio_id=a.studio_id AND i.id=? AND i.is_enabled=1 AND i.status='ativo' WHERE a.studio_id=?",[s.wa_integration_id,s.studio_id],c):[];
     for (const owner of profiles) {
       const profile = await getProfile(s.studio_id, owner.artist_id, c);
       for (const rule of profile.config.rules.filter(
         r => r.enabled && r.event !== "greeting" && clock.time >= r.sendTime
       )) {
+        // The existing Central scheduler owns these events on the same channel.
+        if(central && ((rule.event==='birthday' && central.birthday_messages_enabled) || (rule.event==='reminder' && (central.appointment_reminders_enabled || central.one_hour_reminders_enabled)))) continue;
         if (rule.event === "birthday") {
           const people = await rows(
             `SELECT cl.id,cl.name,cl.phone,cl.artistId FROM clients cl JOIN tatuei_bot_consents consent ON consent.studio_id=cl.studioId AND consent.client_id=cl.id AND consent.enabled=1 WHERE cl.studioId=? AND COALESCE(cl.artistId,0)=? AND cl.isArchived=0 AND DATE_FORMAT(cl.birthDate,'%m-%d')=? LIMIT 1000`,

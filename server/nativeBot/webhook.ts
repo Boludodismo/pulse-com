@@ -1,3 +1,4 @@
+import { channelForWebhook } from "../messaging/channels";
 import { z } from "zod";
 import { timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
@@ -44,10 +45,12 @@ export async function receiveNativeBotWebhook(req: Request, res: Response) {
     assertBotSchema();
     const key = String(req.params.key || "");
     if (!/^[A-Za-z0-9_-]{43}$/.test(key)) return res.sendStatus(404);
-    const [s] = await rows<BotSettings>(
+    const shared=await channelForWebhook(key);
+    const [legacy] = shared?[]:await rows<BotSettings>(
       "SELECT * FROM tatuei_bot_settings WHERE webhook_key=?",
       [key]
     );
+    const s=shared?.settings||legacy;
     if (
       !s ||
       !s.wa_secret ||
@@ -95,8 +98,14 @@ export async function persistBotInbound(
   s: BotSettings,
   event: z.infer<typeof botWebhookSchema>,
   phone: string,
-  inboundAt?: string
+  inboundAt?: string,
+  sharedDispatched=false,
+  handled=false
 ) {
+  if(s.wa_integration_id && !sharedDispatched) {
+    const {dispatchChannelInbound}=await import('../messaging/channelInbound');
+    return dispatchChannelInbound(s,event,phone,inboundAt);
+  }
   await botTransaction(async c => {
     if (
       (
@@ -151,7 +160,7 @@ export async function persistBotInbound(
         cv.id,
         event.fromMe ? "staff" : "client",
         body.slice(0, 12000),
-        event.fromMe ? "sent" : "received",
+        event.fromMe ? "sent" : handled ? "processed" : "received",
         event.messageId,
         event.text ? "reply" : "media",
         utcSql(),

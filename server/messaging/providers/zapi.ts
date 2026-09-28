@@ -7,11 +7,13 @@ import type { WhatsAppProvider, SendMessageResult, TestConnectionResult, Provide
  * Endpoint base: https://api.z-api.io/instances/{instanceId}/token/{token}
  */
 export class ZApiProvider implements WhatsAppProvider {
+  private clientToken?: string;
   private apiToken: string;
   private instanceId: string;
   private baseUrl: string;
 
   constructor(config: ProviderConfig) {
+    this.clientToken = config.clientToken;
     this.apiToken = config.apiToken;
     this.instanceId = config.instanceId ?? "";
     this.baseUrl = `https://api.z-api.io/instances/${this.instanceId}/token/${this.apiToken}`;
@@ -24,7 +26,7 @@ export class ZApiProvider implements WhatsAppProvider {
 
       const res = await fetch(`${this.baseUrl}/send-text`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(this.clientToken ? {"Client-Token":this.clientToken}: {}) },
         body: JSON.stringify({ phone, message }),
       });
 
@@ -47,7 +49,7 @@ export class ZApiProvider implements WhatsAppProvider {
     try {
       const res = await fetch(`${this.baseUrl}/status`, {
         method: "GET",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(this.clientToken ? {"Client-Token":this.clientToken}: {}) },
       });
 
       if (!res.ok) {

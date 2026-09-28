@@ -11,7 +11,7 @@ import { dispatchTemplateMessage } from "./service";
  */
 export async function handleWebhookReply(phone: string, message: string, studioId?: number, eventKey?: string) {
   if (!studioId) throw new Error("Empresa obrigatória para receber mensagens.");
-  if (await recordCareWhatsappReply(studioId,phone,message,eventKey)) return;
+  if (await recordCareWhatsappReply(studioId,phone,message,eventKey)) return true;
   const db = await getDb();
   if (!db) return;
 
@@ -93,7 +93,9 @@ export async function handleWebhookReply(phone: string, message: string, studioI
       data: dataFormatada,
       hora: horaFormatada,
     });
+    return true;
   }
+  return reply === "1";
 }
 
 async function notifyArtistAboutReply(

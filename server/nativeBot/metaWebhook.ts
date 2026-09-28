@@ -1,3 +1,4 @@
+import { channelForWebhook } from "../messaging/channels";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { assertBotSchema, rows, exec, utcSql } from "./database";
@@ -65,6 +66,8 @@ async function connection(req: Request) {
   assertBotSchema();
   const key = String(req.params.key || "");
   if (!/^[A-Za-z0-9_-]{43}$/.test(key)) return null;
+  const shared=await channelForWebhook(key);
+  if(shared) return isMetaBot(shared.settings)&&shared.settings.wa_secret?shared.settings:null;
   const [s] = await rows<BotSettings>(
     "SELECT * FROM tatuei_bot_settings WHERE webhook_key=?",
     [key]
@@ -92,7 +95,8 @@ export async function verifyMetaWebhook(req: Request, res: Response) {
       !webhookKeyMatches(s.webhook_key, token)
     )
       return res.sendStatus(403);
-    await exec(
+    if(s.wa_integration_id) await exec("UPDATE whatsapp_integrations SET webhook_ready=1 WHERE id=? AND studio_id=? AND connection_key=?",[s.wa_integration_id,s.studio_id,s.webhook_key]);
+    else await exec(
       "UPDATE tatuei_bot_settings SET webhook_ready=1 WHERE studio_id=? AND webhook_key=?",
       [s.studio_id, s.webhook_key]
     );
