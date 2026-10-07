@@ -42,6 +42,7 @@ import { Button } from "./ui/button";
 import GlobalSearch from "./GlobalSearch";
 
 const menuItems = [
+  { icon: TatueiBotIcon, label: "Btboludismo", path: "/btboludismo", roles: ["superadmin"] },
   { icon: TatueiBotIcon, label: "Bot Tatuei", path: "/bot-tatuei", roles: ["superadmin", "admin", "collaborator"] },
   { icon: FileText, label: "Históricos anteriores", path: "/historicos-anteriores", roles: ["superadmin"] },
   { icon: MessageSquare, label: "Central Inteligente", path: "/intelligent-inbox", roles: ["superadmin", "admin", "collaborator"] },
@@ -150,6 +151,7 @@ function DashboardLayoutContent({
   const invited = isInvitedArtist(user);
   const access = trpc.artistInvitations.access.useQuery(undefined,{enabled:invited});
   const canVisit = (path:string) => {
+    if (path === "/btboludismo" || path.startsWith("/btboludismo/")) return user?.canAccessBtboludismo === true;
     if (path === "/intelligent-inbox") return !!user?.canAccessPrivateInbox;
     if (path === "/saas" || path.startsWith("/saas/")) return user?.role === "superadmin";
     if (!invited) return true;
@@ -275,6 +277,7 @@ function DashboardLayoutContent({
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-1">
               {menuItems
+                .filter(item => item.path !== "/btboludismo" || user?.canAccessBtboludismo === true)
                 .filter(item => item.path !== "/intelligent-inbox" || !!user?.canAccessPrivateInbox)
                 .filter(item => invited ? canVisit(item.path) : !user || item.roles.includes(user.role))
                 .map(item => {
