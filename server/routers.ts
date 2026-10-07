@@ -1,4 +1,6 @@
 import { nativeBotRouter } from "./routers/nativeBot";
+import { btboludismoRouter } from "./routers/btboludismo";
+import { canAccessBtboludismo } from "./btboludismoAccess";
 import { isPrivateInboxOwner } from "./intelligentInbox/access";
 import { clientBirthDate, clientPersonalPrefill } from "../shared/clientPersonal";
 import { parseAnamneseExpiry } from "./anamneseTime";
@@ -65,6 +67,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  btboludismo: btboludismoRouter,
   nativeBot: nativeBotRouter,
   legacyArchive: legacyArchiveRouter,
   artistInvitations: artistInvitationsRouter,
@@ -201,7 +204,7 @@ export const appRouter = router({
       if (!opts.ctx.user) return null;
       const { passwordHash: _secret, ...safeUser } = opts.ctx.user;
       const studio = safeUser.studioId ? await db.getStudioById(safeUser.studioId) : null;
-      return { ...safeUser, studioName: studio?.name ?? null, canAccessPrivateInbox: isPrivateInboxOwner(safeUser) };
+      return { ...safeUser, studioName: studio?.name ?? null, canAccessPrivateInbox: isPrivateInboxOwner(safeUser), canAccessBtboludismo: await canAccessBtboludismo(opts.ctx.user) };
     }),
     setActiveStudio: protectedProcedure
       .input(z.object({ studioId: z.number().int().positive() }))
