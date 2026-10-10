@@ -37,8 +37,8 @@ export default function ResetPassword() {
       setValidationError("As senhas não coincidem.");
       return;
     }
-    if (newPassword.length < 6) {
-      setValidationError("A senha deve ter no mínimo 6 caracteres.");
+    if (newPassword.length < 15) {
+      setValidationError("A senha deve ter no mínimo 15 caracteres.");
       return;
     }
     resetMutation.mutate({ token, newPassword });
@@ -143,7 +143,7 @@ export default function ResetPassword() {
                   <Input
                     id="new-password"
                     type={showPassword ? "text" : "password"}
-                    placeholder="Mínimo 6 caracteres"
+                    placeholder="Mínimo 15 caracteres"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     className="pl-9 pr-10"

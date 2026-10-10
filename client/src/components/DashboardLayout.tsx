@@ -318,6 +318,9 @@ function DashboardLayoutContent({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => setLocation("/account/security")} className="cursor-pointer">
+                  <KeyRound className="mr-2 h-4 w-4" /><span>Segurança da conta</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => setChangePasswordOpen(true)}
                   className="cursor-pointer"

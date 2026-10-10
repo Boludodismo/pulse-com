@@ -21,6 +21,6 @@ describe("SaaS access controls", () => {
   });
 
   it("preserves existing modules and adds isolated inbox permissions", () => {
-    expect(SAAS_MODULES).toEqual(["clients", "appointments", "stock", "finance", "anamnesis", "pod", "reports", "intelligent_inbox", "inbox_conversations", "inbox_summaries", "inbox_priorities", "inbox_opportunities", "inbox_settings", "inbox_suggestions"]);
+    expect(SAAS_MODULES).toEqual(["clients", "appointments", "stock", "finance", "anamnesis", "pod", "reports", "quotes", "intelligent_inbox", "inbox_conversations", "inbox_summaries", "inbox_priorities", "inbox_opportunities", "inbox_settings", "inbox_suggestions"]);
   });
 });

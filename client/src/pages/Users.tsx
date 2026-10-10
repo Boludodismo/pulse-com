@@ -132,8 +132,8 @@ export default function Users() {
         setCreateError("E-mail é obrigatório");
         return;
       }
-      if (!formData.password || formData.password.length < 6) {
-        setCreateError("Senha deve ter no mínimo 6 caracteres");
+      if (!formData.password || formData.password.length < 15) {
+        setCreateError("Senha deve ter no mínimo 15 caracteres");
         return;
       }
       createLocalUserMutation.mutate({
@@ -469,8 +469,8 @@ export default function Users() {
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Mínimo 6 caracteres"
-                minLength={6}
+                placeholder="Mínimo 15 caracteres"
+                minLength={15}
               />
             </div>
           </div>
@@ -478,7 +478,7 @@ export default function Users() {
             <Button variant="outline" onClick={() => setIsPasswordModalOpen(false)}>Cancelar</Button>
             <Button
               onClick={() => selectedUser && setPasswordMutation.mutate({ id: selectedUser.id, password: newPassword })}
-              disabled={setPasswordMutation.isPending || newPassword.length < 6}
+              disabled={setPasswordMutation.isPending || newPassword.length < 15}
             >
               {setPasswordMutation.isPending ? "Salvando..." : "Salvar Senha"}
             </Button>
@@ -579,8 +579,8 @@ export default function Users() {
                   type="password"
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="Mínimo 6 caracteres"
-                  minLength={6}
+                  placeholder="Mínimo 15 caracteres"
+                  minLength={15}
                 />
               </div>
             )}

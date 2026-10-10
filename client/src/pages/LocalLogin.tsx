@@ -18,6 +18,9 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [mfa, setMfa] = useState<{ challenge: string; method: string }>();
+  const [code, setCode] = useState("");
+  const [recoveryOnly, setRecoveryOnly] = useState(false);
 
   // Estado do modal "Esqueci minha senha"
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -41,11 +44,11 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/auth/local/login", {
+      const res = await fetch(mfa ? "/api/auth/local/mfa" : "/api/auth/local/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+        body: JSON.stringify(mfa ? { challenge: mfa.challenge, code } : { email: email.trim().toLowerCase(), password, recoveryOnly }),
       });
 
       const data = await res.json();
@@ -55,6 +58,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
         return;
       }
 
+      if (data.mfaRequired) { setMfa({ challenge: data.challenge, method: data.method }); setPassword(""); setCode(""); return; }
       onSuccess();
     } catch {
       setError("Erro de conexão. Verifique sua internet e tente novamente.");
@@ -83,9 +87,9 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
 
         <Card className="border border-border shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2">
           <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Entrar no sistema</CardTitle>
+            <CardTitle className="text-lg">{mfa ? "Confirme seu acesso" : "Entrar no sistema"}</CardTitle>
             <CardDescription>
-              Use o e-mail e senha fornecidos pelo administrador.
+              {mfa ? (mfa.method === "email" && !recoveryOnly ? "Informe o código enviado ao seu e-mail ou um código de recuperação." : "Informe o código do autenticador ou um código de recuperação.") : "Use o e-mail e senha fornecidos pelo administrador."}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -96,6 +100,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
                 </Alert>
               )}
 
+              {!mfa && <>
               <div className="space-y-2">
                 <Label htmlFor="email">E-mail</Label>
                 <div className="relative">
@@ -155,7 +160,10 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
                 </div>
               </div>
 
-              <Button type="submit" className="w-full" disabled={loading || !email || !password}>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={recoveryOnly} onChange={e => setRecoveryOnly(e.target.checked)} disabled={loading} />Usar código de recuperação em vez de receber e-mail</label>
+              </>}
+              {mfa && <div className="space-y-2"><Label htmlFor="mfa-code">Código de verificação ou recuperação</Label><Input id="mfa-code" value={code} onChange={e => setCode(e.target.value)} autoComplete="one-time-code" autoFocus required maxLength={64} disabled={loading} /><p className="text-xs text-muted-foreground">A verificação expira em 5 minutos. Cada código de recuperação só pode ser usado uma vez.</p><Button type="button" variant="ghost" onClick={() => { setMfa(undefined); setCode(""); setError(null); }} disabled={loading}>Voltar ao login</Button></div>}
+              <Button type="submit" className="w-full" disabled={loading || (mfa ? !code : !email || !password)}>
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Entrando...</> : "Entrar"}
               </Button>
             </form>
@@ -176,7 +184,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
           <DialogHeader>
             <DialogTitle>Recuperar senha</DialogTitle>
             <DialogDescription>
-              Informe seu e-mail e enviaremos um link de redefinição ao administrador do sistema.
+              Informe seu e-mail para receber um link de redefinição, quando o envio de e-mail estiver configurado.
             </DialogDescription>
           </DialogHeader>
 
@@ -186,7 +194,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
               <div className="text-center">
                 <p className="font-medium text-foreground">Solicitação enviada!</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  O administrador receberá o link de redefinição e entrará em contato com você.
+                  Se houver uma conta ativa com este e-mail e o envio estiver disponível, você receberá o link. Verifique também a caixa de spam.
                 </p>
               </div>
               <Button variant="outline" onClick={() => setForgotOpen(false)} className="w-full">

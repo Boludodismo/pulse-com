@@ -396,8 +396,8 @@ export default function UserProfile() {
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Mínimo 6 caracteres"
-                minLength={6}
+                placeholder="Mínimo 15 caracteres"
+                minLength={15}
               />
             </div>
           </div>
@@ -405,7 +405,7 @@ export default function UserProfile() {
             <Button variant="outline" onClick={() => setIsPasswordModalOpen(false)}>Cancelar</Button>
             <Button
               onClick={() => setPasswordMutation.mutate({ id: userId, password: newPassword })}
-              disabled={setPasswordMutation.isPending || newPassword.length < 6}
+              disabled={setPasswordMutation.isPending || newPassword.length < 15}
             >
               {setPasswordMutation.isPending ? "Salvando..." : "Salvar Senha"}
             </Button>

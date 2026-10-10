@@ -1,3 +1,5 @@
+import { ensureSecuritySchema } from '../security/database';
+import { securityHeaders } from '../security/http';
 import { receiveMetaWebhook, verifyMetaWebhook } from "../nativeBot/metaWebhook";
 import { ensureNativeBotSchema } from "../nativeBot/database";
 import { receiveNativeBotWebhook } from "../nativeBot/webhook";
@@ -39,7 +41,9 @@ import { storageGet, verifyStorageAccessToken, checkS3Storage } from "../storage
 async function startServer() {
   // Keep schema synchronized on controlled standalone deployments.
   // Disabled by default so existing Manus/production behavior is unchanged.
+  if (ENV.authMode === "local" && Buffer.byteLength(ENV.authSecurityKey) < 32) throw new Error("AUTH_SECURITY_KEY deve ter pelo menos 32 bytes.");
   await runStartupMigrations();
+  await ensureSecuritySchema();
   await ensureSessionCockpitSchema();
   await ensureStagingInventorySchema();
   await ensureStagingMessagingSchema();
@@ -61,6 +65,10 @@ async function startServer() {
     console.log("[Storage] S3 write/read/delete check passed");
   }
   const app = express();
+  app.set("trust proxy", 1);
+  app.disable("x-powered-by");
+  app.use(securityHeaders);
+  app.use("/api/auth/local", express.json({ limit: "16kb" }));
   const server = createServer(app);
   startNativeBotWorker();
   app.use("/api/native-bot/webhook", express.json({ limit: "256kb" }));

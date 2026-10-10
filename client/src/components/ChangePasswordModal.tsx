@@ -50,8 +50,8 @@ export default function ChangePasswordModal({ open, onOpenChange }: ChangePasswo
       setValidationError("A nova senha e a confirmação não coincidem.");
       return;
     }
-    if (newPassword.length < 6) {
-      setValidationError("A nova senha deve ter no mínimo 6 caracteres.");
+    if (newPassword.length < 15) {
+      setValidationError("A nova senha deve ter no mínimo 15 caracteres.");
       return;
     }
     if (newPassword === currentPassword) {
@@ -78,11 +78,11 @@ export default function ChangePasswordModal({ open, onOpenChange }: ChangePasswo
             <div className="text-center">
               <p className="font-medium text-foreground">Senha alterada com sucesso!</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Use sua nova senha no próximo login.
+                As sessões anteriores foram encerradas. Entre novamente com a nova senha.
               </p>
             </div>
-            <Button onClick={handleClose} className="w-full">
-              Fechar
+            <Button onClick={() => window.location.assign("/")} className="w-full">
+              Entrar novamente
             </Button>
           </div>
         ) : (
@@ -128,7 +128,7 @@ export default function ChangePasswordModal({ open, onOpenChange }: ChangePasswo
                 <Input
                   id="new-password-change"
                   type={showNew ? "text" : "password"}
-                  placeholder="Mínimo 6 caracteres"
+                  placeholder="Mínimo 15 caracteres"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="pl-9 pr-10"

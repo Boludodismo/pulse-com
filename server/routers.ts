@@ -1,3 +1,12 @@
+import { securityRouter } from './security/router';
+import { passwordPolicy } from '../shared/passwordPolicy';
+import { requestReset, resetPassword as secureResetPassword, resetTokenValid } from './security/passwordReset';
+import { enforceRateLimit } from './security/rateLimit';
+import { revokeSession, revokeCredentialArtifacts } from './security/service';
+import { digest } from './security/crypto';
+import { sdk } from './_core/sdk';
+import { randomBytes } from 'node:crypto';
+import { assertAnamneseClient, assertAnamneseRecord } from './security/anamneseAccess';
 import { nativeBotRouter } from "./routers/nativeBot";
 import { isPrivateInboxOwner } from "./intelligentInbox/access";
 import { clientBirthDate, clientPersonalPrefill } from "../shared/clientPersonal";
@@ -65,6 +74,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  security: securityRouter,
   nativeBot: nativeBotRouter,
   legacyArchive: legacyArchiveRouter,
   artistInvitations: artistInvitationsRouter,
@@ -221,100 +231,29 @@ export const appRouter = router({
         await db.updateUser(ctx.user.id, { studioId: studio.id });
         return { studioId: studio.id };
       }),
-    logout: publicProcedure.mutation(({ ctx }) => {
+    logout: publicProcedure.mutation(async ({ ctx }) => {
+      if (ctx.user && process.env.AUTH_MODE === "local") {
+        const { parse } = await import("cookie");
+        const session = await sdk.verifySession(parse(ctx.req.headers.cookie || "")[COOKIE_NAME]);
+        if (session?.sid) await revokeSession(ctx.user.id, digest(session.sid));
+      }
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
 
-    // Solicitar recuperação de senha por e-mail
-    requestPasswordReset: publicProcedure
-      .input(z.object({ email: z.string().email("E-mail inválido") }))
-      .mutation(async ({ input }) => {
-        const user = await db.getUserByEmail(input.email);
-        // Sempre retornar sucesso para não revelar se e-mail existe
-        if (!user || !user.passwordHash) {
-          return { success: true };
-        }
-        // Gerar token seguro
-        const crypto = await import("crypto");
-        const token = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
-        const expiresAtStr = expiresAt.toISOString().slice(0, 19).replace("T", " ");
-        // Salvar token no banco
-        const dbConn = await db.getDb();
-        const { passwordResetTokens } = await import("../drizzle/schema");
-        await dbConn!.insert(passwordResetTokens).values({
-          userId: user.id,
-          token,
-          expiresAt: expiresAtStr,
-        });
-        // Enviar notificação ao owner com o link
-        const resetLink = `${process.env.APP_BASE_URL || "https://tatuei.com"}/reset-password?token=${token}`;
-        const { notifyOwner } = await import("./_core/notification");
-        await notifyOwner({
-          title: `Recuperação de senha solicitada`,
-          content: `O usuário **${user.name || user.email}** (${user.email}) solicitou recuperação de senha.\n\nLink de redefinição (válido por 1 hora):\n${resetLink}\n\nSe não foi você, ignore esta mensagem.`,
-        });
-        return { success: true };
-      }),
-
-    // Redefinir senha via token
-    resetPassword: publicProcedure
-      .input(z.object({
-        token: z.string().min(1),
-        newPassword: z.string().min(6, "Senha deve ter no mínimo 6 caracteres"),
-      }))
-      .mutation(async ({ input }) => {
-        const dbConn = await db.getDb();
-        const { passwordResetTokens } = await import("../drizzle/schema");
-        const { eq, and, isNull } = await import("drizzle-orm");
-        // Buscar token válido e não usado
-        const [resetToken] = await dbConn!.select()
-          .from(passwordResetTokens)
-          .where(and(
-            eq(passwordResetTokens.token, input.token),
-            isNull(passwordResetTokens.usedAt)
-          ))
-          .limit(1);
-        if (!resetToken) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Token inválido ou já utilizado" });
-        }
-        if (new Date(resetToken.expiresAt) < new Date()) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Token expirado. Solicite um novo link." });
-        }
-        // Hash da nova senha
-        const { hashPassword } = await import("./_core/localAuth");
-        const passwordHash = await hashPassword(input.newPassword);
-        // Atualizar senha do usuário
-        await db.updateUser(resetToken.userId, { passwordHash });
-        // Marcar token como usado
-        const usedAtStr = new Date().toISOString().slice(0, 19).replace("T", " ");
-        await dbConn!.update(passwordResetTokens)
-          .set({ usedAt: usedAtStr })
-          .where(eq(passwordResetTokens.id, resetToken.id));
-        return { success: true };
-      }),
-
-    // Verificar se token de reset é válido
-    verifyResetToken: publicProcedure
-      .input(z.object({ token: z.string() }))
-      .query(async ({ input }) => {
-        const dbConn = await db.getDb();
-        const { passwordResetTokens } = await import("../drizzle/schema");
-        const { eq, and, isNull } = await import("drizzle-orm");
-        const [resetToken] = await dbConn!.select()
-          .from(passwordResetTokens)
-          .where(and(
-            eq(passwordResetTokens.token, input.token),
-            isNull(passwordResetTokens.usedAt)
-          ))
-          .limit(1);
-        if (!resetToken || new Date(resetToken.expiresAt) < new Date()) {
-          return { valid: false };
-        }
-        return { valid: true };
-      }),
+    requestPasswordReset: publicProcedure.input(z.object({ email: z.string().email().max(320) })).mutation(async ({ ctx, input }) => {
+      await enforceRateLimit(ctx.req, 'password-reset-request', input.email.trim().toLowerCase(), 3, 15 * 60000);
+      await requestReset(input.email); return { success: true };
+    }),
+    resetPassword: publicProcedure.input(z.object({ token: z.string().regex(/^[a-f0-9]{64}$/), newPassword: passwordPolicy })).mutation(async ({ ctx, input }) => {
+      await enforceRateLimit(ctx.req, 'password-reset', '', 10);
+      await secureResetPassword(input.token, input.newPassword); return { success: true };
+    }),
+    verifyResetToken: publicProcedure.input(z.object({ token: z.string().max(128) })).query(async ({ ctx, input }) => {
+      await enforceRateLimit(ctx.req, 'password-reset-verify', '', 30);
+      return { valid: /^[a-f0-9]{64}$/.test(input.token) && await resetTokenValid(input.token) };
+    }),
   }),
 
   // ============ CLIENTS ROUTER ============
@@ -428,9 +367,7 @@ export const appRouter = router({
             state: input.state || null,
             country: input.country || "Brasil",
           };
-          console.log('[clients.create] Creating client with data:', clientData);
           const result = await db.createClient(clientData);
-          console.log('[clients.create] Client created successfully:', result);
           
           // Registrar auditoria
           try {
@@ -1362,25 +1299,29 @@ export const appRouter = router({
       }),
 
     getAll: protectedProcedure
-      .query(async () => {
-        return await db.getAllAnamnesis();
+      .query(async ({ ctx }) => {
+        if (!ctx.user.studioId || (ctx.user.role === "collaborator" && !ctx.user.artistId)) throw new TRPCError({ code: "FORBIDDEN", message: "Selecione um estúdio e confira o artista vinculado." });
+        return await db.getAllAnamnesis(ctx.user.studioId, ctx.user.role === "collaborator" ? ctx.user.artistId : null);
       }),
 
     getByClientId: protectedProcedure
       .input(z.object({ clientId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ ctx, input }) => {
+        await assertAnamneseClient(ctx.user, input.clientId);
         return await db.getAnamnesisByClientId(input.clientId);
       }),
 
     getById: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ ctx, input }) => {
+        await assertAnamneseRecord(ctx.user, input.id);
         return await db.getAnamnesisById(input.id);
       }),
 
     exportPdf: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        await assertAnamneseRecord(ctx.user, input.id);
         const anamnese = await db.getAnamnesisById(input.id);
         if (!anamnese) {
           throw new Error("Anamnese não encontrada");
@@ -1406,7 +1347,12 @@ export const appRouter = router({
         signatureUrl: z.string().optional(),
         pdfUrl: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        const client = await assertAnamneseClient(ctx.user, input.clientId, input.appointmentId);
+        if (input.appointmentId) {
+          const appointment = await db.getAppointmentById(input.appointmentId);
+          if (!appointment || appointment.clientId !== client.id || appointment.studioId !== client.studioId) throw new TRPCError({ code: "BAD_REQUEST", message: "Agendamento não pertence ao cliente." });
+        }
         // Calcular nível de risco automaticamente
         const { calculateRiskLevel } = await import("./riskAssessment");
         const riskAssessment = calculateRiskLevel({
@@ -2295,6 +2241,7 @@ export const appRouter = router({
         assertManagedUser(ctx.user, userBefore, input);
         const { id, ...data } = input;
         const result = await db.updateUser(id, data);
+        if (input.isActive !== undefined || input.role !== undefined || input.email !== undefined) await revokeCredentialArtifacts(id);
         
         // Buscar dados depois da atualização
         const userAfter = await db.getUserById(input.id);
@@ -2365,7 +2312,7 @@ export const appRouter = router({
       .input(z.object({
         name: z.string().min(1, "Nome obrigatório"),
         email: z.string().email("E-mail inválido"),
-        password: z.string().min(6, "Senha mínima de 6 caracteres"),
+        password: passwordPolicy,
         role: z.enum(["superadmin", "admin", "collaborator"]).default("collaborator"),
         studioId: z.number().optional().nullable(),
         artistId: z.number().optional().nullable(),
@@ -2409,7 +2356,7 @@ export const appRouter = router({
     changePassword: protectedProcedure
       .input(z.object({
         currentPassword: z.string().min(1, "Senha atual obrigatória"),
-        newPassword: z.string().min(6, "Nova senha deve ter no mínimo 6 caracteres"),
+        newPassword: passwordPolicy,
       }))
       .mutation(async ({ ctx, input }) => {
         const user = await db.getUserById(ctx.user.id);
@@ -2417,12 +2364,14 @@ export const appRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "Sua conta não possui senha local configurada" });
         }
         const { verifyPassword, hashPassword } = await import("./_core/localAuth");
+        await enforceRateLimit(ctx.req, "password-change", String(ctx.user.id), 10);
         const valid = await verifyPassword(input.currentPassword, user.passwordHash);
         if (!valid) {
           throw new TRPCError({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
         }
         const passwordHash = await hashPassword(input.newPassword);
         await db.updateUser(ctx.user.id, { passwordHash });
+        await revokeCredentialArtifacts(ctx.user.id);
         await db.createAuditLog({
           userId: ctx.user.id,
           userName: ctx.user.name || "Usuário",
@@ -2441,7 +2390,7 @@ export const appRouter = router({
     setPassword: protectedProcedure
       .input(z.object({
         id: z.number(),
-        password: z.string().min(6, "Senha mínima de 6 caracteres"),
+        password: passwordPolicy,
       }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
@@ -2451,6 +2400,7 @@ export const appRouter = router({
         assertManagedUser(ctx.user, await db.getUserById(input.id));
         const passwordHash = await hashPassword(input.password);
         await db.updateUser(input.id, { passwordHash });
+        await revokeCredentialArtifacts(input.id);
         return { success: true };
       }),
   }),
@@ -2762,7 +2712,7 @@ export const appRouter = router({
             throw new TRPCError({ code: "BAD_REQUEST", message: "Agendamento não pertence ao cliente" });
         }
         // Gerar token único
-        const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+        const token = randomBytes(32).toString("hex");
         // Expirar em 7 dias
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         
@@ -2794,7 +2744,7 @@ export const appRouter = router({
         if (!request) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido ou expirado" });
         }
-        if (parseAnamneseExpiry(request.expiresAt) < new Date() || request.statusRequest === "cancelada") {
+        if (!(parseAnamneseExpiry(request.expiresAt).getTime() > Date.now()) || request.statusRequest === "cancelada" || request.statusRequest === "expirada") {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado" });
         }
         // Buscar dados do cliente
@@ -2846,7 +2796,8 @@ export const appRouter = router({
     // Listar submissões de um cliente
     getByClientId: protectedProcedure
       .input(z.object({ clientId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ ctx, input }) => {
+        await assertAnamneseClient(ctx.user, input.clientId);
         const submissions = await db.getAnamneseSubmissionsByClientId(input.clientId);
         return submissions.map(s => ({
           ...s,
@@ -2857,7 +2808,8 @@ export const appRouter = router({
     // Listar solicitações de um cliente
      getRequestsByClientId: protectedProcedure
       .input(z.object({ clientId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ ctx, input }) => {
+        await assertAnamneseClient(ctx.user, input.clientId);
         return await db.getAnamneseRequestsByClientId(input.clientId);
       }),
     // Editar submissão via link (painel interno)
@@ -2866,7 +2818,8 @@ export const appRouter = router({
         id: z.number(),
         payload: z.record(z.string(), z.any()),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        await assertAnamneseRecord(ctx.user, input.id, true);
         await db.updateAnamneseSubmission(input.id, JSON.stringify(input.payload));
 
         // Sincronizar com Google Sheets
@@ -2880,7 +2833,8 @@ export const appRouter = router({
     // Excluir submissão via link (painel interno)
     deleteSubmission: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        await assertAnamneseRecord(ctx.user, input.id, true);
         await db.deleteAnamneseSubmission(input.id);
         return { success: true };
       }),
@@ -2899,7 +2853,8 @@ export const appRouter = router({
         acceptedTerms: z.boolean().optional(),
         notes: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        await assertAnamneseRecord(ctx.user, input.id);
         const { id, ...data } = input;
         await db.updateAnamnesisRecord(id, {
           ...data,
@@ -2915,14 +2870,17 @@ export const appRouter = router({
     // Excluir ficha manual (painel interno)
     deleteRecord: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        await assertAnamneseRecord(ctx.user, input.id);
         await db.deleteAnamnesisRecord(input.id);
         return { success: true };
       }),
     // Obter submissão por requestId para pré-preencher formulário público
     getSubmissionByRequestId: publicProcedure
-      .input(z.object({ requestId: z.number() }))
+      .input(z.object({ requestId: z.number().int().positive(), token: z.string().min(1).max(64) }))
       .query(async ({ input }) => {
+        const request = await db.getAnamneseRequestByToken(input.token);
+        if (!request || request.id !== input.requestId || !(parseAnamneseExpiry(request.expiresAt).getTime() > Date.now()) || request.statusRequest === "cancelada" || request.statusRequest === "expirada") throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido ou expirado." });
         const submission = await db.getAnamneseSubmissionByRequestId(input.requestId);
         if (!submission) return null;
         return { ...submission, payload: JSON.parse(submission.payloadJson) };

@@ -563,16 +563,15 @@ export async function checkAppointmentConflicts(
 
 // ============ ANAMNESIS HELPERS ============
 
-export async function getAllAnamnesis() {
-  const db = await getDb();
-  if (!db) return [];
-  
-  const result = await db
-    .select()
-    .from(anamnesisRecords)
+export async function getAllAnamnesis(studioId: number, artistId: number | null = null) {
+  const database = await getDb(); if (!database) return [];
+  if (!studioId) throw new TRPCError({ code: 'FORBIDDEN' });
+  const rows = await database.select({ record: anamnesisRecords }).from(anamnesisRecords)
+    .innerJoin(clients, eq(clients.id, anamnesisRecords.clientId))
+    .leftJoin(appointments, eq(appointments.id, anamnesisRecords.appointmentId))
+    .where(and(eq(clients.studioId, studioId), artistId == null ? undefined : or(eq(clients.artistId, artistId), eq(appointments.artistId, artistId))))
     .orderBy(desc(anamnesisRecords.createdAt));
-  
-  return result;
+  return rows.map(row => row.record);
 }
 
 /** Fontes de anamnese visíveis no tenant para a tela consolidada de riscos. */
@@ -3331,7 +3330,7 @@ export async function savePublicAnamnese(token: string, payload: Record<string, 
       .where(eq(anamneseRequests.token, token)).limit(1).for("update");
     if (!request) throw new TRPCError({ code: "NOT_FOUND", message: "Link inválido" });
     if (request.statusRequest === "cancelada" || request.statusRequest === "expirada" ||
-        parseAnamneseExpiry(request.expiresAt).getTime() < Date.now()) {
+        !(parseAnamneseExpiry(request.expiresAt).getTime() > Date.now())) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Link expirado ou cancelado. Solicite um novo link ao estúdio." });
     }
     const [client] = await tx.select().from(clients).where(eq(clients.id, request.clientId)).limit(1).for("update");
@@ -3359,4 +3358,10 @@ export async function savePublicAnamnese(token: string, payload: Record<string, 
     }).where(eq(anamneseRequests.id, request.id));
     return { submissionId, clientId: request.clientId, appointmentId: request.appointmentId };
   });
+}
+
+export async function getAnamneseSubmissionById(id: number) {
+  const database = await getDb(); if (!database) return null;
+  const [record] = await database.select().from(anamneseSubmissions).where(eq(anamneseSubmissions.id, id)).limit(1);
+  return record ?? null;
 }

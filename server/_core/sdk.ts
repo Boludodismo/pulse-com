@@ -1,3 +1,7 @@
+import { isUserAccessActive } from '../saas';
+import { credentialVersion, equal } from '../security/crypto';
+import { getSecurity } from '../security/database';
+import { SESSION_MS, registerSession, validSession } from '../security/service';
 import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
 import axios, { type AxiosInstance } from "axios";
@@ -22,6 +26,8 @@ export type SessionPayload = {
   openId: string;
   appId: string;
   name: string;
+  sid?: string;
+  authVersion?: string;
 };
 
 const CRON_OPEN_ID_PREFIX = "cron_";
@@ -186,7 +192,7 @@ class SDKServer {
   }
 
   private getSessionSecret() {
-    const secret = ENV.cookieSecret;
+    const secret = ENV.authMode === "local" ? ENV.authSecurityKey : ENV.cookieSecret;
     return new TextEncoder().encode(secret);
   }
 
@@ -197,10 +203,20 @@ class SDKServer {
    */
   async createSessionToken(
     openId: string,
-    options: { expiresInMs?: number; name?: string } = {}
+    options: { expiresInMs?: number; name?: string; authVersion?: string; device?: string } = {}
   ): Promise<string> {
+    let localSession: { sid?: string; authVersion?: string } = {};
+    if (ENV.authMode === "local") {
+      const user = await db.getUserByOpenId(openId);
+      if (!user) throw ForbiddenError("User not found");
+      const state = await getSecurity(user.id);
+      const version = options.authVersion;
+      if (!version || !equal(version, credentialVersion(user, state.version))) throw ForbiddenError("Credentials changed; sign in again");
+      localSession = { sid: await registerSession(user, version, options.device), authVersion: version };
+    }
     return this.signSession(
       {
+        ...localSession,
         openId,
         // Local standalone auth does not require a Manus application id.
         // Keep a non-empty value so the existing session validation remains strict.
@@ -216,7 +232,7 @@ class SDKServer {
     options: { expiresInMs?: number } = {}
   ): Promise<string> {
     const issuedAt = Date.now();
-    const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
+    const expiresInMs = ENV.authMode === "local" ? SESSION_MS : options.expiresInMs ?? ONE_YEAR_MS;
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
 
@@ -224,15 +240,17 @@ class SDKServer {
       openId: payload.openId,
       appId: payload.appId,
       name: payload.name,
+      ...(payload.sid ? { sid: payload.sid, authVersion: payload.authVersion } : {}),
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setIssuedAt()
       .setExpirationTime(expirationSeconds)
       .sign(secretKey);
   }
 
   async verifySession(
     cookieValue: string | undefined | null
-  ): Promise<{ openId: string; appId: string; name: string } | null> {
+  ): Promise<SessionPayload | null> {
     if (!cookieValue) {
       console.warn("[Auth] Missing session cookie");
       return null;
@@ -258,6 +276,8 @@ class SDKServer {
         openId,
         appId,
         name,
+        sid: typeof payload.sid === "string" ? payload.sid : undefined,
+        authVersion: typeof payload.authVersion === "string" ? payload.authVersion : undefined,
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -299,7 +319,7 @@ class SDKServer {
       throw ForbiddenError("Invalid session cookie");
     }
 
-    if (session.openId.startsWith(CRON_OPEN_ID_PREFIX)) {
+    if (ENV.authMode !== "local" && session.openId.startsWith(CRON_OPEN_ID_PREFIX)) {
       const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
       if (!userInfo.taskUid) throw ForbiddenError("Cron session missing task_uid");
       return buildCronUser(userInfo);
@@ -310,7 +330,7 @@ class SDKServer {
     let user = await db.getUserByOpenId(sessionUserId);
 
     // If user not in DB, sync from OAuth server automatically
-    if (!user) {
+    if (!user && ENV.authMode !== "local") {
       try {
         const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
         await db.upsertUser({
@@ -331,6 +351,12 @@ class SDKServer {
       throw ForbiddenError("User not found");
     }
 
+    if (!(await isUserAccessActive(user))) throw ForbiddenError("Inactive or expired access");
+    if (ENV.authMode === "local") {
+      const state = await getSecurity(user.id);
+      const version = credentialVersion(user, state.version);
+      if (!session.sid || !session.authVersion || !equal(session.authVersion, version) || !(await validSession(user, session.sid, version))) throw ForbiddenError("Session expired or revoked");
+    }
     await db.upsertUser({
       openId: user.openId,
       lastSignedIn: signedInAt,

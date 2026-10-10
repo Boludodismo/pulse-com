@@ -1,3 +1,4 @@
+import { passwordPolicy } from '../shared/passwordPolicy';
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
@@ -13,8 +14,7 @@ export const pilotRegistration = z.object({
   name: z.string().trim().min(2).max(150),
   email: z.string().trim().email().max(320).transform(v => v.toLowerCase()),
   studioName: z.string().trim().min(2).max(255),
-  password: z.string().min(10, 'Use pelo menos 10 caracteres.').max(72)
-    .refine(v => Buffer.byteLength(v, 'utf8') <= 72, 'Senha muito longa.'),
+  password: passwordPolicy,
 });
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 // Namespace separates pilot registration from legacy account reassignment.

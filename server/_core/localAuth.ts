@@ -1,3 +1,9 @@
+import { TRPCError } from '@trpc/server';
+import { credentialVersion, digest } from '../security/crypto';
+import { getSecurity } from '../security/database';
+import { SESSION_MS, challengeUser, createChallenge, verifyLoginChallenge, revokeSession } from '../security/service';
+import { enforceRateLimit } from '../security/rateLimit';
+import { isUserAccessActive } from '../saas';
 import type { Express, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
@@ -5,64 +11,66 @@ import { studios } from "../../drizzle/schema";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME } from "@shared/const";
 
-const SALT_ROUNDS = 10;
+const SALT_ROUNDS = 12;
 
 /**
  * Local authentication mode — multi-user with bcrypt password hashing.
  * Activated when AUTH_MODE=local.
  */
 export function registerLocalAuthRoutes(app: Express) {
-  // ── Login ──────────────────────────────────────────────────────────────────
-  app.post("/api/auth/local/login", async (req: Request, res: Response) => {
-    const { email, password } = req.body as { email?: string; password?: string };
-
-    if (!email || !password) {
-      res.status(400).json({ error: "E-mail e senha são obrigatórios." });
-      return;
-    }
-
+  async function completeLogin(req: Request, res: Response, user: NonNullable<Awaited<ReturnType<typeof db.getUserById>>>, version: string) {
+    const sessionToken = await sdk.createSessionToken(user.openId, { name: user.name || user.email || 'Usuário', authVersion: version, device: req.headers['user-agent'] });
+    await db.updateUser(user.id, { lastSignedIn: new Date().toISOString() });
+    res.cookie(COOKIE_NAME, sessionToken, { ...getSessionCookieOptions(req), maxAge: SESSION_MS });
+    res.json({ success: true, user: { email: user.email, name: user.name, role: user.role } });
+  }
+  function failure(res: Response, error: unknown) {
+    if (error instanceof TRPCError) { res.status(error.code === 'TOO_MANY_REQUESTS' ? 429 : 400).json({ error: error.message }); return; }
+    console.error('[LocalAuth] Authentication unavailable');
+    res.status(503).json({ error: 'Não foi possível autenticar agora. Tente novamente.' });
+  }
+  app.post('/api/auth/local/login', async (req, res) => {
+    const { email, password, recoveryOnly } = req.body ?? {};
+    if (typeof email !== 'string' || email.length > 320 || typeof password !== 'string' || !password || password.length > 256) { res.status(400).json({ error: 'E-mail e senha são obrigatórios.' }); return; }
     try {
-      const user = await db.getUserByEmail(email.trim().toLowerCase());
-
-      if (!user || !user.passwordHash) {
-        res.status(401).json({ error: "Credenciais inválidas." });
-        return;
+      const normalized = email.trim().toLowerCase();
+      await enforceRateLimit(req, 'login', normalized, 20);
+      const user = await db.getUserByEmail(normalized);
+      // Dummy comparison keeps unknown accounts on the password verification path.
+      const valid = await bcrypt.compare(password, user?.passwordHash || '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy');
+      if (!user?.passwordHash || !valid || !user.isActive || !(await isUserAccessActive(user))) { res.status(401).json({ error: 'Credenciais inválidas ou acesso indisponível.' }); return; }
+      const state = await getSecurity(user.id);
+      if (state.method !== 'off') {
+        const challenge = await createChallenge(user, 'login', state.method, recoveryOnly === true);
+        res.json({ mfaRequired: true, challenge: challenge.challenge, method: state.method }); return;
       }
-
-      if (!user.isActive) {
-        res.status(403).json({ error: "Usuário inativo. Contate o administrador." });
-        return;
-      }
-
-      const valid = await bcrypt.compare(password, user.passwordHash);
-      if (!valid) {
-        res.status(401).json({ error: "Credenciais inválidas." });
-        return;
-      }
-
-      // Update lastSignedIn only — do NOT overwrite name/email/role
-      await db.updateUser(user.id, { lastSignedIn: new Date().toISOString() });
-
-      const sessionToken = await sdk.createSessionToken(user.openId, {
-        name: user.name ?? "",
-        expiresInMs: ONE_YEAR_MS,
-      });
-
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-      res.json({ success: true, user: { email: user.email, name: user.name, role: user.role } });
-    } catch (error) {
-      console.error("[LocalAuth] Login failed", error);
-      res.status(500).json({ error: "Erro interno ao fazer login." });
-    }
+      await completeLogin(req, res, user, credentialVersion(user, state.version));
+    } catch (error) { failure(res, error); }
   });
-
-  // ── Logout ─────────────────────────────────────────────────────────────────
-  app.post("/api/auth/local/logout", (req: Request, res: Response) => {
-    res.clearCookie(COOKIE_NAME, { path: "/" });
-    res.json({ success: true });
+  app.post('/api/auth/local/mfa', async (req, res) => {
+    const { challenge, code } = req.body ?? {};
+    if (typeof challenge !== 'string' || !/^[a-f0-9]{64}$/.test(challenge) || typeof code !== 'string' || code.length > 64) { res.status(400).json({ error: 'Código inválido.' }); return; }
+    try {
+      await enforceRateLimit(req, 'mfa-ip', '', 30);
+      const userId = await challengeUser(challenge);
+      const user = userId ? await db.getUserById(userId) : null;
+      if (!user?.passwordHash || !user.isActive || !(await isUserAccessActive(user))) { res.status(401).json({ error: 'Código inválido ou expirado. Entre novamente.' }); return; }
+      await enforceRateLimit(req, 'mfa-account', String(user.id), 10);
+      const version = await verifyLoginChallenge(user, challenge, code);
+      if (!version) { res.status(401).json({ error: 'Código inválido ou expirado. Entre novamente após cinco tentativas.' }); return; }
+      await completeLogin(req, res, user, version);
+    } catch (error) { failure(res, error); }
+  });
+  app.post('/api/auth/local/logout', async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req);
+      const cookie = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith(`${COOKIE_NAME}=`))?.slice(COOKIE_NAME.length + 1);
+      const session = await sdk.verifySession(cookie);
+      if (session?.sid) await revokeSession(user.id, digest(session.sid));
+    } catch { /* expired sessions can still clear their browser cookie */ }
+    res.clearCookie(COOKIE_NAME, getSessionCookieOptions(req)); res.json({ success: true });
   });
 
   // ── Create user (admin only via tRPC — this is a helper endpoint) ──────────
@@ -83,7 +91,8 @@ export async function ensureLocalAdmin(env: {
   try {
     const normalizedEmail = env.email.trim().toLowerCase();
     const existing = await db.getUserByEmail(normalizedEmail);
-    const passwordHash = await bcrypt.hash(env.password, SALT_ROUNDS);
+    if ((!existing || !existing.passwordHash) && !env.password) throw new Error("Configure LOCAL_ADMIN_PASSWORD antes de criar o administrador.");
+    const passwordHash = (!existing || !existing.passwordHash) ? await bcrypt.hash(env.password, SALT_ROUNDS) : existing.passwordHash;
 
     const studio = await db.getFirstStudio();
     let studioId = existing?.studioId ?? studio?.id ?? null;

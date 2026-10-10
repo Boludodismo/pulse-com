@@ -1,3 +1,4 @@
+import { passwordPolicy } from '../shared/passwordPolicy';
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
@@ -11,8 +12,7 @@ export const permissionInput = z.array(z.object({ module: z.enum(SAAS_MODULES), 
   .refine(p => new Set(p.map(x => x.module)).size === p.length, 'Não repita módulos.')
   .refine(p => p.every(x => !x.canWrite || x.canRead), 'Permissão de edição exige visualização.');
 export const tokenInput = z.string().regex(/^[a-f0-9]{64}$/, 'Convite inválido.');
-export const invitationPassword = z.string().min(10, 'Use pelo menos 10 caracteres.').max(72)
-  .refine(p => Buffer.byteLength(p, 'utf8') <= 72, 'A senha excede o tamanho permitido.');
+export const invitationPassword = passwordPolicy;
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const timestamp = () => new Date().toISOString().slice(0,19).replace('T',' ');
 export function pendingInvitation(invitation: { status: string; expiresAt: string; artistId: number | null } | undefined, now = Date.now()) {

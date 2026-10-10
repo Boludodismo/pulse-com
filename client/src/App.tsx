@@ -1,3 +1,4 @@
+import AccountSecurity from "./pages/AccountSecurity";
 import NativeBot from "./pages/NativeBot";
 import LegacyArchive from './pages/LegacyArchive';
 import {useAuth} from './_core/hooks/useAuth';
@@ -125,6 +126,7 @@ function Router() {
         </DashboardLayout>
       )} />
       
+      <Route path="/account/security" component={() => <DashboardLayout><AccountSecurity /></DashboardLayout>} />
       <Route path="/settings" component={Settings} />
       
       <Route path="/saas" component={() => (

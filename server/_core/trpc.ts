@@ -56,7 +56,7 @@ export const tenantProcedure = protectedProcedure.use(
 );
 
 // Middleware para SUPER ADMIN (acesso global a todos os estúdios)
-export const superAdminProcedure = t.procedure.use(
+export const superAdminProcedure = protectedProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
@@ -76,7 +76,7 @@ export const superAdminProcedure = t.procedure.use(
 );
 
 // Middleware para ADMIN DO ESTÚDIO (acesso total ao próprio estúdio)
-export const adminProcedure = t.procedure.use(
+export const adminProcedure = protectedProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 

@@ -25,6 +25,7 @@ export const ENV = {
   intelligentInboxEnabled: process.env.INTELLIGENT_INBOX_ENABLED === "true",
   appId: process.env.VITE_APP_ID ?? "",
   cookieSecret: process.env.JWT_SECRET ?? "",
+  authSecurityKey: process.env.AUTH_SECURITY_KEY ?? process.env.JWT_SECRET ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",
   oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
@@ -36,7 +37,7 @@ export const ENV = {
   authMode: process.env.AUTH_MODE ?? "oauth",
   // Local auth admin credentials (only used when AUTH_MODE=local)
   localAdminEmail: process.env.LOCAL_ADMIN_EMAIL ?? "admin@podcrm.local",
-  localAdminPassword: process.env.LOCAL_ADMIN_PASSWORD ?? "admin123",
+  localAdminPassword: process.env.LOCAL_ADMIN_PASSWORD ?? "",
   localAdminName: process.env.LOCAL_ADMIN_NAME ?? "Admin",
   localStudioName: process.env.LOCAL_STUDIO_NAME ?? "Meu Estúdio",
   schedulerMode: (process.env.SCHEDULER_MODE ?? (process.env.AUTH_MODE === "local" ? "local" : "heartbeat")).toLowerCase(),

@@ -1,3 +1,4 @@
+import { ENV } from "./env";
 import type { CookieOptions, Request } from "express";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
@@ -44,7 +45,7 @@ export function getSessionCookieOptions(
     httpOnly: true,
     path: "/",
     // SameSite=None requires Secure in modern browsers. Use Lax on local HTTP.
-    sameSite: secure ? "none" : "lax",
+    sameSite: ENV.authMode === "local" ? "lax" : secure ? "none" : "lax",
     secure,
   };
 }
