@@ -1,3 +1,6 @@
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import WhatsappConsentField from "@/components/WhatsappConsentField";
+import { parsePhoneNumberFromString } from "libphonenumber-js";
 import WatermarkControl from "@/components/quotes/WatermarkControl";
 import QuoteFollowupActions from "@/components/quotes/QuoteFollowupActions";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -234,6 +237,11 @@ export default function Quotes() {
   const [createdDate, setCreatedDate] = useState(isoToday());
   const [validUntil, setValidUntil] = useState(addDaysIso(15));
   const [clientId, setClientId] = useState(0);
+  const [quickClientOpen, setQuickClientOpen] = useState(false);
+  const [quickClientName, setQuickClientName] = useState("");
+  const [quickClientPhone, setQuickClientPhone] = useState("");
+  const [quickClientConsent, setQuickClientConsent] = useState(false);
+  const quickClientMutation = trpc.clients.create.useMutation();
   const [artistId, setArtistId] = useState(user?.artistId || 0);
   const [editor, setEditor] = useState<QuoteEditorData>(() => buildEmptyQuoteEditorData());
   const [snapshot, setSnapshot] = useState<QuoteStoredPayload | null>(null);
@@ -265,6 +273,31 @@ export default function Quotes() {
 
   const artists = artistsQuery.data || [];
   const clients = clientsQuery.data || [];
+  const normalizedQuickPhone = parsePhoneNumberFromString(quickClientPhone, "BR");
+  const duplicateClient = normalizedQuickPhone?.isValid() ? clients.find(c => {
+    const phone = parsePhoneNumberFromString(c.phone || "", "BR");
+    return phone?.isValid() && phone.number === normalizedQuickPhone.number;
+  }) : undefined;
+
+  async function saveQuickClient(e: React.FormEvent) {
+    e.preventDefault();
+    if (quickClientMutation.isPending || quoteId) return;
+    if (!quickClientName.trim()) { toast.error("Informe o nome do cliente."); return; }
+    if (!normalizedQuickPhone?.isValid() || normalizedQuickPhone.country !== "BR") { toast.error("Informe um telefone brasileiro válido com DDD."); return; }
+    if (duplicateClient) { toast.error("Selecione o cadastro existente para evitar duplicidade."); return; }
+    try {
+      const saved = await quickClientMutation.mutateAsync({
+        name: quickClientName.trim(), phone: normalizedQuickPhone.number,
+        quickRegistration: true, recordWhatsAppConsent: quickClientConsent,
+      });
+      utils.clients.list.setData({}, previous => [saved, ...(previous || []).filter(c => c.id !== saved.id)]);
+      setClientId(saved.id); setClientFilter(""); setSnapshot(null);
+      setQuickClientOpen(false); setQuickClientName(""); setQuickClientPhone(""); setQuickClientConsent(false);
+      toast.success("Cliente criado e selecionado no orçamento.");
+      for (const warning of saved.warnings || []) toast.warning(warning);
+      void utils.clients.list.invalidate();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Não foi possível cadastrar o cliente."); }
+  }
 
   useEffect(() => {
     if (!artistId && artists.length) {
@@ -577,9 +610,21 @@ export default function Quotes() {
           <fieldset disabled={locked || saving || Boolean(uploadingSlot) || finalizeMutation.isPending} className="min-w-0 space-y-5 disabled:opacity-80">
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <h2 className="font-semibold">1. Cliente e identificação</h2>
+            <Dialog open={quickClientOpen} onOpenChange={open => { if (!quickClientMutation.isPending) setQuickClientOpen(open); }}>
+              <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md" onEscapeKeyDown={e => { if (quickClientMutation.isPending) e.preventDefault(); }} onInteractOutside={e => { if (quickClientMutation.isPending) e.preventDefault(); }}>
+                <DialogHeader><DialogTitle>Novo cliente</DialogTitle><DialogDescription>Cadastre com nome e telefone para continuar este orçamento.</DialogDescription></DialogHeader>
+                <form onSubmit={saveQuickClient} className="space-y-4">
+                  <div className="space-y-2"><Label htmlFor="quick-client-name">Nome *</Label><Input id="quick-client-name" autoFocus required maxLength={255} value={quickClientName} disabled={quickClientMutation.isPending} onChange={e => setQuickClientName(e.target.value)} placeholder="Primeiro nome ou nome completo" /></div>
+                  <div className="space-y-2"><Label htmlFor="quick-client-phone">Telefone / WhatsApp *</Label><Input id="quick-client-phone" type="tel" required value={quickClientPhone} disabled={quickClientMutation.isPending} onChange={e => setQuickClientPhone(e.target.value)} placeholder="(31) 99999-9999" /></div>
+                  {duplicateClient && <div className="rounded-lg border p-3 space-y-2"><p className="text-sm">Este telefone já está cadastrado para {duplicateClient.name}.</p><Button type="button" variant="outline" disabled={quickClientMutation.isPending} onClick={() => { setClientId(duplicateClient.id); setClientFilter(""); setSnapshot(null); setQuickClientConsent(false); setQuickClientOpen(false); }}>Selecionar cliente existente</Button></div>}
+                  {!duplicateClient && (user?.role === "admin" || user?.role === "superadmin") && <WhatsappConsentField checked={quickClientConsent} onChange={setQuickClientConsent} disabled={quickClientMutation.isPending} />}
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="outline" disabled={quickClientMutation.isPending} onClick={() => setQuickClientOpen(false)}>Cancelar</Button><Button type="submit" disabled={quickClientMutation.isPending || Boolean(duplicateClient)}>{quickClientMutation.isPending ? "Salvando…" : "Salvar e selecionar"}</Button></div>
+                </form>
+              </DialogContent>
+            </Dialog>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2 sm:col-span-2"><Label>Buscar cliente</Label><Input value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} disabled={Boolean(quoteId)} placeholder="Nome, telefone ou e-mail" />
-                <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={clientId || ""} disabled={Boolean(quoteId)} onChange={(e) => { setClientId(Number(e.target.value)); setSnapshot(null); }}><option value="">Selecione o cliente</option>{filteredClients.slice(0, 120).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+              <div className="space-y-2 sm:col-span-2"><div className="flex flex-wrap items-center justify-between gap-2"><Label>Buscar cliente</Label><Button type="button" size="sm" variant="outline" disabled={Boolean(quoteId) || quickClientMutation.isPending} onClick={() => setQuickClientOpen(true)}><Plus className="mr-2 h-4 w-4" />Novo cliente</Button></div><Input value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} disabled={Boolean(quoteId)} placeholder="Nome, telefone ou e-mail" />
+                <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={clientId || ""} disabled={Boolean(quoteId)} onChange={(e) => { setClientId(Number(e.target.value)); setSnapshot(null); }}><option value="">Selecione o cliente</option>{filteredClients.filter((c, index) => index < 120 || c.id === clientId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
               <div className="space-y-2"><Label>Artista</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={artistId || ""} disabled={Boolean(quoteId) || Boolean(user?.artistId)} onChange={(e) => { setArtistId(Number(e.target.value)); setSnapshot(null); brandingAppliedRef.current = null; }}><option value="">Selecione</option>{artists.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
                 {brandingQuery.data?.artistCardPath ? <Button asChild variant="outline" className="h-auto min-h-10 w-full whitespace-normal"><a href={brandingQuery.data.artistCardPath} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4 shrink-0" />Acessar cartão virtual do artista</a></Button> : <p className="text-xs text-muted-foreground">{!artistId ? "Selecione um artista para acessar o cartão virtual." : brandingQuery.isLoading ? "Consultando cartão virtual…" : brandingQuery.isError ? "Não foi possível consultar o cartão virtual." : "Este artista ainda não tem um cartão virtual publicado."}</p>}
               </div>

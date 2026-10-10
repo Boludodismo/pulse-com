@@ -45,7 +45,7 @@ import { buildLegacyAnamneseReviewPayload } from "./anamneseReview";
 import { saveWhatsappConsent } from "./messaging/consent";
 import { formatAppointmentConflictMessage } from "../shared/appointmentTime";
 
-async function recordAppointmentWhatsappConsent(input: { studioId: number; clientId: number }) {
+async function recordAppointmentWhatsappConsent(input: { studioId: number; clientId: number; source?: string }) {
   const connection = await db.getDb();
   if (!connection) return false;
 
@@ -60,7 +60,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
     )).limit(1))[0];
   if (!integration) return false;
 
-  await saveWhatsappConsent({studioId:input.studioId,integrationId:integration.id,clientId:client.id,enabled:true,source:'agendamento_confirmado'});
+  await saveWhatsappConsent({studioId:input.studioId,integrationId:integration.id,clientId:client.id,enabled:true,source:input.source ?? 'agendamento_confirmado'});
   return true;
 }
 
@@ -362,6 +362,8 @@ export const appRouter = router({
         name: z.string().min(1),
         email: z.string().email().optional().or(z.literal("")),
         phone: z.string().optional(),
+        recordWhatsAppConsent: z.boolean().optional(),
+        quickRegistration: z.boolean().optional(),
         birthDate: z.string().optional(),
         instagram: z.string().optional(),
         gender: z.enum(["Homem", "Mulher", "Outros"]).optional(),
@@ -388,6 +390,23 @@ export const appRouter = router({
             throw new TRPCError({ code: "FORBIDDEN", message: "Selecione a empresa antes de cadastrar o cliente." });
           }
           
+          if (input.recordWhatsAppConsent && ctx.user.role !== "admin" && ctx.user.role !== "superadmin") {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Apenas administradores podem registrar a autorização do WhatsApp." });
+          }
+          let normalizedPhone: string | null = null;
+          if (input.recordWhatsAppConsent || input.quickRegistration) {
+            try { normalizedPhone = normalizeBrazilianPhone(input.phone || ""); }
+            catch { throw new TRPCError({ code: "BAD_REQUEST", message: "Informe um telefone brasileiro válido com DDD." }); }
+          }
+          if (input.quickRegistration) {
+            const existing = await db.listClients(studioId);
+            const duplicate = existing.some(client => {
+              try { return normalizeBrazilianPhone(client.phone || "") === normalizedPhone; }
+              catch { return false; }
+            });
+            if (duplicate) throw new TRPCError({ code: "CONFLICT", message: "Já existe um cliente com este telefone neste estúdio. Selecione o cadastro existente." });
+          }
+
           const clientData = {
             studioId: studioId,
             artistId: ctx.user.artistId || null, // Vincular ao artista se for colaborador
@@ -442,7 +461,29 @@ export const appRouter = router({
             country: result.country,
           });
 
-          return result;
+          const warnings: string[] = [];
+          let whatsappConsentRecorded = false;
+          if (input.recordWhatsAppConsent) {
+            try {
+              whatsappConsentRecorded = await recordAppointmentWhatsappConsent({
+                studioId, clientId: result.id,
+                source: input.quickRegistration ? "cadastro_rapido_orcamento" : "cadastro_cliente",
+              });
+              if (!whatsappConsentRecorded) throw new Error("whatsapp_unavailable");
+              await db.createAuditLog({
+                userId: ctx.user.id, userName: ctx.user.name || "Usuário",
+                action: "update", entity: "client", entityId: result.id, entityName: result.name,
+                details: { action: "whatsapp_consent_granted", source: input.quickRegistration ? "cadastro_rapido_orcamento" : "cadastro_cliente" },
+                ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
+                userAgent: ctx.req.headers?.["user-agent"],
+              });
+            } catch {
+              warnings.push(whatsappConsentRecorded
+                ? "Cliente e autorização salvos. Não foi possível registrar a auditoria adicional."
+                : "Cliente salvo, mas a autorização do WhatsApp não foi registrada. Confira se há uma integração ativa no estúdio antes de enviar notificações.");
+            }
+          }
+          return { ...result, whatsappConsentRecorded, warnings };
         } catch (error) {
           console.error('[clients.create] Error creating client:', error);
           throw error;

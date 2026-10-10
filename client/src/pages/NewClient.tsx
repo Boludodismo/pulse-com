@@ -1,3 +1,5 @@
+import { useAuth } from "@/_core/hooks/useAuth";
+import WhatsappConsentField from "@/components/WhatsappConsentField";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useSyncToast } from "@/hooks/useSyncToast";
@@ -29,6 +31,8 @@ function parseDateToISO(masked: string): string {
 }
 
 export default function NewClient() {
+  const { user } = useAuth();
+  const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(false);
   const { notifySync } = useSyncToast();
   const [, setLocation] = useLocation();
   const [formData, setFormData] = useState({
@@ -77,6 +81,7 @@ export default function NewClient() {
   const createClient = trpc.clients.create.useMutation({
     onSuccess: async (newClient) => {
       toast.success("Cliente criado com sucesso!");
+      for (const warning of newClient.warnings || []) toast.warning(warning);
       notifySync("cliente");
       utils.clients.list.invalidate();
       
@@ -130,7 +135,8 @@ export default function NewClient() {
     }
 
     createClient.mutate({
-      name: formData.name,
+      recordWhatsAppConsent,
+      name: formData.name.trim(),
       email: formData.email || undefined,
       phone: formData.phone || undefined,
       birthDate: formData.birthDate ? parseDateToISO(formData.birthDate) : undefined,
@@ -238,12 +244,12 @@ export default function NewClient() {
               
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="name">Nome Completo *</Label>
+                  <Label htmlFor="name">Nome *</Label>
                   <Input
                     id="name"
                     value={formData.name}
                     onChange={(e) => handleChange("name", e.target.value)}
-                    placeholder="Digite o nome completo"
+                    placeholder="Primeiro nome ou nome completo"
                     required
                   />
                 </div>
@@ -310,6 +316,9 @@ export default function NewClient() {
                 </div>
               </div>
             </div>
+
+            {(user?.role === "admin" || user?.role === "superadmin") &&
+              <WhatsappConsentField checked={recordWhatsAppConsent} onChange={setRecordWhatsAppConsent} disabled={createClient.isPending} />}
 
             <Separator />
 
