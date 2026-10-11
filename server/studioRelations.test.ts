@@ -21,9 +21,9 @@ describe('Cartões e reposição',()=>{
  expect(()=>normalizeCardLinks([{label:'',url:'https://www.'}])).toThrow('endereço completo');
  });
  it('salva cartão com o nome da rede inferido do endereço',async()=>{
- const writes=database([[{id:6,studioId:10}]]);
+ const writes=database([[{id:6,studioId:10}],[{id:9,presentation:null}]]);
  await studioRelationsRouter.createCaller(ctx).saveCard({artistId:6,headline:'Teste',description:'',links:[{label:'',url:'https://www.instagram.com/artista'}],published:false});
- expect(JSON.parse(writes[0].links)).toEqual([{label:'Instagram',url:'https://www.instagram.com/artista'}]);
+ expect(JSON.parse(writes.at(-1).links)).toEqual([{label:'Instagram',url:'https://www.instagram.com/artista'}]);
  });
  it('permite primeiro upload criando apenas rascunho, sem publicar nem alterar textos existentes',async()=>{
  const writes=database([[{id:6,studioId:10}],[{id:9,images:'[]'}],[{id:9,images:'[]'}]]);

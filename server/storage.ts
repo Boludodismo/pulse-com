@@ -1,7 +1,12 @@
 // Storage helpers for Manus proxy and standalone S3-compatible providers.
 
 import { createHmac, timingSafeEqual, randomUUID } from "crypto";
-import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
 
@@ -15,14 +20,18 @@ function ensureSecretConfigured() {
 
 function storageToken(key: string): string {
   ensureSecretConfigured();
-  return createHmac("sha256", ENV.cookieSecret).update(normalizeKey(key)).digest("hex");
+  return createHmac("sha256", ENV.cookieSecret)
+    .update(normalizeKey(key))
+    .digest("hex");
 }
 
 export function verifyStorageAccessToken(key: string, token: string): boolean {
   if (!ENV.cookieSecret || !key || !token) return false;
   const expected = Buffer.from(storageToken(key), "utf8");
   const received = Buffer.from(token, "utf8");
-  return expected.length === received.length && timingSafeEqual(expected, received);
+  return (
+    expected.length === received.length && timingSafeEqual(expected, received)
+  );
 }
 
 function buildStableProxyUrl(key: string): string {
@@ -47,7 +56,12 @@ function getManusStorageConfig(): ManusStorageConfig {
 let s3Client: S3Client | null = null;
 
 function getS3Config() {
-  if (!ENV.s3Endpoint || !ENV.s3AccessKeyId || !ENV.s3SecretAccessKey || !ENV.s3Bucket) {
+  if (
+    !ENV.s3Endpoint ||
+    !ENV.s3AccessKeyId ||
+    !ENV.s3SecretAccessKey ||
+    !ENV.s3Bucket
+  ) {
     throw new Error(
       "S3 storage credentials missing: set AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_S3_BUCKET_NAME"
     );
@@ -90,7 +104,9 @@ async function buildManusDownloadUrl(
   });
   if (!response.ok) {
     const message = await response.text().catch(() => response.statusText);
-    throw new Error(`Storage download URL failed (${response.status}): ${message}`);
+    throw new Error(
+      `Storage download URL failed (${response.status}): ${message}`
+    );
   }
   return (await response.json()).url;
 }
@@ -169,7 +185,9 @@ export async function storagePut(
   return { key, url };
 }
 
-export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
+export async function storageGet(
+  relKey: string
+): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
 
   if (ENV.storageProvider === "disabled") {
@@ -213,17 +231,77 @@ export async function storageDelete(relKey: string): Promise<void> {
   throw new Error("Storage delete is not supported by the configured provider");
 }
 
+// Called only after a tenant/artist ownership check. No client-supplied URL is fetched.
+export async function storageReadBuffer(
+  relKey: string,
+  maxBytes: number
+): Promise<Buffer> {
+  const key = normalizeKey(relKey);
+  if (ENV.storageProvider === "s3") {
+    const { client, bucket } = getS3Config();
+    const response = await client.send(
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+      { abortSignal: AbortSignal.timeout(15000) }
+    );
+    if (!response.Body || (response.ContentLength ?? 0) > maxBytes)
+      throw new Error("Imagem indisponível ou maior que o limite.");
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const part of response.Body as AsyncIterable<Uint8Array>) {
+      size += part.length;
+      if (size > maxBytes) throw new Error("Imagem maior que o limite.");
+      chunks.push(Buffer.from(part));
+    }
+    return Buffer.concat(chunks);
+  }
+  const { url } = await storageGet(key);
+  if (!url) throw new Error("Imagem indisponível.");
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (
+    !response.ok ||
+    !response.body ||
+    Number(response.headers.get("content-length") || 0) > maxBytes
+  )
+    throw new Error("Imagem indisponível.");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > maxBytes) throw new Error("Imagem maior que o limite.");
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    await reader.cancel();
+  }
+  return Buffer.concat(chunks);
+}
+
 // Fail startup before receiving traffic if the dedicated bucket is misconfigured.
 export async function checkS3Storage(): Promise<void> {
-  if (ENV.storageProvider !== "s3") throw new Error("S3 is required for storage validation");
+  if (ENV.storageProvider !== "s3")
+    throw new Error("S3 is required for storage validation");
   ensureSecretConfigured();
   const { client, bucket } = getS3Config();
   const key = `_healthcheck/${randomUUID()}.txt`;
   const marker = `crm-storage-check:${randomUUID()}`;
-  await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: marker, ContentType: "text/plain" }));
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: marker,
+      ContentType: "text/plain",
+    })
+  );
   try {
-    const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    if (await result.Body?.transformToString() !== marker) throw new Error("S3 read verification failed");
+    const result = await client.send(
+      new GetObjectCommand({ Bucket: bucket, Key: key })
+    );
+    if ((await result.Body?.transformToString()) !== marker)
+      throw new Error("S3 read verification failed");
   } finally {
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   }
