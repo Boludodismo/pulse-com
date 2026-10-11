@@ -532,7 +532,7 @@ export default function ClientProfile() {
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Button
           variant="ghost"
           size="icon"
@@ -542,46 +542,46 @@ export default function ClientProfile() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl sm:text-3xl font-bold tracking-tight truncate">{client.name}</h1>
+          <h1 className="text-xl sm:text-3xl font-bold tracking-tight [overflow-wrap:anywhere]">{client.name}</h1>
         </div>
         <Badge variant="outline" className={`${getLoyaltyBadgeClass(client.loyaltyLevel)} text-xs sm:text-sm px-2 sm:px-4 py-1 sm:py-2 shrink-0`}>
           {client.loyaltyLevel}
         </Badge>
       </div>
 
-      <div className="flex justify-end gap-2"><ClientConsentButton clientId={clientId} name={client.name} /><EditClientDialog client={client} /></div>
+      <div className="flex flex-wrap justify-end gap-2 [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10"><ClientConsentButton clientId={clientId} name={client.name} /><EditClientDialog client={client} /></div>
 
       {/* Client Info */}
       <Card>
         <CardContent className="pt-6">
           <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0 [overflow-wrap:anywhere]">
               {client.email && (
-                <div className="flex items-center gap-2 text-sm">
+                <div className="flex items-start gap-2 text-sm min-w-0 [&_svg]:shrink-0 [&_span]:min-w-0">
                   <Mail className="h-4 w-4 text-muted-foreground" />
                   <span>{client.email}</span>
                 </div>
               )}
               {client.phone && (
-                <div className="flex items-center gap-2 text-sm">
+                <div className="flex items-start gap-2 text-sm min-w-0 [&_svg]:shrink-0 [&_span]:min-w-0">
                   <Phone className="h-4 w-4 text-muted-foreground" />
                   <span>{client.phone}</span>
                 </div>
               )}
               {client.instagram && (
-                <div className="flex items-center gap-2 text-sm">
+                <div className="flex items-start gap-2 text-sm min-w-0 [&_svg]:shrink-0 [&_span]:min-w-0">
                   <Instagram className="h-4 w-4 text-muted-foreground" />
                   <span>{client.instagram}</span>
                 </div>
               )}
               {client.birthDate && (
-                <div className="flex items-center gap-2 text-sm">
+                <div className="flex items-start gap-2 text-sm min-w-0 [&_svg]:shrink-0 [&_span]:min-w-0">
                   <Cake className="h-4 w-4 text-muted-foreground" />
                   <span>{String(client.birthDate).slice(0, 10).split('-').reverse().join('/')}</span>
                 </div>
               )}
               {client.docNumber && (
-                <div className="flex items-center gap-2 text-sm">
+                <div className="flex items-start gap-2 text-sm min-w-0 [&_svg]:shrink-0 [&_span]:min-w-0">
                   <CreditCard className="h-4 w-4 text-muted-foreground" />
                   <span className="text-muted-foreground text-xs">{client.docType === 'passport' ? 'Passaporte' : 'CPF / RG'}:</span>
                   <span>{client.docNumber}</span>
@@ -640,9 +640,9 @@ export default function ClientProfile() {
       {/* Tabs */}
       <ClientCare clientId={clientId} />
       <Tabs defaultValue={can("appointments")?"appointments":"gallery"} className="w-full">
-        <TabsList className="flex w-full bg-zinc-800 rounded-lg p-1 min-h-[44px] overflow-x-auto">
-          {can("quotes") && <TabsTrigger value="quotes" className="flex-1 min-w-fit text-xs sm:text-sm py-2">Orçamentos</TabsTrigger>}
-          {can("appointments") && <TabsTrigger value="appointments" className="flex-1 min-w-fit text-xs sm:text-sm py-2">
+        <TabsList className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] w-full h-auto bg-zinc-800 rounded-lg p-1 gap-1">
+          {can("quotes") && <TabsTrigger value="quotes" className="min-w-0 whitespace-normal h-auto min-h-11 text-xs sm:text-sm py-2">Orçamentos</TabsTrigger>}
+          {can("appointments") && <TabsTrigger value="appointments" className="min-w-0 whitespace-normal h-auto min-h-11 text-xs sm:text-sm py-2">
             <span className="hidden sm:inline">Agendamentos</span>
             <span className="sm:hidden text-[11px]">Agenda</span>
             {(appointments?.length ?? 0) > 0 && (
@@ -651,7 +651,7 @@ export default function ClientProfile() {
               </span>
             )}
           </TabsTrigger>}
-          {can("anamnesis") && <TabsTrigger value="anamnesis" className="flex-1 text-xs sm:text-sm py-2">
+          {can("anamnesis") && <TabsTrigger value="anamnesis" className="min-w-0 whitespace-normal h-auto min-h-11 text-xs sm:text-sm py-2">
             Anamnese
             {((anamneseSubmissions?.length ?? 0) + (anamnesis?.length ?? 0) + importedAnamneseCount) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
@@ -659,16 +659,15 @@ export default function ClientProfile() {
               </span>
             )}
           </TabsTrigger>}
-          {can("finance") && <TabsTrigger value="transactions" className="flex-1 text-xs sm:text-sm py-2">
-            <span className="hidden sm:inline">Financeiro</span>
-            <span className="sm:hidden">R$</span>
+          {can("finance") && <TabsTrigger value="transactions" className="min-w-0 whitespace-normal h-auto min-h-11 text-xs sm:text-sm py-2">
+            <span>Financeiro</span>
             {(transactions?.length ?? 0) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
                 {transactions!.length > 99 ? '99+' : transactions!.length}
               </span>
             )}
           </TabsTrigger>}
-          <TabsTrigger value="gallery" className="flex-1 text-xs sm:text-sm py-2">
+          <TabsTrigger value="gallery" className="min-w-0 whitespace-normal h-auto min-h-11 text-xs sm:text-sm py-2">
             Galeria
             {(gallery?.length ?? 0) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
@@ -676,7 +675,7 @@ export default function ClientProfile() {
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="notes" className="flex-1 text-xs sm:text-sm py-2">
+          <TabsTrigger value="notes" className="min-w-0 whitespace-normal h-auto min-h-11 text-xs sm:text-sm py-2">
             Notas
             {(notes?.length ?? 0) > 0 && (
               <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
@@ -684,7 +683,7 @@ export default function ClientProfile() {
               </span>
             )}
           </TabsTrigger>
-          {can("pod") && <TabsTrigger value="procedures" className="flex-1 text-xs sm:text-sm py-2">
+          {can("pod") && <TabsTrigger value="procedures" className="min-w-0 whitespace-normal h-auto min-h-11 text-xs sm:text-sm py-2">
             <span className="hidden sm:inline-flex items-center gap-1"><Stethoscope className="w-3 h-3" />Sessões e materiais</span>
             <span className="sm:hidden">Sessões</span>
           </TabsTrigger>}
@@ -762,12 +761,12 @@ export default function ClientProfile() {
           <ImportedClientRecords clientId={clientId} />
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
                   <CardTitle>Fichas de Anamnese</CardTitle>
                   <CardDescription>Histórico de fichas preenchidas</CardDescription>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 max-w-full [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10">
                   <Button onClick={() => setSendLinkDialogOpen(true)}>
                     <Mail className="h-4 w-4 mr-2" />
                     Enviar Link
@@ -970,7 +969,7 @@ export default function ClientProfile() {
                         return (
                         <Card key={`req-${req.id}`} className={`border ${isCompleted ? 'border-orange-500/20' : isExpired ? 'border-zinc-700/40' : 'border-yellow-500/20'}`}>
                           <CardContent className="pt-4">
-                            <div className="flex items-center justify-between mb-3">
+                            <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                               <div className="flex items-center gap-2 flex-wrap">
                                 {isCompleted && (
                                   <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/30 text-xs">Preenchida</Badge>
@@ -1031,8 +1030,8 @@ export default function ClientProfile() {
                     {anamnesis.map((record) => (
                       <Card key={record.id}>
                         <CardContent className="pt-6">
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3">
+                          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                            <div className="flex flex-wrap items-center gap-3">
                               <p className="text-sm text-muted-foreground">
                                 Preenchido em {formatDate(record.createdAt)}
                               </p>
