@@ -182,9 +182,9 @@ export default function RiskAlerts() {
                       "rgb(34, 197, 94)"
                   }}>
                     <CardContent className="pt-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-3">
+                      <div className="flex flex-col gap-3 lg:flex-row items-start justify-between mb-4">
+                        <div className="space-y-2 min-w-0">
+                          <div className="flex flex-wrap items-center gap-3">
                             <Badge
                               variant="outline"
                               className={getRiskBadgeClass(record.riskLevel)}
@@ -195,12 +195,12 @@ export default function RiskAlerts() {
                               Preenchido em {formatDate(record.createdAt)}
                             </span>
                           </div>
-                          <div className="flex items-center gap-2 text-sm">
+                          <div className="flex items-center gap-2 text-sm min-w-0 break-words">
                             <User className="h-4 w-4 text-muted-foreground" />
                             <span className="font-medium">{record.clientName}</span>
                           </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2 max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-9">
                           <Button
                             variant="outline"
                             size="sm"
@@ -229,16 +229,16 @@ export default function RiskAlerts() {
                             <AlertTriangle className="h-4 w-4" />
                             Fatores de Risco Identificados
                           </h4>
-                          <div className="space-y-2">
+                          <div className="space-y-2 min-w-0">
                             {riskFactors.map((factor: { category: string; description: string; severity: string }, index: number) => (
-                              <div key={index} className="flex flex-wrap items-start gap-2 text-sm">
+                              <div key={index} className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2 text-sm">
                                 <Badge variant="outline" className={getRiskBadgeClass(factor.severity)}>
                                   {factor.severity === "critical" ? "Crítico" : factor.severity === "high" ? "Alto" : factor.severity === "medium" ? "Médio" : "Baixo"}
                                 </Badge>
-                                <span className="font-medium text-muted-foreground min-w-[90px]">
+                                <span className="font-medium text-muted-foreground min-w-0 [overflow-wrap:anywhere]">
                                   {factor.category}:
                                 </span>
-                                <span className="min-w-0 flex-1">{factor.description}</span>
+                                <span className="col-span-2 min-w-0 [overflow-wrap:anywhere]">{factor.description}</span>
                               </div>
                             ))}
                           </div>

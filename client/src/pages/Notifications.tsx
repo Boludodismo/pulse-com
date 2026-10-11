@@ -281,7 +281,7 @@ export default function Notifications() {
         {/* Agendamentos Próximos — envio imediato */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex flex-wrap items-center gap-2">
               <Calendar className="h-5 w-5" />
               Agendamentos Próximos (24h)
             </CardTitle>
@@ -371,7 +371,7 @@ export default function Notifications() {
         {/* Lembretes Agendados — clicáveis para editar */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex flex-wrap items-center gap-2">
               <Bell className="h-5 w-5" />
               Lembretes Agendados
               {pendingReminders && pendingReminders.length > 0 && (
@@ -396,14 +396,14 @@ export default function Notifications() {
                 {pendingReminders.map((r: any, index: number) => (
                   <div key={r.id}>
                     <div
-                      className="flex items-start justify-between py-3 px-2 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
+                      className="flex flex-col gap-3 lg:flex-row items-start justify-between py-3 px-2 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
                       onClick={() => openEditReminder(r)}
                     >
-                      <div className="flex-1 space-y-1">
+                      <div className="flex-1 min-w-0 w-full break-words space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <User className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">{r.clientName || "Cliente"}</span>
-                          <Badge variant="secondary" className="text-xs">
+                          <Badge variant="secondary" className="text-xs max-w-full whitespace-normal">
                             <Clock className="mr-1 h-3 w-3" />
                             Enviar em {formatDateTime(r.scheduledAt)}
                           </Badge>
@@ -416,12 +416,12 @@ export default function Notifications() {
                           <div className="mt-1 line-clamp-2 text-xs opacity-70">{r.message}</div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 ml-3 shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 max-w-full lg:ml-3 lg:shrink-0">
                         {r.clientPhone && (
                           <Button
                             size="sm"
                             variant="outline"
-                            className="text-green-600 border-green-600 hover:bg-green-50"
+                            className="h-auto min-h-9 max-w-full whitespace-normal text-green-600 border-green-600 hover:bg-green-50"
                             disabled={sendPendingReminderNow.isPending}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -455,7 +455,7 @@ export default function Notifications() {
         {/* Histórico de Notificações */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex flex-wrap items-center gap-2">
               <CheckCircle className="h-5 w-5" />
               Histórico de Notificações
             </CardTitle>
@@ -477,7 +477,7 @@ export default function Notifications() {
                 {notificationLogs.map((log: any, index: number) => (
                   <div key={log.id}>
                     <div className="flex items-start justify-between py-3">
-                      <div className="flex-1 space-y-1">
+                      <div className="flex-1 min-w-0 w-full break-words space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium">{log.title}</span>
                           {getNotificationStatusBadge(log.status)}

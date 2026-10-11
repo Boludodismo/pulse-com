@@ -208,6 +208,7 @@ export default function WhatsappConsentPanel({
             <div className="flex flex-wrap gap-2 items-center">
               <Button
                 variant="outline"
+                className="h-auto min-h-10 max-w-full whitespace-normal"
                 disabled={running || !eligible.length}
                 onClick={() => setSelected(eligible.map(c => c.clientId))}
               >
@@ -233,11 +234,11 @@ export default function WhatsappConsentPanel({
           {filtered.slice(page * 100, page * 100 + 100).map(c => (
             <article
               key={c.clientId}
-              className="rounded border p-3 flex flex-wrap items-center gap-3"
+              className="rounded border p-3 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3"
             >
               {!clientId && manager && (
                 <input
-                  type="checkbox"
+                  className="mt-1 shrink-0" type="checkbox"
                   aria-label={`Selecionar ${c.clientName} #${c.clientId}`}
                   checked={selected.includes(c.clientId)}
                   disabled={running || !c.phone || consentActive(c)}
@@ -250,7 +251,7 @@ export default function WhatsappConsentPanel({
                   }
                 />
               )}
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 col-start-2 [overflow-wrap:anywhere]">
                 <p className="font-medium break-words">{c.clientName}</p>
                 <p className="text-sm text-muted-foreground">
                   {c.phone || "Sem telefone"} ·{" "}
@@ -271,12 +272,13 @@ export default function WhatsappConsentPanel({
                 )}
               </div>
               {errors[c.clientId] && (
-                <p role="alert" className="text-sm text-red-500">
+                <p role="alert" className="col-span-2 text-sm text-red-500 break-words">
                   {errors[c.clientId]}
                 </p>
               )}
               <Button
                 variant="outline"
+                className="col-span-2 h-auto min-h-10 w-full whitespace-normal lg:col-start-2 lg:col-span-1 lg:w-fit"
                 disabled={!manager || running || !c.phone}
                 onClick={() => void save([c.clientId], !consentActive(c))}
               >
