@@ -564,6 +564,8 @@ export const appRouter = router({
         date: z.string(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
         duration: z.number().min(1),
         service: z.string().min(1),
+        bodyRegion: z.string().trim().max(100).nullable().optional(),
+        bodySide: z.enum(["direito", "esquerdo", "ambos"]).nullable().optional(),
         artist: z.string().min(1),
         artistId: z.number().optional(), // FK opcional para artists.id
         includeArtistCard: z.boolean().optional(),
@@ -806,6 +808,8 @@ export const appRouter = router({
           date: z.string().optional(),  // YYYY-MM-DD HH:mm:ss (local, sem conversão)
           duration: z.number().min(1).optional(),
           service: z.string().min(1).optional(),
+          bodyRegion: z.string().trim().max(100).nullable().optional(),
+          bodySide: z.enum(["direito", "esquerdo", "ambos"]).nullable().optional(),
           artist: z.string().min(1).optional(),
           artistId: z.number().optional(), // FK opcional para artists.id
           includeArtistCard: z.boolean().optional(),

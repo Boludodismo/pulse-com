@@ -61,6 +61,8 @@ export function EventModal({
   const [endTime, setEndTime] = useState<string>("");
   const [sessionDuration, setSessionDuration] = useState<number>(60); // minutos
   const [service, setService] = useState<string>("");
+  const [bodyRegion, setBodyRegion] = useState("");
+  const [bodySide, setBodySide] = useState<"" | "direito" | "esquerdo" | "ambos">("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [artist, setArtist] = useState<string>("");
   const [artistId, setArtistId] = useState<string>("");
@@ -387,6 +389,8 @@ export function EventModal({
       
       setSessionDuration(existingEvent.duration);
       setService(existingEvent.service);
+      setBodyRegion(existingEvent.bodyRegion || "");
+      setBodySide(existingEvent.bodySide || "");
       setArtist(existingEvent.artist);
       const resolvedArtistId = (existingEvent as any).artistId ?? artists.find((item) => item.name === existingEvent.artist)?.id;
       setArtistId(resolvedArtistId ? String(resolvedArtistId) : "");
@@ -438,6 +442,8 @@ export function EventModal({
     setEndTime("");
     setSessionDuration(60);
     setService("");
+    setBodyRegion("");
+    setBodySide("");
     setArtist("");
     setArtistId("");
     setIncludeArtistCard(false);
@@ -640,6 +646,8 @@ export function EventModal({
       calendarId: calendarId ? parseInt(calendarId) : undefined,
       date: eventDateTime,  // String local: YYYY-MM-DD HH:mm:ss
       service,
+      bodyRegion: bodyRegion.trim() || null,
+      bodySide: bodySide || null,
       artist,
       artistId: artistId ? Number(artistId) : undefined,
       includeArtistCard,
@@ -675,6 +683,8 @@ export function EventModal({
         calendarId: calendarId ? Number(calendarId) : null,
         date: eventDateTime,  // String local: YYYY-MM-DD HH:mm:ss
         service,
+        bodyRegion: bodyRegion.trim() || null,
+        bodySide: bodySide || null,
         artist,
         artistId: artistId ? Number(artistId) : undefined,
         includeArtistCard,
@@ -1042,6 +1052,25 @@ export function EventModal({
               onChange={(e) => setService(e.target.value)}
               placeholder="Ex: Tatuagem, Piercing, Consulta"
             />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="body-region">Região do corpo (opcional)</Label>
+              <Input id="body-region" value={bodyRegion} onChange={e => setBodyRegion(e.target.value)} maxLength={100} placeholder="Ex: antebraço, peito, canela" />
+            </div>
+            <div>
+              <Label htmlFor="body-side">Lado do corpo (opcional)</Label>
+              <Select value={bodySide || "nao_informado"} onValueChange={value => setBodySide(value === "nao_informado" ? "" : value as "direito" | "esquerdo" | "ambos")}>
+                <SelectTrigger id="body-side"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nao_informado">Não informado</SelectItem>
+                  <SelectItem value="direito">Direito</SelectItem>
+                  <SelectItem value="esquerdo">Esquerdo</SelectItem>
+                  <SelectItem value="ambos">Ambos</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {/* Tipo de Procedimento para Anamnese */}

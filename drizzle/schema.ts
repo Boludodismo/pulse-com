@@ -57,6 +57,8 @@ export const appointments = mysqlTable("appointments", {
 	date: datetime({ mode: 'string' }).notNull(),
 	duration: int().notNull(),
 	service: varchar({ length: 255 }).notNull(),
+	bodyRegion: varchar({ length: 100 }),
+	bodySide: mysqlEnum(['direito','esquerdo','ambos']),
 	artist: varchar({ length: 255 }).notNull(),
 	artistId: int(), // FK opcional para artists.id — permite joins confiáveis por artista
 	includeArtistCard: tinyint().default(0).notNull(),
