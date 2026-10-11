@@ -803,17 +803,17 @@ export default function Schedule() {
                       ${draggedAppointment?.id === apt.id ? "opacity-40" : ""}
                     `}
                     style={{ ...style, backgroundColor: color, borderLeft: `3px solid ${color}` }}
-                    title={`${formatTime(apt.date)} — ${getClientName(apt.clientId)} — ${apt.service} (${apt.duration}min)`}
+                    title={`${getClientName(apt.clientId)} — ${formatTime(apt.date)} — ${apt.service} (${apt.duration}min)`}
                     >
                       <div className="font-semibold truncate flex items-center gap-1">
                         <span className="h-1.5 w-1.5 rounded-full shrink-0 border border-white/80" style={{ backgroundColor: statusIndicator.color }} title={statusIndicator.label} aria-label={statusIndicator.label} />
                         {podLinkedMap?.[apt.id] && <Stethoscope className="w-3 h-3 shrink-0 opacity-90" />}
                         {reminder && <BellRing className="w-3 h-3 shrink-0 opacity-90" aria-label="Lembrete enviado" />}
                         {attention && <AlertCircle className="w-3 h-3 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
-                        {formatTime(apt.date)}
+                        <span className="truncate">{getClientName(apt.clientId)}</span>
                     </div>
-                    <div className="truncate opacity-90">{getClientName(apt.clientId)}</div>
-                    <div className="truncate opacity-75 text-[10px]">{apt.service}</div>
+                    <div className="truncate opacity-90 mt-1">{formatTime(apt.date)}</div>
+                    <div className="truncate opacity-75 text-[10px] mt-1">{apt.service}</div>
                   </div>
                 );
               })}
@@ -867,15 +867,16 @@ export default function Schedule() {
                         onClick={(e) => handleAppointmentClick(apt, e)}
                         className={`text-xs px-1 py-0.5 rounded truncate cursor-grab active:cursor-grabbing text-white hover:opacity-80 transition-opacity ${draggedAppointment?.id === apt.id ? "opacity-40 scale-95" : ""}`}
                         style={{ backgroundColor: color }}
-                        title={`${formatTime(apt.date)} — ${getClientName(apt.clientId)} — ${apt.service}`}
+                        title={`${getClientName(apt.clientId)} — ${formatTime(apt.date)} — ${apt.service}`}
                       >
                           <span className="flex items-center gap-1">
                             <span className="h-1.5 w-1.5 rounded-full shrink-0 border border-white/80" style={{ backgroundColor: statusIndicator.color }} title={statusIndicator.label} aria-label={statusIndicator.label} />
                             {podLinkedMap?.[apt.id] && <Stethoscope className="w-2.5 h-2.5 shrink-0 opacity-90" />}
                             {reminder && <BellRing className="w-2.5 h-2.5 shrink-0 opacity-90" aria-label="Lembrete enviado" />}
                             {attention && <AlertCircle className="w-2.5 h-2.5 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
-                            {formatTime(apt.date)} {getClientName(apt.clientId)}
+                            <span className="truncate">{getClientName(apt.clientId)}</span>
                         </span>
+                        <span className="block mt-1 truncate text-[10px] opacity-90">{formatTime(apt.date)} · {apt.service}</span>
                       </div>
                     );
                   })}
