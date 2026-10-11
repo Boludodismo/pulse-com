@@ -17,7 +17,7 @@ vi.mock("./messaging/providers/botconversa", () => ({
   },
 }));
 import { processPendingIntegrationJobs, sendAndLog } from "./messaging/service";
-function database(name: string | null = "Maria Fernanda Souza") {
+function database(name: string | null = "Maria Fernanda Souza", message = "Bom dia, {primeiro_nome}!", recipientType: "client" | "artist" = "client") {
   const writes: any[] = [],
     filters: any[] = [];
   const integration = {
@@ -34,7 +34,8 @@ function database(name: string | null = "Maria Fernanda Souza") {
     messageQueueId: 50,
     recipientPhone: "+5531996531316",
     recipientName: "Nome antigo",
-    message: "Bom dia, {primeiro_nome}!",
+    message,
+    recipientType,
   };
   const job = {
     id: 30,
@@ -140,4 +141,17 @@ describe("personalização antes da entrega", () => {
     );
     expect(mocks.send).not.toHaveBeenCalled();
   });
+  it("corrige o nome completo já preenchido em mensagens pendentes", async () => {
+    const d = database("Maria Fernanda Souza", "Boa tarde, Maria Fernanda Souza! Sua sessão está confirmada.");
+    expect((await processPendingIntegrationJobs()).completed).toBe(1);
+    expect(mocks.send).toHaveBeenCalledWith("+5531996531316", "Boa tarde, Maria! Sua sessão está confirmada.");
+    expect(d.writes.find(w => w.table === "message_queue").values.message).toContain("Boa tarde, Maria!");
+  });
+
+  it("preserva o nome completo nos avisos internos ao artista", async () => {
+    const d = database("Maria Fernanda Souza");
+    await sendAndLog({studioId:7,integrationId:9,clientId:23,recipientType:"artist",recipientPhone:"+5531996531316",message:"Cliente: Maria Fernanda Souza"});
+    expect(d.writes.find(w => w.table === "message_queue").values.message).toBe("Cliente: Maria Fernanda Souza");
+  });
+
 });

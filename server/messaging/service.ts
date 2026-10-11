@@ -16,7 +16,7 @@ import { MetaProvider } from "./providers/meta";
 import { decryptIntegrationSecret, encryptIntegrationSecret, hashIntegrationPayload } from "./crypto";
 import { normalizeBrazilianPhone } from "./phone";
 import { formatAppointmentActionLinks, type AppointmentActionLinks } from "../appointmentActions";
-import { removeLegacyNumericReplyInstruction } from "./messagePresentation";
+import { firstName, useClientFirstName, removeLegacyNumericReplyInstruction } from "./messagePresentation";
 import { quoteIdFromTrigger, quoteDeliveryError, recordDeliveredQuote, reconcileDeliveredQuotes } from "../quoteDelivery";
 
 /** Instancia o provedor correto com base na configuração salva */
@@ -168,10 +168,10 @@ export async function sendAndLog(params: {
 
   const studioId = (params.studioId ?? integration.studioId) as number;
   try {
-    if(hasClientNamePlaceholder(params.message)) {
+    if(hasClientNamePlaceholder(params.message) || (params.recipientType === "client" && params.clientId)) {
       if(!params.clientId) return {success:false,error:'Identifique o cliente antes de enviar uma mensagem com o nome dele.'};
       const [client]=await db.select({name:clients.name}).from(clients).where(and(eq(clients.id,params.clientId),eq(clients.studioId,studioId),eq(clients.isArchived,0))).limit(1);
-      params.message=personalizeClientPlaceholders(params.message,client?.name);
+      params.message=params.recipientType === "client" ? useClientFirstName(params.message,client?.name) : personalizeClientPlaceholders(params.message,client?.name);
     }
     return await db.transaction(async (tx) => {
       // A verificação e a escrita ocorrem na mesma transação. A restrição única
@@ -345,10 +345,10 @@ export async function processPendingIntegrationJobs(limit = 10) {
       }
       // Also repair unresolved name tokens in messages queued before this release.
       // Resolve by the actual client id and tenant, never by a shared telephone.
-      if(hasClientNamePlaceholder(payload.message)) {
+      if(hasClientNamePlaceholder(payload.message) || (payload.recipientType !== "artist" && payload.clientId)) {
         if(!payload.clientId)throw new PermanentDeliveryError('Mensagem sem cliente identificado para preencher o nome.');
         const [client]=await db.select({name:clients.name}).from(clients).where(and(eq(clients.id,payload.clientId),eq(clients.studioId,job.studioId),eq(clients.isArchived,0))).limit(1);
-        try{payload.message=personalizeClientPlaceholders(payload.message,client?.name);}catch(error){throw new PermanentDeliveryError(error instanceof Error?error.message:'Nome do cliente indisponível.');}
+        try{payload.message=payload.recipientType === "artist" ? personalizeClientPlaceholders(payload.message,client?.name) : useClientFirstName(payload.message,client?.name);}catch(error){throw new PermanentDeliveryError(error instanceof Error?error.message:'Nome do cliente indisponível.');}
         await db.update(integrationJobs).set({payload:JSON.stringify(payload)}).where(and(eq(integrationJobs.id,job.id),eq(integrationJobs.studioId,job.studioId)));
         if(payload.messageQueueId)await db.update(messageQueue).set({message:payload.message}).where(and(eq(messageQueue.id,payload.messageQueueId),eq(messageQueue.studioId,job.studioId)));
       }
@@ -457,7 +457,9 @@ export async function dispatchTemplateMessage(params: {
   }
   const cleanedTemplate = removeLegacyNumericReplyInstruction(template);
   params.vars = {...params.vars, link_cartao_artista: cardLink};
-  const interpolated = interpolateTemplate(cleanedTemplate, params.vars);
+  const interpolated = interpolateTemplate(cleanedTemplate, params.recipientType === "client"
+    ? { ...params.vars, nome_cliente: firstName(params.vars.nome_cliente || params.recipientName) }
+    : params.vars);
   const links = params.vars.__appointment_action_links as unknown as AppointmentActionLinks | undefined;
   const actionPlaceholders: Array<[keyof AppointmentActionLinks, string]> = [
     ["confirmed", "{link_confirmacao}"],

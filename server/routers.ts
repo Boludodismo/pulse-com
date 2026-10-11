@@ -1211,7 +1211,7 @@ export const appRouter = router({
         const { artistCardLink } = await import("./messaging/studioRelations");
         const cardLink = await artistCardLink(appointment.studioId, appointment.id);
         const whatsappMessage = encodeURIComponent(
-          `Olá ${client.name}! 🎨\n\n` +
+          `Olá ${firstName(client.name)}! 🎨\n\n` +
           `Seu agendamento está confirmado:\n` +
           `• Serviço: ${appointment.service}\n` +
           `• Artista: ${appointment.artist}\n` +

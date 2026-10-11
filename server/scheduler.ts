@@ -1,3 +1,4 @@
+import { firstName } from "./messaging/messagePresentation";
 import {runProcurementCycle} from './messaging/studioRelations';
 import { runCustomerCareCycle } from "./messaging/customerCare";
 /**
@@ -77,7 +78,7 @@ function buildWhatsAppMessage(
   const timeStr = date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
   return (
-    `Olá ${apt.clientName || "cliente"}! 👋\n\n` +
+    `Olá ${firstName(apt.clientName)}! 👋\n\n` +
     `Lembramos que você tem um agendamento:\n` +
     `📅 ${dateStr} às ${timeStr}\n` +
     `✏️ ${apt.service} com ${apt.artist}\n\n` +

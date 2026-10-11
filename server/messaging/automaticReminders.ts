@@ -301,7 +301,7 @@ export async function runAutomaticMessageCycle() {
               clientId: appointment.clientId,
               appointmentId: appointment.id,
               trigger: "appointment_reminder_1h_client",
-              message: `Olá, ${appointment.clientName ?? "cliente"}! ⏰ Seu horário com ${appointment.artist} começa em aproximadamente 1 hora, às ${when.time}. Te esperamos!`,
+              message: `Olá, ${firstName(appointment.clientName)}! ⏰ Seu horário com ${appointment.artist} começa em aproximadamente 1 hora, às ${when.time}. Te esperamos!`,
               idempotencyKey: clientKey,
             });
             if (clientDispatch.success && clientDispatch.queued) result.oneHourClientQueued += 1;
