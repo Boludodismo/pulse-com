@@ -184,7 +184,22 @@ export default function ArtistCardEditor({
     links: [] as { label: string; url: string }[],
     presentation: emptyTexts(),
   });
-  const [contact, setContact] = useState({ phone: "", email: "" });
+  const emptyContact = {
+    phone: "",
+    email: "",
+    studioPhone: "",
+    studioName: "",
+    address: "",
+    city: "",
+    state: "",
+    zipCode: "",
+    country: "",
+  };
+  const [contact, setContact] = useState(emptyContact);
+  const contactSources = trpc.studioRelations.cardContactSources.useQuery(
+    { artistId },
+    { enabled: open }
+  );
   const [editing, setEditing] = useState<{
     slot: Slot | "work";
     image: string;
@@ -208,7 +223,7 @@ export default function ArtistCardEditor({
     if (query.isLoading || query.error || initialized.current) return;
     initialized.current = true;
     const card = query.data;
-    setContact(card?.presentation?.contact ?? { phone: "", email: "" });
+    setContact({ ...emptyContact, ...card?.presentation?.contact });
     const presentation = emptyTexts();
     for (const [key] of fields)
       presentation[key] = card?.presentation?.[key] ?? "";
@@ -593,6 +608,53 @@ export default function ArtistCardEditor({
                     salvar no celular. Nenhum dado privado da sua conta será
                     incluído automaticamente.
                   </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!contactSources.data?.artistPhone}
+                      onClick={() =>
+                        setContact({
+                          ...contact,
+                          phone: contactSources.data!.artistPhone,
+                        })
+                      }
+                    >
+                      Usar telefone cadastrado do artista
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={
+                        !contactSources.data ||
+                        !Object.values(contactSources.data.studio).some(Boolean)
+                      }
+                      onClick={() => {
+                        const s = contactSources.data!.studio;
+                        setContact({
+                          ...contact,
+                          studioPhone: s.phone,
+                          studioName: s.studioName,
+                          address: s.address,
+                          city: s.city,
+                          state: s.state,
+                          zipCode: s.zipCode,
+                        });
+                      }}
+                    >
+                      Usar dados cadastrados do estúdio
+                    </Button>
+                  </div>
+                  {contactSources.error && (
+                    <p className="text-sm text-muted-foreground">
+                      Não foi possível consultar o cadastro. Você pode preencher
+                      os dados abaixo.
+                    </p>
+                  )}
+                  <p className="text-sm text-muted-foreground">
+                    Confira os dados antes de salvar. Eles serão incluídos no
+                    cartão público e no contato baixado.
+                  </p>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="text-sm">
                       Telefone público
@@ -617,6 +679,35 @@ export default function ArtistCardEditor({
                         }
                       />
                     </label>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {(
+                      [
+                        ["studioPhone", "Telefone público do estúdio", 40],
+                        ["studioName", "Nome público do estúdio", 255],
+                        [
+                          "address",
+                          "Endereço público (rua, número e complemento)",
+                          500,
+                        ],
+                        ["city", "Cidade", 100],
+                        ["state", "Estado", 50],
+                        ["zipCode", "CEP", 20],
+                        ["country", "País", 100],
+                      ] as const
+                    ).map(([key, label, max]) => (
+                      <label className="text-sm" key={key}>
+                        {label}
+                        <Input
+                          type={key === "studioPhone" ? "tel" : "text"}
+                          maxLength={max}
+                          value={contact[key]}
+                          onChange={e =>
+                            setContact({ ...contact, [key]: e.target.value })
+                          }
+                        />
+                      </label>
+                    ))}
                   </div>
                 </fieldset>
                 <label className="flex items-start gap-2 text-sm">

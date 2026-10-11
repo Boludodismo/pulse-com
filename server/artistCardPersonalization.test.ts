@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import sharp from "sharp";
+import express from "express";
+import { ENV } from "./_core/env";
+import {
+  registerArtistContactDownload,
+  artistContactFile,
+} from "./artistCardContactFile";
 import {
   cardImageEditSchema,
   pixelCrop,
@@ -7,6 +13,7 @@ import {
 } from "../shared/artistCardImage";
 import { buildArtistVCard } from "../shared/artistCardContact";
 import {
+  cardContactSchema,
   parsePresentation,
   toPublicPresentation,
 } from "../shared/artistCardPresentation";
@@ -338,6 +345,76 @@ describe("acesso privado e conteúdo público", () => {
         .publicCard({ token: "a".repeat(48) })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
+  it("consulta somente as fontes do próprio artista e estúdio sem divulgar outros campos", async () => {
+    database([
+      [
+        {
+          id: 6,
+          studioId: 10,
+          phone: "31999999999",
+          email: "privado@example.test",
+        },
+      ],
+      [
+        {
+          studioName: "Estúdio",
+          phone: "3133334444",
+          address: "Rua A, 12",
+          city: "Curvelo",
+          state: "MG",
+          zipCode: "35790000",
+          secret: "não exportar",
+        },
+      ],
+      [{ studioName: "Nome antigo", phone: "3133335555" }],
+    ]);
+    const result = await cardRouter
+      .createCaller(ctx)
+      .cardContactSources({ artistId: 6 });
+    expect(result).toEqual({
+      artistPhone: "31999999999",
+      studio: {
+        studioName: "Estúdio",
+        phone: "3133334444",
+        address: "Rua A, 12",
+        city: "Curvelo",
+        state: "MG",
+        zipCode: "35790000",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("privado@example.test");
+    database([[{ id: 7, studioId: 10 }]]);
+    await expect(
+      cardRouter
+        .createCaller({
+          ...ctx,
+          user: { ...ctx.user, role: "collaborator" },
+          artistId: 6,
+        } as any)
+        .cardContactSources({ artistId: 7 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(invitedRoutePermission("studioRelations.cardContactSources")).toBe(
+      "self"
+    );
+  });
+  it("preserva contatos antigos e valida telefone e endereço públicos novos", () => {
+    expect(cardContactSchema.parse(presentation.contact)).toEqual(
+      presentation.contact
+    );
+    const c = cardContactSchema.parse({
+      ...presentation.contact,
+      studioPhone: "(31) 3333-4444",
+      address: "Rua A, 12",
+      city: "Curvelo",
+    });
+    expect(c.studioPhone).toBe("+553133334444");
+    expect(
+      cardContactSchema.safeParse({ ...c, studioPhone: "123" }).success
+    ).toBe(false);
+    expect(
+      cardContactSchema.safeParse({ ...c, address: "x".repeat(501) }).success
+    ).toBe(false);
+  });
   it("inclui apenas contato escolhido e remove fontes e recortes da projeção pública", () => {
     const stored = {
       ...presentation,
@@ -388,10 +465,42 @@ describe("contato compatível com importação em celular", () => {
   it("inclui nome, contatos, cartão e links com CRLF", () => {
     const v = buildArtistVCard(card, url);
     expect(v).toContain("BEGIN:VCARD\r\nVERSION:3.0\r\n");
-    expect(v).toContain("TEL;TYPE=CELL:31999999999");
+    expect(v).toContain("TEL;TYPE=CELL:+5531999999999");
     expect(v).toContain("EMAIL;TYPE=INTERNET:contato@example.com");
     expect(v.replace(/\r\n /g, "")).toContain("https://instagram.com/exemplo");
     expect(v).toContain("FN:João Artista");
+  });
+  it("exporta endereço estruturado, estúdio, dois telefones e todas as redes sociais", () => {
+    const v = buildArtistVCard(
+      {
+        ...card,
+        presentation: {
+          contact: {
+            ...card.presentation.contact,
+            phone: "+5531999999999",
+            studioPhone: "+553133334444",
+            studioName: "Estúdio; Cunha",
+            address: "Rua A, 12; sala 3",
+            city: "Curvelo",
+            state: "MG",
+            zipCode: "35790-000",
+            country: "Brasil",
+          },
+        },
+        links: [...card.links, { label: "Site", url: "https://example.com" }],
+      },
+      url
+    ).replace(/\r\n /g, "");
+    expect(v).toContain("TEL;TYPE=CELL:+5531999999999");
+    expect(v).toContain("TEL;TYPE=WORK,VOICE:+553133334444");
+    expect(v).toContain("ORG:Estúdio\\; Cunha");
+    expect(v).toContain(
+      "ADR;TYPE=WORK:;;Rua A\\, 12\\; sala 3;Curvelo;MG;35790-000;Brasil"
+    );
+    expect(v).toContain(
+      "Instagram: https://instagram.com/exemplo\\nSite: https://example.com"
+    );
+    expect(v).toContain("URL:https://example.com");
   });
   it("escapa quebra de linha e mantém caracteres UTF-8 ao dobrar linhas", () => {
     const v = buildArtistVCard(
@@ -402,6 +511,20 @@ describe("contato compatível com importação em celular", () => {
     for (const line of v.split("\r\n"))
       expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
     expect(v.replace(/\r\n /g, "")).toContain("Á".repeat(100));
+  });
+  it("preserva pontuação de URLs sem permitir injeção de propriedades", () => {
+    const v = buildArtistVCard(
+      {
+        ...card,
+        links: [
+          { label: "Site", url: "https://example.com/a;b,c?x=1" },
+          { label: "Teste", url: "https://example.com/\nTEL:injetado" },
+        ],
+      },
+      url
+    );
+    expect(v).toContain("URL:https://example.com/a;b,c?x=1");
+    expect(v).not.toContain("\r\nTEL:injetado");
   });
   it("permite HTTP apenas no desenvolvimento local, sem credenciais", () => {
     expect(
@@ -414,10 +537,101 @@ describe("contato compatível com importação em celular", () => {
       buildArtistVCard(card, "http://user:pass@localhost/artista/teste")
     ).toThrow();
   });
-  it("gera contato compacto para QR sem links excessivos nem dados privados", () => {
+  it("inclui todos os links no QR de contato sem observações duplicadas", () => {
     const v = buildArtistVCard(card, url, true);
-    expect(v).not.toContain("instagram.com");
+    expect(v).toContain("instagram.com");
+    expect(v).not.toContain("NOTE:");
     expect(v).toContain("contato@example.com");
     expect(() => buildArtistVCard(card, "javascript:alert(1)")).toThrow();
+  });
+});
+
+describe("download nativo do contato público", () => {
+  const publicRow = {
+    ...row,
+    artistId: 6,
+    studioId: 10,
+    name: "João Artista",
+    photo: null,
+    photoKey: "artists/10/avatars/photo.jpg",
+  };
+  it("responde com vCard, foto incorporada e campos rotulados em HTTP", async () => {
+    const prior = ENV.appBaseUrl;
+    ENV.appBaseUrl = "https://crm.tatuei.com";
+    database([[publicRow]]);
+    const picture = await sharp({
+      create: { width: 600, height: 800, channels: 3, background: "red" },
+    })
+      .jpeg()
+      .toBuffer();
+    mocks.storageReadBuffer.mockResolvedValue(picture);
+    const app = express();
+    registerArtistContactDownload(app);
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>(r => server.once("listening", r));
+      const addr = server.address() as any;
+      const response = await fetch(
+        `http://127.0.0.1:${addr.port}/api/artist-card/${"a".repeat(48)}/contact.vcf`
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/vcard");
+      expect(response.headers.get("content-disposition")).toBe(
+        'inline; filename="Joao-Artista.vcf"'
+      );
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const v = (await response.text()).replace(/\r\n /g, "");
+      expect(v).toContain("item1.X-ABLabel:Meu perfil digital");
+      expect(v).toContain("item2.URL:https://wa.me/5531999999999");
+      expect(v).toContain("item2.X-ABLabel:WhatsApp");
+      const photo = v.match(/PHOTO;ENCODING=b;TYPE=JPEG:([^\r\n]+)/)![1];
+      const meta = await sharp(Buffer.from(photo, "base64")).metadata();
+      expect([meta.width, meta.height]).toEqual([240, 320]);
+      expect(mocks.storageReadBuffer).toHaveBeenCalledWith(
+        publicRow.photoKey,
+        5 * 1024 * 1024
+      );
+    } finally {
+      ENV.appBaseUrl = prior;
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+  it("nega cartões não publicados e tokens inválidos antes de ler fotos", async () => {
+    database([[]]);
+    await expect(artistContactFile("a".repeat(48))).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await expect(artistContactFile("invalid")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(mocks.storageReadBuffer).not.toHaveBeenCalled();
+  });
+  it("não busca foto de outro estúdio e preserva o contato quando a foto é indisponível", async () => {
+    const prior = ENV.appBaseUrl;
+    ENV.appBaseUrl = "https://crm.tatuei.com";
+    try {
+      database([
+        [
+          {
+            ...publicRow,
+            photoKey: "artists/99/avatars/private.jpg",
+            presentation: JSON.stringify({ ...presentation, cover: null }),
+          },
+        ],
+      ]);
+      expect((await artistContactFile("a".repeat(48))).body).not.toContain(
+        "PHOTO;"
+      );
+      expect(mocks.storageReadBuffer).not.toHaveBeenCalled();
+      database([[publicRow]]);
+      mocks.storageReadBuffer.mockRejectedValue(
+        new Error("storage unavailable")
+      );
+      const file = await artistContactFile("a".repeat(48));
+      expect(file.body).toContain("TEL;TYPE=CELL:+5531999999999");
+      expect(file.body).not.toContain("PHOTO;");
+    } finally {
+      ENV.appBaseUrl = prior;
+    }
   });
 });

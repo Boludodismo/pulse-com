@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { randomBytes, randomUUID } from "node:crypto";
 import { tenantProcedure, publicProcedure } from "../_core/trpc";
 import { getDb } from "../db";
-import { artists } from "../../drizzle/schema";
+import { artists, studioSettings, studios } from "../../drizzle/schema";
 import { artistCards } from "../../drizzle/studioRelationsSchema";
 import { avatarSchema, decodeAvatar } from "../artistAvatar";
 import { storagePut } from "../storage";
@@ -216,6 +216,52 @@ function extension(mime: string) {
 
 /** Card-only procedures. No appointment, messaging or supplier behavior is changed. */
 export const artistCardEditorialProcedures = {
+  cardContactSources: tenantProcedure
+    .input(z.object({ artistId: artistIdSchema }))
+    .query(async ({ ctx, input }) => {
+      const artist = await artistAccess(ctx, input.artistId);
+      const db = await database();
+      const fields = {
+        studioName: studioSettings.studioName,
+        phone: studioSettings.phone,
+        address: studioSettings.address,
+        city: studioSettings.city,
+        state: studioSettings.state,
+        zipCode: studioSettings.zipCode,
+      };
+      const settings = (
+        await db
+          .select(fields)
+          .from(studioSettings)
+          .where(eq(studioSettings.studioId, ctx.studioId))
+          .limit(1)
+      )[0];
+      const studio = (
+        await db
+          .select({
+            studioName: studios.name,
+            phone: studios.phone,
+            address: studios.address,
+            city: studios.city,
+            state: studios.state,
+            zipCode: studios.zipCode,
+          })
+          .from(studios)
+          .where(eq(studios.id, ctx.studioId))
+          .limit(1)
+      )[0];
+      return {
+        artistPhone: artist.phone ?? "",
+        studio: {
+          studioName: settings?.studioName || studio?.studioName || "",
+          phone: settings?.phone || studio?.phone || "",
+          address: settings?.address || studio?.address || "",
+          city: settings?.city || studio?.city || "",
+          state: settings?.state || studio?.state || "",
+          zipCode: settings?.zipCode || studio?.zipCode || "",
+        },
+      };
+    }),
   card: tenantProcedure
     .input(z.object({ artistId: artistIdSchema }))
     .query(async ({ ctx, input }) => {
@@ -562,40 +608,49 @@ export const artistCardEditorialProcedures = {
   publicCard: publicProcedure
     .input(z.object({ token: z.string().regex(/^[a-f0-9]{48}$/) }))
     .query(async ({ input }) => {
-      const db = await database();
-      const row = (
-        await db
-          .select({
-            name: artists.name,
-            photo: artists.photoUrl,
-            headline: artistCards.headline,
-            description: artistCards.description,
-            links: artistCards.links,
-            images: artistCards.images,
-            presentation: artistCards.presentation,
-          })
-          .from(artistCards)
-          .innerJoin(
-            artists,
-            and(
-              eq(artists.id, artistCards.artistId),
-              eq(artists.studioId, artistCards.studioId),
-              eq(artists.active, 1)
-            )
-          )
-          .where(
-            and(
-              eq(artistCards.token, input.token),
-              eq(artistCards.published, 1)
-            )
-          )
-          .limit(1)
-      )[0];
-      if (!row)
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Cartão não publicado.",
-        });
+      const row = await findPublishedArtistCard(input.token);
       return projectPublicCard(row);
     }),
 };
+
+export async function findPublishedArtistCard(token: string) {
+  if (!/^[a-f0-9]{48}$/.test(token))
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Cartão não publicado.",
+    });
+  const db = await database();
+  const row = (
+    await db
+      .select({
+        artistId: artists.id,
+        studioId: artists.studioId,
+        photoKey: artists.photoKey,
+        name: artists.name,
+        photo: artists.photoUrl,
+        headline: artistCards.headline,
+        description: artistCards.description,
+        links: artistCards.links,
+        images: artistCards.images,
+        presentation: artistCards.presentation,
+      })
+      .from(artistCards)
+      .innerJoin(
+        artists,
+        and(
+          eq(artists.id, artistCards.artistId),
+          eq(artists.studioId, artistCards.studioId),
+          eq(artists.active, 1)
+        )
+      )
+      .where(and(eq(artistCards.token, token), eq(artistCards.published, 1)))
+      .limit(1)
+  )[0];
+  if (!row)
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Cartão não publicado.",
+    });
+
+  return row;
+}

@@ -16,16 +16,19 @@ export function downloadCardBlob(blob: Blob, fileName: string) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
+export function artistContactFileUrl(profileUrl: string) {
+  const url = new URL(profileUrl, window.location.origin);
+  const match = /^\/artista\/([a-f0-9]{48})$/.exec(url.pathname);
+  if (url.origin !== window.location.origin || !match)
+    throw new Error("Endereço do cartão inválido.");
+  return `/api/artist-card/${match[1]}/contact.vcf`;
+}
 export function downloadArtistContact(
-  card: ArtistEditorialCardProps,
+  _card: ArtistEditorialCardProps,
   profileUrl: string
 ) {
-  downloadCardBlob(
-    new Blob([buildArtistVCard(card, profileUrl)], {
-      type: "text/vcard;charset=utf-8",
-    }),
-    `${cardFileName(card.name)}.vcf`
-  );
+  // A real .vcf response lets the browser/OS offer its native contact import.
+  window.location.assign(artistContactFileUrl(profileUrl));
 }
 export async function downloadArtistQr(
   card: ArtistEditorialCardProps,
@@ -34,11 +37,18 @@ export async function downloadArtistQr(
 ) {
   const { default: QRCode } = await import("qrcode");
   const data = contact ? buildArtistVCard(card, profileUrl, true) : profileUrl;
-  const url = await QRCode.toDataURL(data, {
-    width: 1024,
-    margin: 4,
-    errorCorrectionLevel: "M",
-  });
+  let url: string;
+  try {
+    url = await QRCode.toDataURL(data, {
+      width: 1024,
+      margin: 4,
+      errorCorrectionLevel: "M",
+    });
+  } catch {
+    throw new Error(
+      "O contato é grande demais para este QR Code. Use o arquivo de contato (.vcf) para salvar todos os dados."
+    );
+  }
   const response = await fetch(url);
   downloadCardBlob(
     await response.blob(),
@@ -169,6 +179,15 @@ export async function downloadArtistPdf(
   heading("Contato e links");
   if (card.presentation?.contact?.phone)
     paragraph(`Telefone: ${card.presentation.contact.phone}`);
+  const c = card.presentation?.contact;
+  if (c?.studioPhone) paragraph(`Telefone do estúdio: ${c.studioPhone}`);
+  if (c?.studioName) paragraph(c.studioName);
+  if (c)
+    paragraph(
+      [c.address, c.city, c.state, c.zipCode, c.country]
+        .filter(Boolean)
+        .join(" · ")
+    );
   if (card.presentation?.contact?.email)
     paragraph(`E-mail: ${card.presentation.contact.email}`);
   for (const link of card.links) {

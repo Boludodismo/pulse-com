@@ -1,3 +1,4 @@
+import { registerArtistContactDownload } from "../artistCardContactFile";
 import { ensureSecuritySchema } from '../security/database';
 import { securityHeaders } from '../security/http';
 import { receiveMetaWebhook, verifyMetaWebhook } from "../nativeBot/metaWebhook";
@@ -105,6 +106,8 @@ async function startServer() {
   app.get("/api/health", (_req, res) => {
     res.status(200).json({ ok: true, service: "pod-crm", timestamp: new Date().toISOString() });
   });
+
+  registerArtistContactDownload(app);
 
   // Stable proxy for private S3-compatible storage objects.
   // The URL contains an HMAC token, so files remain private without storing expiring URLs in the DB.

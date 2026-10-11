@@ -1,10 +1,12 @@
+import { parsePhoneNumberFromString } from "libphonenumber-js";
+import type { ArtistCardPublicContact } from "./artistCardPresentation";
 import { safePublicUrl } from "./studioRelations";
 
 type ContactCard = {
   name: string;
   headline: string;
   links: { label: string; url: string }[];
-  presentation?: { contact?: { phone: string; email: string } } | null;
+  presentation?: { contact?: ArtistCardPublicContact } | null;
 };
 const escapeText = (value: string) =>
   value
@@ -33,7 +35,8 @@ function fold(line: string) {
 export function buildArtistVCard(
   card: ContactCard,
   profileUrl: string,
-  compact = false
+  compact = false,
+  photoJpegBase64?: string
 ) {
   const parsed = new URL(profileUrl);
   const localDevelopment =
@@ -52,13 +55,54 @@ export function buildArtistVCard(
     `FN:${escapeText(card.name)}`,
   ];
   if (card.headline) lines.push(`TITLE:${escapeText(card.headline)}`);
-  if (c?.phone) lines.push(`TEL;TYPE=CELL:${c.phone.replace(/[^\d+]/g, "")}`);
+  const normalizePhone = (value: string) =>
+    parsePhoneNumberFromString(value, "BR")?.number ??
+    value.replace(/[^\d+]/g, "");
+  if (c?.phone) lines.push(`TEL;TYPE=CELL:${normalizePhone(c.phone)}`);
+  if (c?.studioPhone)
+    lines.push(`TEL;TYPE=WORK,VOICE:${normalizePhone(c.studioPhone)}`);
+  if (c?.studioName) lines.push(`ORG:${escapeText(c.studioName)}`);
+  if (c && [c.address, c.city, c.state, c.zipCode, c.country].some(Boolean)) {
+    lines.push(
+      `ADR;TYPE=WORK:;;${[c.address, c.city, c.state, c.zipCode, c.country].map(v => escapeText(v ?? "")).join(";")}`
+    );
+  }
   if (c?.email) lines.push(`EMAIL;TYPE=INTERNET:${escapeText(c.email)}`);
-  lines.push(`URL:${escapeText(profileUrl)}`);
-  if (!compact)
-    for (const link of card.links.filter(l => safePublicUrl(l.url))) {
-      lines.push(`URL:${escapeText(link.url)}`);
-    }
+  const links = [
+    { label: "Meu perfil digital", url: parsed.href },
+    ...card.links.filter(l => safePublicUrl(l.url)),
+  ];
+  const phone = normalizePhone(c?.phone || c?.studioPhone || "").replace(
+    /[^\d]/g,
+    ""
+  );
+  if (
+    phone &&
+    !links.some(
+      l =>
+        /whats.?app/i.test(l.label) ||
+        /^(?:api\.)?whatsapp\.com$|^wa\.me$/.test(new URL(l.url).hostname)
+    )
+  ) {
+    links.splice(1, 0, { label: "WhatsApp", url: `https://wa.me/${phone}` });
+  }
+  links.forEach((link, index) => {
+    const group = `item${index + 1}`;
+    lines.push(`${group}.URL:${new URL(link.url).href}`);
+    lines.push(`${group}.X-ABLabel:${escapeText(link.label)}`);
+  });
+  if (!compact && links.length)
+    lines.push(
+      `NOTE:${escapeText(links.map(l => `${l.label}: ${l.url}`).join("\n"))}`
+    );
+  if (
+    !compact &&
+    photoJpegBase64 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(photoJpegBase64) &&
+    photoJpegBase64.length <= 200000
+  ) {
+    lines.push(`PHOTO;ENCODING=b;TYPE=JPEG:${photoJpegBase64}`);
+  }
   lines.push("END:VCARD");
   return lines.map(fold).join("\r\n") + "\r\n";
 }

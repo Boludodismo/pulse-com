@@ -401,7 +401,7 @@ export default function ArtistEditorialCard({
           </nav>
         </section>
       )}
-      {(p?.contact?.phone || p?.contact?.email || profileUrl) && (
+      {(p?.contact || profileUrl) && (
         <section
           className={`${styles.section} ${styles.wrap}`}
           aria-label="Contato do artista"
@@ -413,6 +413,32 @@ export default function ArtistEditorialCard({
                 {p.contact.phone}
               </a>
             )}
+            {p?.contact?.studioPhone && (
+              <a href={`tel:${p.contact.studioPhone}`}>
+                Estúdio: {p.contact.studioPhone}
+              </a>
+            )}
+            {p?.contact?.studioName && <span>{p.contact.studioName}</span>}
+            {p?.contact &&
+              [
+                p.contact.address,
+                p.contact.city,
+                p.contact.state,
+                p.contact.zipCode,
+                p.contact.country,
+              ].some(Boolean) && (
+                <address className="not-italic">
+                  {[
+                    p.contact.address,
+                    p.contact.city,
+                    p.contact.state,
+                    p.contact.zipCode,
+                    p.contact.country,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </address>
+              )}
             {p?.contact?.email && (
               <a href={`mailto:${p.contact.email}`}>{p.contact.email}</a>
             )}

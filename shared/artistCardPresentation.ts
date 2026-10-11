@@ -31,23 +31,32 @@ export const publicMediaSchema = storedMediaSchema.omit({
   original: true,
   edit: true,
 });
+const publicPhone = z
+  .string()
+  .trim()
+  .max(40)
+  .regex(/^[+\d\s().-]*$/, "Informe apenas o telefone com DDD.")
+  .refine(
+    value => !value || !!parsePhoneNumberFromString(value, "BR")?.isValid(),
+    "Informe um telefone válido com DDD."
+  )
+  .transform(value =>
+    value ? parsePhoneNumberFromString(value, "BR")!.number : ""
+  );
 export const cardContactSchema = z
   .object({
-    phone: z
-      .string()
-      .trim()
-      .max(40)
-      .regex(/^[+\d\s().-]*$/, "Informe apenas o telefone com DDD.")
-      .refine(
-        value => !value || !!parsePhoneNumberFromString(value, "BR")?.isValid(),
-        "Informe um telefone válido com DDD."
-      )
-      .transform(value =>
-        value ? parsePhoneNumberFromString(value, "BR")!.number : ""
-      ),
+    phone: publicPhone,
     email: z.union([z.literal(""), z.string().trim().email().max(254)]),
+    studioPhone: publicPhone.optional(),
+    studioName: z.string().trim().max(255).optional(),
+    address: z.string().trim().max(500).optional(),
+    city: z.string().trim().max(100).optional(),
+    state: z.string().trim().max(50).optional(),
+    zipCode: z.string().trim().max(20).optional(),
+    country: z.string().trim().max(100).optional(),
   })
   .strict();
+export type ArtistCardPublicContact = z.infer<typeof cardContactSchema>;
 export type PublicMedia = z.infer<typeof publicMediaSchema>;
 export const artistCardPresentationStorageSchema = z
   .object({

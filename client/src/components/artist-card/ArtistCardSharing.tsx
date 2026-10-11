@@ -135,9 +135,8 @@ export default function ArtistCardSharing({
       </div>
       <p className="text-xs text-muted-foreground">
         O QR do perfil abre a página e precisa de internet. O QR do contato
-        contém nome, telefone, e-mail e link do cartão; pode ser lido sem
-        conexão em aplicativos compatíveis. O arquivo .vcf inclui também os
-        links cadastrados.
+        contém os dados públicos e os links cadastrados; pode ser lido sem
+        conexão em aplicativos compatíveis. A foto acompanha o arquivo .vcf.
       </p>
     </section>
   );
