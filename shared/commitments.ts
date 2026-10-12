@@ -102,7 +102,7 @@ export function canReadCommitment(
   actor: { studioId: number; userId: number; role: string }
 ) {
   return (
-    actor.role !== "superadmin" &&
+    (actor.role !== "superadmin" || (actor.studioId < 0 && actor.studioId === -actor.userId)) &&
     row.studioId === actor.studioId &&
     (row.ownerId === actor.userId || row.assigneeId === actor.userId)
   );
