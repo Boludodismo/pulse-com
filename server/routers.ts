@@ -1,3 +1,4 @@
+import { artistDashboardRouter } from "./artistDashboard";
 import { calendarSyncRouter } from "./calendarSync/router";
 import { agendaMovesRouter } from "./agendaMoves";
 import { commitmentsRouter } from "./commitments/router";
@@ -1807,6 +1808,8 @@ export const appRouter = router({
   }),
 
   // ============ DASHBOARD ROUTER ============
+  artistDashboard: artistDashboardRouter,
+
   dashboard: router({
     topClients: tenantProcedure
       .input(z.object({ limit: z.number().optional() }))
