@@ -21,6 +21,8 @@ interface AppointmentData {
   date: string; // "YYYY-MM-DD HH:mm:ss"
   duration: number; // minutos
   service: string;
+  bodyRegion?: string | null;
+  bodySide?: "direito" | "esquerdo" | "ambos" | null;
   artist: string;
   notes?: string | null;
   status: string;
@@ -69,15 +71,29 @@ function icsEscape(text: string): string {
  * Dobra linhas longas conforme RFC 5545 (máx 75 octetos por linha)
  */
 function foldLine(line: string): string {
-  if (line.length <= 75) return line;
   const chunks: string[] = [];
-  chunks.push(line.slice(0, 75));
-  let i = 75;
-  while (i < line.length) {
-    chunks.push(" " + line.slice(i, i + 74));
-    i += 74;
+  let chunk = "";
+  let bytes = 0;
+  for (const character of line) {
+    const size = Buffer.byteLength(character, "utf8");
+    if (bytes + size > 75) {
+      chunks.push(chunk);
+      chunk = " ";
+      bytes = 1;
+    }
+    chunk += character;
+    bytes += size;
   }
+  chunks.push(chunk);
   return chunks.join("\r\n");
+}
+
+function procedureDescription(appointment: AppointmentData): string {
+  const lines = [`Serviço: ${appointment.service}`];
+  if (appointment.bodyRegion?.trim()) lines.push(`Região do corpo: ${appointment.bodyRegion.trim()}`);
+  const sideLabels = { direito: "Direito", esquerdo: "Esquerdo", ambos: "Ambos" };
+  if (appointment.bodySide) lines.push(`Lado do corpo: ${sideLabels[appointment.bodySide]}`);
+  return lines.join("\n");
 }
 
 /**
@@ -142,13 +158,15 @@ function buildDescription(opts: IcsOptions): string {
 
   const lines: string[] = [];
 
+  lines.push(procedureDescription(appointment));
+  lines.push("");
+
   // === DADOS DO AGENDAMENTO ===
   lines.push("📋 DADOS DO AGENDAMENTO");
   lines.push("─────────────────────────────");
   lines.push(`Cliente: ${client.name}`);
   if (client.phone) lines.push(`Telefone: ${client.phone}`);
   if (client.email) lines.push(`E-mail: ${client.email}`);
-  lines.push(`Serviço: ${appointment.service}`);
   lines.push(`Artista: ${appointment.artist}`);
   lines.push(`Duração: ${appointment.duration} minutos`);
 
@@ -285,7 +303,7 @@ function buildDescription(opts: IcsOptions): string {
 
   lines.push(`Ver Agendamento no Sistema: ${opts.baseUrl}/clients/${opts.client.id}`);
 
-  return lines.join("\\n");
+  return icsEscape(lines.join("\n"));
 }
 
 /**
@@ -306,7 +324,7 @@ export function generateIcs(opts: IcsOptions): string {
   const dtstamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
 
   // Título do evento
-  const summary = icsEscape(`${appointment.service} — ${client.name} (${appointment.artist})`);
+  const summary = icsEscape(`${client.name} — ${appointment.service} (${appointment.artist})`);
 
   // Descrição completa
   const description = buildDescription(opts);
@@ -323,7 +341,7 @@ export function generateIcs(opts: IcsOptions): string {
     "BEGIN:VALARM",
     "TRIGGER:-PT24H",
     "ACTION:DISPLAY",
-    `DESCRIPTION:Lembrete: ${icsEscape(appointment.service)} com ${icsEscape(client.name)} amanhã`,
+    foldLine(`DESCRIPTION:Lembrete: ${icsEscape(appointment.service)} com ${icsEscape(client.name)} amanhã`),
     "END:VALARM",
   ].join("\r\n");
 
@@ -332,7 +350,7 @@ export function generateIcs(opts: IcsOptions): string {
     "BEGIN:VALARM",
     "TRIGGER:-PT2H",
     "ACTION:DISPLAY",
-    `DESCRIPTION:Em 2 horas: ${icsEscape(appointment.service)} com ${icsEscape(client.name)}`,
+    foldLine(`DESCRIPTION:Em 2 horas: ${icsEscape(appointment.service)} com ${icsEscape(client.name)}`),
     "END:VALARM",
   ].join("\r\n");
 
@@ -394,9 +412,9 @@ export function generateGoogleCalendarUrl(opts: IcsOptions): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const dtEnd = `${endDate.getUTCFullYear()}${pad(endDate.getUTCMonth() + 1)}${pad(endDate.getUTCDate())}T${pad(endDate.getUTCHours())}${pad(endDate.getUTCMinutes())}${pad(endDate.getUTCSeconds())}`;
 
-  const title = encodeURIComponent(`${appointment.service} — ${client.name}`);
+  const title = encodeURIComponent(`${client.name} — ${appointment.service}`);
   const details = encodeURIComponent(
-    `Artista: ${appointment.artist}\nCliente: ${client.name}${client.phone ? `\nTelefone: ${client.phone}` : ""}${appointment.notes ? `\nObservações: ${appointment.notes}` : ""}${opts.confirmationLink ? `\nLink de confirmação: ${opts.confirmationLink}` : ""}`
+    `${procedureDescription(appointment)}\n\nArtista: ${appointment.artist}\nCliente: ${client.name}${client.phone ? `\nTelefone: ${client.phone}` : ""}${appointment.notes ? `\n\nObservações: ${appointment.notes}` : ""}${opts.confirmationLink ? `\n\nLink de confirmação: ${opts.confirmationLink}` : ""}`
   );
   const location = encodeURIComponent(opts.studio?.address || opts.studio?.name || "");
 
