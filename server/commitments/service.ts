@@ -56,7 +56,7 @@ export async function materialize(
       holidays
     ))
       await db.query(
-        `INSERT INTO commitment_occurrences(series_id,studio_id,original_date,effective_date) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE revision=IF(status='pending' AND snooze_until IS NULL AND effective_date<>VALUES(effective_date),revision+1,revision),effective_date=IF(status='pending' AND snooze_until IS NULL,VALUES(effective_date),effective_date)`,
+        `INSERT INTO commitment_occurrences(series_id,studio_id,original_date,effective_date) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE revision=IF(status='pending' AND snooze_until IS NULL AND manual_date=0 AND effective_date<>VALUES(effective_date),revision+1,revision),effective_date=IF(status='pending' AND snooze_until IS NULL AND manual_date=0,VALUES(effective_date),effective_date)`,
         [s.id, studioId, date.originalDate, date.effectiveDate]
       );
   }
@@ -91,7 +91,7 @@ export async function runCommitmentCycle() {
       )
         continue;
       const [rows]: any = await db.query(
-        `SELECT ${occurrenceSelect} FROM commitment_occurrences o JOIN commitment_series s ON s.id=o.series_id AND s.studio_id=o.studio_id WHERE o.studio_id=? AND s.assignee_id=? AND s.active=1 AND o.status='pending' AND ((o.snooze_until IS NULL AND o.effective_date BETWEEN ? AND ?) OR o.snooze_until BETWEEN ? AND ?) ORDER BY o.effective_date,o.id LIMIT 200`,
+        `SELECT ${occurrenceSelect},s.reminder_times AS reminderTimes FROM commitment_occurrences o JOIN commitment_series s ON s.id=o.series_id AND s.studio_id=o.studio_id WHERE o.studio_id=? AND s.assignee_id=? AND s.active=1 AND o.status='pending' AND ((o.snooze_until IS NULL AND o.effective_date BETWEEN ? AND ?) OR o.snooze_until BETWEEN ? AND ?) ORDER BY o.effective_date,o.id LIMIT 200`,
         [
           user.studio_id,
           user.user_id,
@@ -105,15 +105,22 @@ export async function runCommitmentCycle() {
         ]
       );
       for (const o of rows) {
+        const times = o.reminderTimes ? JSON.parse(o.reminderTimes) : {};
         const slots = o.snoozeUntil
           ? [["snooze", o.snoozeUntil]]
           : [
               [
                 "before",
-                `${addDays(o.effectiveDate, -1)} ${user.before_time}:00`,
+                `${addDays(o.effectiveDate, -1)} ${times.beforeTime || user.before_time}:00`,
               ],
-              ["first", `${o.effectiveDate} ${user.first_time}:00`],
-              ["second", `${o.effectiveDate} ${user.second_time}:00`],
+              [
+                "first",
+                `${o.effectiveDate} ${times.firstTime || user.first_time}:00`,
+              ],
+              [
+                "second",
+                `${o.effectiveDate} ${times.secondTime || user.second_time}:00`,
+              ],
             ];
         for (const [slot, time] of slots) {
           const lag =

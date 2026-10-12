@@ -1,3 +1,6 @@
+import { useLongPressDrag } from "./VisualMove";
+import { CalendarConnections } from "./CalendarConnections";
+import { ACCOUNT_TEMPLATES } from "../../../shared/commitmentTemplates";
 import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -297,6 +300,43 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
     { enabled: !!user && user.role !== "superadmin" }
   );
   const [selected, setSelected] = useState<number | null>(null);
+  const [dragged, setDragged] = useState<any>(null),
+    [target, setTarget] = useState<string | null>(null),
+    [pendingDay, setPendingDay] = useState<{ o: any; date: string } | null>(
+      null
+    );
+  const utils = trpc.useUtils();
+  const moveDay = trpc.commitments.moveDay.useMutation({
+    onSuccess: () => {
+      utils.commitments.list.invalidate();
+      utils.commitments.detail.invalidate();
+      setPendingDay(null);
+      toast.success("Data do compromisso atualizada.");
+    },
+    onError: e => toast.error(e.message),
+  });
+  const dropDay = (o: any, date: string) => {
+    if (o.status === "pending" && date !== o.effectiveDate)
+      setPendingDay({ o, date });
+    setDragged(null);
+    setTarget(null);
+  };
+  const touch = useLongPressDrag<any>(
+    (x, y) => {
+      const el = document
+        .elementFromPoint(x, y)
+        ?.closest<HTMLElement>("[data-commitment-day]");
+      return el ? { date: el.dataset.commitmentDay } : null;
+    },
+    o => setDragged(o),
+    t => setTarget(t?.date || null),
+    (o, t) => dropDay(o, t.date),
+    () => {
+      setDragged(null);
+      setTarget(null);
+    }
+  );
+
   if (user?.role === "superadmin") return null;
   return (
     <div className="shrink-0 border-b bg-background text-foreground">
@@ -308,7 +348,25 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
       >
         <div className="text-[10px] p-1">Dia inteiro</div>
         {days.map(d => (
-          <div key={day(d)} className="min-w-0 border-l p-0.5 space-y-1">
+          <div
+            key={day(d)}
+            data-commitment-day={day(d)}
+            className="min-w-0 border-l p-0.5 space-y-1"
+            onDragOver={e => {
+              if (dragged) {
+                e.preventDefault();
+                e.stopPropagation();
+                setTarget(day(d));
+              }
+            }}
+            onDrop={e => {
+              if (dragged) {
+                e.preventDefault();
+                e.stopPropagation();
+                dropDay(dragged, day(d));
+              }
+            }}
+          >
             {nationalHolidays(d.getFullYear())
               .filter(h => h.date === day(d))
               .map(h => (
@@ -331,7 +389,22 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
                     borderColor: o.color,
                     opacity: o.status === "paid" ? 0.6 : 1,
                   }}
-                  onClick={() => setSelected(o.id)}
+                  draggable={o.status === "pending"}
+                  onDragStart={e => {
+                    setDragged(o);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", `commitment:${o.id}`);
+                  }}
+                  onDragEnd={() => {
+                    setDragged(null);
+                    setTarget(null);
+                  }}
+                  onTouchStart={e => {
+                    if (o.status === "pending") touch.start(e, o);
+                  }}
+                  onClick={() => {
+                    if (!dragged) setSelected(o.id);
+                  }}
                 >
                   {o.status === "paid" ? "✓ " : ""}
                   {o.title}
@@ -340,6 +413,59 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
           </div>
         ))}
       </div>
+      {dragged && target && (
+        <div
+          role="status"
+          className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] pointer-events-none rounded border bg-background p-3 text-sm"
+        >
+          {target.split("-").reverse().join("/")} · Dia inteiro
+        </div>
+      )}
+      <Dialog
+        open={!!pendingDay}
+        onOpenChange={o => {
+          if (!o && !moveDay.isPending) setPendingDay(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar nova data</DialogTitle>
+          </DialogHeader>
+          {pendingDay && (
+            <>
+              <p className="break-words">{pendingDay.o.title}</p>
+              <p>
+                De {pendingDay.o.effectiveDate} para {pendingDay.date}
+              </p>
+              <p className="text-sm">
+                Esta ocorrência será movida. A série permanece na regra
+                original.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  disabled={moveDay.isPending}
+                  onClick={() => setPendingDay(null)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  disabled={moveDay.isPending}
+                  onClick={() =>
+                    moveDay.mutate({
+                      id: pendingDay.o.id,
+                      revision: pendingDay.o.revision,
+                      date: pendingDay.date,
+                    })
+                  }
+                >
+                  Confirmar
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
       {query.error && (
         <p className="text-xs px-2" role="alert">
           Não foi possível carregar os compromissos.
@@ -361,7 +487,9 @@ export function CommitmentsManager({
   const { user } = useAuth(),
     utils = trpc.useUtils();
   const [open, setOpen] = useState(initialOpen),
-    [tab, setTab] = useState<"list" | "new" | "settings">("list"),
+    [tab, setTab] = useState<"list" | "new" | "settings" | "integrations">(
+      "list"
+    ),
     [selected, setSelected] = useState<number | null>(null);
   const from = day(date),
     to = addDays(from, 31);
@@ -371,6 +499,24 @@ export function CommitmentsManager({
   );
   const prefs = trpc.commitments.preferences.useQuery(undefined, {
     enabled: open && user?.role !== "superadmin",
+  });
+  const savedCalendars = trpc.commitments.calendars.useQuery(undefined, {
+    enabled: !!user && user.role !== "superadmin",
+  });
+  useEffect(() => {
+    if (savedCalendars.dataUpdatedAt) utils.calendars.list.invalidate();
+  }, [savedCalendars.dataUpdatedAt]);
+  const [calendarDraft, setCalendarDraft] = useState({
+    name: "",
+    color: "#FF9500",
+  });
+  const saveCalendar = trpc.commitments.saveCalendar.useMutation({
+    onSuccess: () => {
+      utils.commitments.calendars.invalidate();
+      utils.calendars.list.invalidate();
+      toast.success("Calendário salvo para sua conta.");
+    },
+    onError: e => toast.error(e.message),
   });
   const assignees = trpc.commitments.assignees.useQuery(undefined, {
     enabled: open && user?.role !== "superadmin",
@@ -382,6 +528,11 @@ export function CommitmentsManager({
   const [form, setForm] = useState<any>({
     title: "",
     category: "fixed",
+    calendarId: 0,
+    customTimes: false,
+    beforeTime: "09:00",
+    firstTime: "09:00",
+    secondTime: "16:00",
     calendarName: "Compromissos",
     color: "#FF9500",
     amount: "",
@@ -478,7 +629,7 @@ export function CommitmentsManager({
             <DialogTitle>Compromissos de dia inteiro</DialogTitle>
           </DialogHeader>
           <div className="flex flex-wrap gap-2">
-            {(["list", "new", "settings"] as const).map(t => (
+            {(["list", "new", "settings", "integrations"] as const).map(t => (
               <Button
                 key={t}
                 variant={tab === t ? "default" : "outline"}
@@ -488,7 +639,9 @@ export function CommitmentsManager({
                   ? "Compromissos"
                   : t === "new"
                     ? "Novo"
-                    : "WhatsApp e feriados"}
+                    : t === "settings"
+                      ? "WhatsApp e feriados"
+                      : "Calendários externos"}
               </Button>
             ))}
           </div>
@@ -497,6 +650,9 @@ export function CommitmentsManager({
               Os avisos dependem de uma conexão WhatsApp ativa do estúdio.
               Nenhuma conexão de produção está disponível no momento.
             </p>
+          )}
+          {tab === "integrations" && (
+            <CalendarConnections calendars={savedCalendars.data || []} />
           )}
           {tab === "list" && (
             <div className="space-y-3">
@@ -560,6 +716,15 @@ export function CommitmentsManager({
                     : Math.round(Number(form.amount) * 100);
                 create.mutate({
                   ...form,
+                  calendarId:
+                    Number(form.calendarId) || savedCalendars.data?.[0]?.id,
+                  reminderTimes: form.customTimes
+                    ? {
+                        beforeTime: form.beforeTime,
+                        firstTime: form.firstTime,
+                        secondTime: form.secondTime,
+                      }
+                    : undefined,
                   amount,
                   endDate: form.endDate || null,
                   repeatInterval: Number(form.repeatInterval),
@@ -567,6 +732,38 @@ export function CommitmentsManager({
                 });
               }}
             >
+              <label className="block">
+                Modelo de conta
+                <select
+                  className="block w-full rounded border bg-background p-2"
+                  defaultValue=""
+                  onChange={e => {
+                    const t = ACCOUNT_TEMPLATES.find(
+                      t => t.id === e.target.value
+                    );
+                    if (t)
+                      setForm({
+                        ...form,
+                        title: t.title,
+                        category: t.category,
+                        repeatKind: t.repeatKind,
+                        repeatInterval: 1,
+                        notes: t.notes,
+                        shiftBusiness: t.category !== "reminder",
+                      });
+                  }}
+                >
+                  <option value="">Preenchimento livre</option>
+                  {ACCOUNT_TEMPLATES.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-sm">
+                Todos os campos podem ser ajustados antes de salvar.
+              </p>
               {field("title", "Título")}
               <label className="block">
                 Categoria
@@ -588,8 +785,67 @@ export function CommitmentsManager({
                   ))}
                 </select>
               </label>
-              {field("calendarName", "Nome do calendário")}
-              {field("color", "Cor", "color")}
+              <label className="block">
+                Meu calendário
+                <select
+                  className="block w-full rounded border bg-background p-2"
+                  value={form.calendarId || savedCalendars.data?.[0]?.id || ""}
+                  onChange={e =>
+                    setForm({ ...form, calendarId: Number(e.target.value) })
+                  }
+                >
+                  {savedCalendars.data?.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <details className="rounded border p-3">
+                <summary>Criar ou editar calendário da minha conta</summary>
+                <Input
+                  aria-label="Nome do calendário"
+                  value={calendarDraft.name}
+                  onChange={e =>
+                    setCalendarDraft({ ...calendarDraft, name: e.target.value })
+                  }
+                />
+                <Input
+                  aria-label="Cor do calendário"
+                  type="color"
+                  value={calendarDraft.color}
+                  onChange={e =>
+                    setCalendarDraft({
+                      ...calendarDraft,
+                      color: e.target.value,
+                    })
+                  }
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    disabled={!calendarDraft.name || saveCalendar.isPending}
+                    onClick={() => saveCalendar.mutate(calendarDraft)}
+                  >
+                    Criar calendário
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!calendarDraft.name || saveCalendar.isPending}
+                    onClick={() =>
+                      saveCalendar.mutate({
+                        ...calendarDraft,
+                        id:
+                          Number(form.calendarId) ||
+                          savedCalendars.data?.[0]?.id,
+                      })
+                    }
+                  >
+                    Atualizar selecionado
+                  </Button>
+                </div>
+              </details>
               {field("amount", "Valor (R$, opcional)", "number")}
               {field("startDate", "Data inicial / vencimento", "date")}
               <label className="block">
@@ -650,8 +906,33 @@ export function CommitmentsManager({
                 O responsável e o criador podem acessar este compromisso. Avisos
                 dependem da autorização de WhatsApp do responsável.
               </p>
+              <label className="flex gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.customTimes}
+                  onChange={e =>
+                    setForm({ ...form, customTimes: e.target.checked })
+                  }
+                />
+                Personalizar os horários dos três avisos desta conta
+              </label>
+              {form.customTimes && (
+                <>
+                  {field("beforeTime", "Aviso na véspera", "time")}
+                  {field("firstTime", "Primeiro aviso no dia", "time")}
+                  {field("secondTime", "Segundo aviso no dia", "time")}
+                </>
+              )}
               {field("notes", "Notas")}
-              <Button disabled={create.isPending}>Cadastrar compromisso</Button>
+              <Button
+                disabled={
+                  create.isPending ||
+                  savedCalendars.isLoading ||
+                  !!savedCalendars.error
+                }
+              >
+                Cadastrar compromisso
+              </Button>
             </form>
           )}
           {tab === "settings" && settings && (

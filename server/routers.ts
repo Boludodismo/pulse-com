@@ -1,3 +1,5 @@
+import { calendarSyncRouter } from "./calendarSync/router";
+import { agendaMovesRouter } from "./agendaMoves";
 import { commitmentsRouter } from "./commitments/router";
 import { securityRouter } from './security/router';
 import { passwordPolicy } from '../shared/passwordPolicy';
@@ -76,6 +78,8 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 
 export const appRouter = router({
   commitments: commitmentsRouter,
+  agendaMoves: agendaMovesRouter,
+  calendarSync: calendarSyncRouter,
   security: securityRouter,
   nativeBot: nativeBotRouter,
   legacyArchive: legacyArchiveRouter,

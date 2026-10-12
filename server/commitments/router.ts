@@ -48,6 +48,144 @@ async function accessible(ctx: any, id: number) {
   return rows[0];
 }
 export const commitmentsRouter = router({
+  calendars: procedure.query(async ({ ctx }) => {
+    const connection = await database().getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query(
+        "SELECT id FROM users WHERE id=? AND studioId=? FOR UPDATE",
+        [ctx.user.id, ctx.studioId]
+      );
+      let [rows]: any = await connection.query(
+        "SELECT id,name,color,isDefault FROM calendars WHERE userId=? ORDER BY isDefault DESC,id",
+        [ctx.user.id]
+      );
+      if (!rows.length) {
+        await connection.query(
+          "INSERT INTO calendars(userId,name,color,isVisible,isDefault) VALUES(?,?,?,1,1)",
+          [ctx.user.id, "Meu calendário", "#FF9500"]
+        );
+        [rows] = await connection.query(
+          "SELECT id,name,color,isDefault FROM calendars WHERE userId=? ORDER BY isDefault DESC,id",
+          [ctx.user.id]
+        );
+      }
+      const [legacy]: any = await connection.query(
+        "SELECT DISTINCT calendar_name,color FROM commitment_series WHERE studio_id=? AND owner_id=? AND calendar_id IS NULL",
+        [ctx.studioId, ctx.user.id]
+      );
+      for (const entry of legacy) {
+        let existing = rows.find(
+          (r: any) => r.name === entry.calendar_name && r.color === entry.color
+        );
+        if (!existing) {
+          const [created]: any = await connection.query(
+            "INSERT INTO calendars(userId,name,color,isVisible,isDefault) VALUES(?,?,?,1,0)",
+            [ctx.user.id, entry.calendar_name, entry.color]
+          );
+          existing = {
+            id: created.insertId,
+            name: entry.calendar_name,
+            color: entry.color,
+            isDefault: 0,
+          };
+          rows.push(existing);
+        }
+        await connection.query(
+          "UPDATE commitment_series SET calendar_id=? WHERE studio_id=? AND owner_id=? AND calendar_id IS NULL AND calendar_name=? AND color=?",
+          [
+            existing.id,
+            ctx.studioId,
+            ctx.user.id,
+            entry.calendar_name,
+            entry.color,
+          ]
+        );
+      }
+      await connection.commit();
+      return rows as {
+        id: number;
+        name: string;
+        color: string;
+        isDefault: number;
+      }[];
+    } catch (e) {
+      await connection.rollback();
+      throw e;
+    } finally {
+      connection.release();
+    }
+  }),
+  saveCalendar: procedure
+    .input(
+      z.object({
+        id: z.number().int().positive().optional(),
+        name: z.string().trim().min(1).max(100),
+        color: z.string().regex(/^#[0-9a-f]{6}$/i),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (input.id) {
+        const [r]: any = await database().query(
+          "UPDATE calendars SET name=?,color=? WHERE id=? AND userId=?",
+          [input.name, input.color, input.id, ctx.user.id]
+        );
+        if (!r.affectedRows) throw new TRPCError({ code: "NOT_FOUND" });
+        return { id: input.id };
+      }
+      const [r]: any = await database().query(
+        "INSERT INTO calendars(userId,name,color,isVisible,isDefault) VALUES(?,?,?,1,0)",
+        [ctx.user.id, input.name, input.color]
+      );
+      return { id: Number(r.insertId) };
+    }),
+  moveDay: procedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        revision: z.number().int(),
+        date,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const c = await database().getConnection();
+      try {
+        await c.beginTransaction();
+        const [rows]: any = await c.query(
+          `SELECT ${occurrenceSelect} FROM commitment_occurrences o JOIN commitment_series s ON s.id=o.series_id AND s.studio_id=o.studio_id WHERE o.id=? AND o.studio_id=? AND s.active=1 FOR UPDATE`,
+          [input.id, ctx.studioId]
+        );
+        const o = rows[0];
+        if (!o || !canReadCommitment(o, scope(ctx)))
+          throw new TRPCError({ code: "NOT_FOUND" });
+        if (o.status !== "pending" || o.revision !== input.revision)
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Compromisso atualizado. Recarregue a agenda.",
+          });
+        await c.query(
+          "UPDATE commitment_occurrences SET effective_date=?,snooze_until=NULL,manual_date=1,revision=revision+1 WHERE id=? AND studio_id=?",
+          [input.date, input.id, ctx.studioId]
+        );
+        await c.query(
+          "INSERT INTO commitment_actions(occurrence_id,studio_id,user_id,action,details) VALUES(?,?,?,?,?)",
+          [
+            input.id,
+            ctx.studioId,
+            ctx.user.id,
+            "move_day",
+            JSON.stringify({ date: input.date }),
+          ]
+        );
+        await c.commit();
+        return { success: true };
+      } catch (e) {
+        await c.rollback();
+        throw e;
+      } finally {
+        c.release();
+      }
+    }),
   preferences: procedure.query(async ({ ctx }) => {
     const [rows]: any = await database().query(
       "SELECT phone,consent,timezone,before_time AS beforeTime,first_time AS firstTime,second_time AS secondTime,holidays_json AS holidaysJson FROM commitment_preferences WHERE studio_id=? AND user_id=?",
@@ -153,6 +291,11 @@ export const commitmentsRouter = router({
       z
         .object({
           title: z.string().trim().min(1).max(200),
+          calendarId: z.number().int().positive().optional(),
+          reminderTimes: z
+            .object({ beforeTime: time, firstTime: time, secondTime: time })
+            .refine(v => v.firstTime < v.secondTime)
+            .optional(),
           category: z.enum(["fixed", "variable", "payroll", "reminder"]),
           calendarName: z.string().trim().min(1).max(100),
           color: z.string().regex(/^#[0-9a-f]{6}$/i),
@@ -182,16 +325,43 @@ export const commitmentsRouter = router({
           code: "BAD_REQUEST",
           message: "Responsável inválido.",
         });
+      let selectedCalendar: any;
+      if (input.calendarId) {
+        const [rows]: any = await database().query(
+          "SELECT id,name,color FROM calendars WHERE id=? AND userId=?",
+          [input.calendarId, ctx.user.id]
+        );
+        selectedCalendar = rows[0];
+        if (!selectedCalendar) throw new TRPCError({ code: "NOT_FOUND" });
+      }
+      if (!selectedCalendar) {
+        const [owned]: any = await database().query(
+          "SELECT id,name,color FROM calendars WHERE userId=? ORDER BY isDefault DESC,id LIMIT 1",
+          [ctx.user.id]
+        );
+        selectedCalendar = owned[0];
+        if (!selectedCalendar) {
+          const [c]: any = await database().query(
+            "INSERT INTO calendars(userId,name,color,isVisible,isDefault) VALUES(?,?,?,1,1)",
+            [ctx.user.id, "Meu calendário", "#FF9500"]
+          );
+          selectedCalendar = {
+            id: c.insertId,
+            name: "Meu calendário",
+            color: "#FF9500",
+          };
+        }
+      }
       const [r]: any = await database().query(
-        "INSERT INTO commitment_series(studio_id,owner_id,assignee_id,title,category,calendar_name,color,amount,start_date,end_date,repeat_kind,repeat_interval,shift_business,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO commitment_series(studio_id,owner_id,assignee_id,title,category,calendar_name,color,amount,start_date,end_date,repeat_kind,repeat_interval,shift_business,notes,calendar_id,reminder_times) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           ctx.studioId,
           ctx.user.id,
           input.assigneeId,
           input.title,
           input.category,
-          input.calendarName,
-          input.color,
+          selectedCalendar?.name || input.calendarName,
+          selectedCalendar?.color || input.color,
           input.amount,
           input.startDate,
           input.endDate,
@@ -199,6 +369,8 @@ export const commitmentsRouter = router({
           input.repeatInterval,
           input.shiftBusiness ? 1 : 0,
           input.notes,
+          selectedCalendar?.id || null,
+          input.reminderTimes ? JSON.stringify(input.reminderTimes) : null,
         ]
       );
       return { id: Number(r.insertId) };
@@ -285,11 +457,12 @@ export const commitmentsRouter = router({
           snooze = target;
         }
         await c.query(
-          "UPDATE commitment_occurrences SET status=?,effective_date=?,snooze_until=?,revision=revision+1 WHERE id=? AND studio_id=?",
+          "UPDATE commitment_occurrences SET status=?,effective_date=?,snooze_until=?,manual_date=IF(?='reschedule',1,manual_date),revision=revision+1 WHERE id=? AND studio_id=?",
           [
             input.action === "paid" ? "paid" : "pending",
             effective,
             snooze,
+            input.action,
             input.id,
             ctx.studioId,
           ]

@@ -23,7 +23,8 @@ group('anamnese','anamnesis',['getByClientId','getRequestsByClientId','updateSub
 // dashboards/search/stock/admin routes intentionally are not allowlisted.
 export function invitedRoutePermission(path: string): SaasModule | 'self' | null {
   // Bot Tatuei performs its own studio, artist and per-action permission checks.
-  if (path.startsWith('nativeBot.') || path.startsWith('security.') || path.startsWith('commitments.')) return 'self';
+  if (path.startsWith('agendaMoves.')) return 'appointments';
+  if (path.startsWith('nativeBot.') || path.startsWith('security.') || path.startsWith('commitments.') || path.startsWith('calendarSync.')) return 'self';
   if (self.has(path)) return 'self';
   if (path==='messaging.getReminderIndicators' || path==='procedures.listLinkedAppointmentIds' || path==='appointments.reminders.list') return 'appointments';
   if (path.startsWith('intelligentInbox.')) return 'intelligent_inbox';

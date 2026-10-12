@@ -69,7 +69,11 @@ beforeEach(() => {
       return [[{ status: m.status, revision: m.revision, active: 1 }]];
     if (sql.includes("SELECT o.status,o.revision"))
       return [m.consent ? [{ status: m.status, revision: m.revision }] : []];
-    if (sql.includes("SELECT o.id FROM commitment_occurrences"))
+    if (
+      sql.includes(
+        "SELECT o.id,s.reminder_times AS reminderTimes FROM commitment_occurrences"
+      )
+    )
       return [
         [
           {

@@ -1,0 +1,73 @@
+export const ACCOUNT_TEMPLATES = [
+  {
+    id: "rent",
+    title: "Aluguel",
+    category: "fixed",
+    repeatKind: "monthly",
+    notes: "Informe o imóvel e os dados do locador.",
+  },
+  {
+    id: "water",
+    title: "Água",
+    category: "variable",
+    repeatKind: "monthly",
+    notes: "Informe a referência da fatura.",
+  },
+  {
+    id: "power",
+    title: "Energia elétrica",
+    category: "variable",
+    repeatKind: "monthly",
+    notes: "Informe a referência da fatura.",
+  },
+  {
+    id: "internet",
+    title: "Internet",
+    category: "fixed",
+    repeatKind: "monthly",
+    notes: "Informe o provedor e o plano.",
+  },
+  {
+    id: "phone",
+    title: "Telefone",
+    category: "fixed",
+    repeatKind: "monthly",
+    notes: "Informe a linha e a operadora.",
+  },
+  {
+    id: "salary",
+    title: "Salário",
+    category: "payroll",
+    repeatKind: "monthly",
+    notes: "Informe o colaborador e o mês de referência.",
+  },
+  {
+    id: "supplier",
+    title: "Pagamento de fornecedor",
+    category: "variable",
+    repeatKind: "none",
+    notes: "Informe fornecedor e pedido.",
+  },
+  {
+    id: "software",
+    title: "Assinatura de software",
+    category: "fixed",
+    repeatKind: "monthly",
+    notes: "Informe serviço e plano.",
+  },
+  {
+    id: "tax",
+    title: "Impostos e taxas",
+    category: "variable",
+    repeatKind: "monthly",
+    notes:
+      "Confira o vencimento oficial; ajuste a regra de dia útil quando necessário.",
+  },
+  {
+    id: "maintenance",
+    title: "Manutenção e limpeza",
+    category: "reminder",
+    repeatKind: "weekly",
+    notes: "Descreva a tarefa e o responsável.",
+  },
+] as const;

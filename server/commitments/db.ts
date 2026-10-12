@@ -21,11 +21,31 @@ export async function ensureCommitmentsSchema() {
       `CREATE TABLE IF NOT EXISTS commitment_actions (id INT AUTO_INCREMENT PRIMARY KEY,occurrence_id INT NOT NULL,studio_id INT NOT NULL,user_id INT NOT NULL,action VARCHAR(20) NOT NULL,details TEXT,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     ])
       await db.query(statement);
+    const additions = [
+      ["commitment_series", "calendar_id", "INT NULL"],
+      ["commitment_series", "reminder_times", "TEXT NULL"],
+      ["commitment_occurrences", "manual_date", "TINYINT NOT NULL DEFAULT 0"],
+    ];
+    for (const [table, column, type] of additions) {
+      const [columns]: any = await db.query(
+        `SHOW COLUMNS FROM \`${table}\` LIKE ?`,
+        [column]
+      );
+      if (!columns.length) {
+        try {
+          await db.query(
+            `ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${type}`
+          );
+        } catch (e: any) {
+          if (e.code !== "ER_DUP_FIELDNAME") throw e;
+        }
+      }
+    }
     console.log("[Commitments] Estrutura de compromissos pronta.");
   })().catch(e => {
     ready = undefined;
     throw e;
   }));
 }
-export const seriesSelect = `s.id,s.studio_id AS studioId,s.owner_id AS ownerId,s.assignee_id AS assigneeId,s.title,s.category,s.calendar_name AS calendarName,s.color,s.amount,s.start_date AS startDate,s.end_date AS endDate,s.repeat_kind AS repeatKind,s.repeat_interval AS repeatInterval,s.shift_business AS shiftBusiness,s.notes,s.active`;
-export const occurrenceSelect = `o.id,o.series_id AS seriesId,o.original_date AS originalDate,o.effective_date AS effectiveDate,o.status,o.revision,o.snooze_until AS snoozeUntil,s.studio_id AS studioId,s.owner_id AS ownerId,s.assignee_id AS assigneeId,s.title,s.category,s.calendar_name AS calendarName,s.color,s.amount,s.notes`;
+export const seriesSelect = `s.id,s.studio_id AS studioId,s.owner_id AS ownerId,s.assignee_id AS assigneeId,s.title,s.category,COALESCE((SELECT name FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.calendar_name) AS calendarName,COALESCE((SELECT color FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.color) AS color,s.amount,s.start_date AS startDate,s.end_date AS endDate,s.repeat_kind AS repeatKind,s.repeat_interval AS repeatInterval,s.shift_business AS shiftBusiness,s.notes,s.active`;
+export const occurrenceSelect = `o.id,o.series_id AS seriesId,o.original_date AS originalDate,o.effective_date AS effectiveDate,o.status,o.revision,o.snooze_until AS snoozeUntil,s.studio_id AS studioId,s.owner_id AS ownerId,s.assignee_id AS assigneeId,s.title,s.category,COALESCE((SELECT name FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.calendar_name) AS calendarName,COALESCE((SELECT color FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.color) AS color,s.amount,s.notes`;

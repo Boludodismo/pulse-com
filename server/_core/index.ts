@@ -1,3 +1,5 @@
+import { ensureCalendarSyncSchema } from "../calendarSync/db";
+import { registerGoogleCallback } from "../calendarSync/router";
 import { ensureCommitmentsSchema } from "../commitments/db";
 import { registerArtistContactDownload } from "../artistCardContactFile";
 import { ensureSecuritySchema } from '../security/database';
@@ -46,6 +48,7 @@ async function startServer() {
   if (ENV.authMode === "local" && Buffer.byteLength(ENV.authSecurityKey) < 32) throw new Error("AUTH_SECURITY_KEY deve ter pelo menos 32 bytes.");
   await runStartupMigrations();
   try { await ensureCommitmentsSchema(); } catch { console.error("[Commitments] Inicialização indisponível; demais módulos continuam ativos."); }
+  try { await ensureCalendarSyncSchema(); } catch { console.error("[CalendarSync] Inicialização indisponível; demais módulos preservados."); }
   await ensureSecuritySchema();
   await ensureSessionCockpitSchema();
   await ensureStagingInventorySchema();
@@ -68,6 +71,7 @@ async function startServer() {
     console.log("[Storage] S3 write/read/delete check passed");
   }
   const app = express();
+  registerGoogleCallback(app);
   app.set("trust proxy", 1);
   app.disable("x-powered-by");
   app.use(securityHeaders);

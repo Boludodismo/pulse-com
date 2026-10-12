@@ -63,22 +63,20 @@ describe("operações autenticadas de compromissos", () => {
   });
   it("colaborador não atribui compromisso a outra pessoa", async () => {
     await expect(
-      commitmentsRouter
-        .createCaller(ctx(10, 7, "collaborator"))
-        .create({
-          title: "Conta",
-          category: "fixed",
-          calendarName: "Meu",
-          color: "#123456",
-          amount: null,
-          startDate: "2026-10-12",
-          endDate: null,
-          repeatKind: "monthly",
-          repeatInterval: 1,
-          shiftBusiness: true,
-          notes: "",
-          assigneeId: 11,
-        })
+      commitmentsRouter.createCaller(ctx(10, 7, "collaborator")).create({
+        title: "Conta",
+        category: "fixed",
+        calendarName: "Meu",
+        color: "#123456",
+        amount: null,
+        startDate: "2026-10-12",
+        endDate: null,
+        repeatKind: "monthly",
+        repeatInterval: 1,
+        shiftBusiness: true,
+        notes: "",
+        assigneeId: 11,
+      })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(m.query).not.toHaveBeenCalled();
   });
@@ -118,26 +116,31 @@ describe("operações autenticadas de compromissos", () => {
     await commitmentsRouter
       .createCaller(ctx())
       .action({ id: 8, revision: 0, action: "paid" });
-    expect(q.mock.calls[1][1]).toEqual(["paid", "2026-10-12", null, 8, 7]);
+    expect(q.mock.calls[1][1]).toEqual([
+      "paid",
+      "2026-10-12",
+      null,
+      "paid",
+      8,
+      7,
+    ]);
     expect(q.mock.calls[2][1].slice(0, 4)).toEqual([8, 7, 10, "paid"]);
     expect(c.commit).toHaveBeenCalled();
   });
   it("ação antiga não altera ocorrência já atualizada", async () => {
     const c = {
-      query: vi
-        .fn()
-        .mockResolvedValue([
-          [
-            {
-              id: 8,
-              studioId: 7,
-              ownerId: 10,
-              assigneeId: 11,
-              status: "pending",
-              revision: 1,
-            },
-          ],
-        ]),
+      query: vi.fn().mockResolvedValue([
+        [
+          {
+            id: 8,
+            studioId: 7,
+            ownerId: 10,
+            assigneeId: 11,
+            status: "pending",
+            revision: 1,
+          },
+        ],
+      ]),
       beginTransaction: vi.fn(),
       commit: vi.fn(),
       rollback: vi.fn(),
@@ -170,13 +173,11 @@ describe("preferências e adiamento", () => {
   });
   it("aceita WhatsApp E.164 com autorização explícita", async () => {
     m.query.mockResolvedValue([{}]);
-    await commitmentsRouter
-      .createCaller(ctx())
-      .savePreferences({
-        ...settings,
-        phone: "(31) 99653-1316",
-        consent: true,
-      });
+    await commitmentsRouter.createCaller(ctx()).savePreferences({
+      ...settings,
+      phone: "(31) 99653-1316",
+      consent: true,
+    });
     expect(m.query.mock.calls[0][1].slice(0, 4)).toEqual([
       7,
       10,
@@ -219,19 +220,18 @@ describe("preferências e adiamento", () => {
       release: vi.fn(),
     };
     m.connection.mockResolvedValue(c);
-    await commitmentsRouter
-      .createCaller(ctx())
-      .action({
-        id: 8,
-        revision: 0,
-        action: "snooze",
-        date: "2026-10-13",
-        time: "10:00",
-      });
+    await commitmentsRouter.createCaller(ctx()).action({
+      id: 8,
+      revision: 0,
+      action: "snooze",
+      date: "2026-10-13",
+      time: "10:00",
+    });
     expect(q.mock.calls[2][1]).toEqual([
       "pending",
       "2026-10-12",
       "2026-10-13 10:00:00",
+      "snooze",
       8,
       7,
     ]);
@@ -263,21 +263,100 @@ describe("preferências e adiamento", () => {
       release: vi.fn(),
     };
     m.connection.mockResolvedValue(c);
-    await commitmentsRouter
-      .createCaller(ctx())
-      .action({
-        id: 8,
-        revision: 0,
-        action: "reschedule",
-        date: "2026-10-19",
-        time: "10:00",
-      });
+    await commitmentsRouter.createCaller(ctx()).action({
+      id: 8,
+      revision: 0,
+      action: "reschedule",
+      date: "2026-10-19",
+      time: "10:00",
+    });
     expect(q.mock.calls[2][1]).toEqual([
       "pending",
       "2026-10-19",
       "2026-10-19 10:00:00",
+      "reschedule",
       8,
       7,
     ]);
+  });
+});
+
+describe("calendários pessoais e movimentação de dia inteiro", () => {
+  it("cria calendário padrão somente para a sessão e preserva registros existentes", async () => {
+    let reads = 0;
+    const q = vi.fn(async (sql: string) => {
+      if (sql.startsWith("SELECT id,name"))
+        return [
+          ++reads === 1
+            ? []
+            : [
+                {
+                  id: 31,
+                  name: "Meu calendário",
+                  color: "#FF9500",
+                  isDefault: 1,
+                },
+              ],
+        ];
+      if (sql.startsWith("SELECT DISTINCT")) return [[]];
+      return [{ insertId: 31 }];
+    });
+    const commit = vi.fn();
+    m.connection.mockResolvedValue({
+      query: q,
+      beginTransaction: vi.fn(),
+      commit,
+      rollback: vi.fn(),
+      release: vi.fn(),
+    });
+    const calendars = await commitmentsRouter.createCaller(ctx()).calendars();
+    expect(calendars[0].id).toBe(31);
+    expect(
+      q.mock.calls.find(c => c[0].startsWith("INSERT INTO calendars"))?.[1]
+    ).toEqual([10, "Meu calendário", "#FF9500"]);
+    expect(
+      q.mock.calls.find(c => c[0].startsWith("SELECT DISTINCT"))?.[1]
+    ).toEqual([7, 10]);
+    expect(commit).toHaveBeenCalledOnce();
+  });
+  it("não edita calendário de outra pessoa", async () => {
+    m.query.mockResolvedValue([{ affectedRows: 0 }]);
+    await expect(
+      commitmentsRouter
+        .createCaller(ctx())
+        .saveCalendar({ id: 77, name: "Financeiro", color: "#123456" })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(m.query.mock.calls[0][1]).toEqual(["Financeiro", "#123456", 77, 10]);
+  });
+  it("arraste de dia inteiro preserva a série e impede recalcular a data escolhida", async () => {
+    const q = vi
+      .fn()
+      .mockResolvedValueOnce([
+        [
+          {
+            studioId: 7,
+            ownerId: 10,
+            assigneeId: 10,
+            status: "pending",
+            revision: 4,
+          },
+        ],
+      ])
+      .mockResolvedValue([{}]);
+    m.connection.mockResolvedValue({
+      query: q,
+      beginTransaction: vi.fn(),
+      commit: vi.fn(),
+      rollback: vi.fn(),
+      release: vi.fn(),
+    });
+    await commitmentsRouter
+      .createCaller(ctx())
+      .moveDay({ id: 8, revision: 4, date: "2026-10-16" });
+    expect(q.mock.calls[1][0]).toContain("manual_date=1");
+    expect(q.mock.calls[1][1]).toEqual(["2026-10-16", 8, 7]);
+    expect(
+      q.mock.calls.some(c => c[0].startsWith("UPDATE commitment_series"))
+    ).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { appointmentTarget, monthTarget, useLongPressDrag, MoveConfirmation, DragIndicator } from "@/components/VisualMove";
 import { CommitmentStrip, CommitmentsManager } from "@/components/Commitments";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { trpc } from "../lib/trpc";
@@ -100,6 +101,10 @@ export default function CalendarPage() {
   const [draggedApt, setDraggedApt] = useState<any>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ date: Date; hour: number; minute: number } | null>(null);
   const dragOffsetMinutes = useRef<number>(0);
+  const [pendingMove,setPendingMove]=useState<{apt:any;date:string;requestId:string}|null>(null);
+  const requestMove=(apt:any,date:string)=>{if(date!==apt.date)setPendingMove({apt,date,requestId:crypto.randomUUID()});setDraggedApt(null);setDragOverSlot(null);};
+  const touchMove=useLongPressDrag<any>((x,y,apt,offset)=>appointmentTarget(x,y,apt.duration||60,offset)||monthTarget(x,y,apt.date),apt=>setDraggedApt(apt),target=>setDragOverSlot(target?{date:new Date(target.day+"T12:00:00"),hour:target.hour,minute:target.minute}:null),(apt,target)=>requestMove(apt,target.date),()=>{setDraggedApt(null);setDragOverSlot(null);});
+
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStart = useRef<{ x: number; y: number } | null>(null);
@@ -177,19 +182,22 @@ export default function CalendarPage() {
     if (!draggedApt) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    setDragOverSlot({ date, hour, minute });
+    const target=appointmentTarget(e.clientX,e.clientY,draggedApt.duration||60,dragOffsetMinutes.current);
+    setDragOverSlot(target?{date:new Date(target.day+"T12:00:00"),hour:target.hour,minute:target.minute}:{date,hour,minute});
   };
 
   const handleDrop = (e: React.DragEvent, targetDate: Date, hour: number, minute: number) => {
     e.preventDefault();
     if (!draggedApt) return;
+    const precise=appointmentTarget(e.clientX,e.clientY,draggedApt.duration||60,dragOffsetMinutes.current);
+    if(precise){requestMove(draggedApt,precise.date);return;}
     const totalMinutes = hour * 60 + minute - dragOffsetMinutes.current;
     const adjustedHour = Math.floor(Math.max(0, totalMinutes) / 60);
     const adjustedMinute = Math.round((Math.max(0, totalMinutes) % 60) / 30) * 30; // snap 30min
     const newDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), adjustedHour, adjustedMinute, 0);
     const originalDate = new Date(draggedApt.date.replace(" ", "T"));
     if (originalDate.getTime() === newDate.getTime()) { setDraggedApt(null); setDragOverSlot(null); return; }
-    updateAppointmentDate.mutate({ id: draggedApt.id, data: { date: toLocalDateString(newDate) } });
+    requestMove(draggedApt,toLocalDateString(newDate));
   };
 
   const knownCalendars = useRef(new Set<number>());
@@ -556,7 +564,7 @@ export default function CalendarPage() {
           {weekDays.map((day, dayIndex) => {
             const dayApts = getAptsByDay(day);
             return (
-              <div key={dayIndex} className={`relative border-l border-white/10 ${isToday(day) ? "bg-blue-500/5" : ""}`}>
+              <div key={dayIndex} data-agenda-day={toLocalDateString(day).slice(0,10)} data-slot-height={SLOT_HEIGHT} className={`relative border-l border-white/10 ${isToday(day) ? "bg-blue-500/5" : ""}`}>
                 {HOURS.map((hour) => (
                   <div key={hour}
                     className="absolute w-full border-t border-white/10 hover:bg-white/5 cursor-pointer transition-colors"
@@ -598,6 +606,7 @@ export default function CalendarPage() {
                   return (
                     <div key={apt.id}
                       draggable
+                      onTouchStart={(e)=>touchMove.start(e,apt)}
                       onDragStart={(e) => { e.stopPropagation(); handleDragStart(e, apt); }}
                       onDragEnd={() => { setDraggedApt(null); setDragOverSlot(null); }}
                       onClick={() => { if (!draggedApt) openDetails(apt); }}
@@ -637,6 +646,9 @@ export default function CalendarPage() {
             const dayApts = day ? getAptsByDay(day) : [];
             return (
               <div key={index}
+                data-agenda-month-day={day ? toLocalDateString(day).slice(0,10) : undefined}
+                onDragOver={(e)=>{if(!day||!draggedApt)return;e.preventDefault();setDragOverSlot({date:day,hour:Number(draggedApt.date.slice(11,13)),minute:Number(draggedApt.date.slice(14,16))});}}
+                onDrop={(e)=>{e.preventDefault();if(day&&draggedApt)requestMove(draggedApt,toLocalDateString(day).slice(0,10)+draggedApt.date.slice(10));}}
                 className={`min-h-[100px] p-1.5 border-b border-r border-white/10
                   ${day ? "hover:bg-white/5 cursor-pointer" : "bg-[#111]"}
                   ${isToday(day) ? "bg-blue-500/10" : ""}`}
@@ -656,7 +668,11 @@ export default function CalendarPage() {
                         const statusIndicator = getStatusIndicator(apt);
                         return (
                           <div key={apt.id}
-                            onClick={(e) => { e.stopPropagation(); openDetails(apt); }}
+                            draggable
+                            onTouchStart={(e)=>touchMove.start(e,apt)}
+                            onDragStart={(e)=>{e.stopPropagation();handleDragStart(e,apt);}}
+                            onDragEnd={()=>{setDraggedApt(null);setDragOverSlot(null);}}
+                            onClick={(e) => { e.stopPropagation(); if(!draggedApt)openDetails(apt); }}
                             onDoubleClick={(e) => { e.stopPropagation(); openEditApt(apt); }}
                             className="text-[10px] text-white px-1 py-0.5 rounded truncate flex items-center gap-1 cursor-pointer hover:opacity-80"
                             style={{ backgroundColor: color + "cc" }}>
@@ -711,7 +727,7 @@ export default function CalendarPage() {
                 </div>
               ))}
             </div>
-            <div className="relative border-l border-white/10">
+            <div data-agenda-day={toLocalDateString(currentDate).slice(0,10)} data-slot-height={SLOT_HEIGHT} className="relative border-l border-white/10">
               {HOURS.map((hour) => (
                 <div key={hour}
                   className="absolute w-full border-t border-white/10 hover:bg-white/5 cursor-pointer"
@@ -750,6 +766,7 @@ export default function CalendarPage() {
                 return (
                   <div key={apt.id}
                     draggable
+                    onTouchStart={(e)=>touchMove.start(e,apt)}
                     onDragStart={(e) => { e.stopPropagation(); handleDragStart(e, apt); }}
                     onDragEnd={() => { setDraggedApt(null); setDragOverSlot(null); }}
                     onClick={() => { if (!draggedApt) openDetails(apt); }}
@@ -960,6 +977,8 @@ export default function CalendarPage() {
         <div className="fixed inset-0 z-30 bg-black/60 lg:hidden" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
       )}
 
+      <MoveConfirmation pending={pendingMove} onClose={()=>setPendingMove(null)} onSaved={invalidateAll} />
+      <DragIndicator date={draggedApt&&dragOverSlot?toLocalDateString(new Date(dragOverSlot.date.getFullYear(),dragOverSlot.date.getMonth(),dragOverSlot.date.getDate(),dragOverSlot.hour,dragOverSlot.minute)):null} />
       {/* Sidebar */}
       {sidebarOpen && (
         <div className="fixed lg:relative inset-y-0 left-0 z-40 lg:z-auto w-56 flex-shrink-0 bg-[#161618] border-r border-white/10 flex flex-col shadow-xl lg:shadow-none" style={{ top: 0, height: "100%" }}>

@@ -1,3 +1,4 @@
+import { appointmentTarget, monthTarget, useLongPressDrag, MoveConfirmation, DragIndicator } from "@/components/VisualMove";
 import { CommitmentStrip, CommitmentsManager } from "@/components/Commitments";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { EventModal } from "@/components/EventModal";
@@ -196,6 +197,10 @@ export default function Schedule() {
   const [draggedAppointment, setDraggedAppointment] = useState<any>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ date: Date; hour: number; minute: number } | null>(null);
   const dragOffsetMinutes = useRef<number>(0);
+  const [pendingMove,setPendingMove]=useState<{apt:any;date:string;requestId:string}|null>(null);
+  const requestMove=(apt:any,date:string)=>{if(date!==apt.date)setPendingMove({apt,date,requestId:crypto.randomUUID()});setDraggedAppointment(null);setDragOverSlot(null);};
+  const touchMove=useLongPressDrag<any>((x,y,apt,offset)=>appointmentTarget(x,y,apt.duration||60,offset)||monthTarget(x,y,apt.date),apt=>setDraggedAppointment(apt),target=>setDragOverSlot(target?{date:new Date(target.day+"T12:00:00"),hour:target.hour,minute:target.minute}:null),(apt,target)=>requestMove(apt,target.date),()=>{setDraggedAppointment(null);setDragOverSlot(null);});
+
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
   // Form state para edição
@@ -537,16 +542,16 @@ export default function Schedule() {
     if (!date || !draggedAppointment) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    setDragOverSlot({ date, hour: 0, minute: 0 });
+    setDragOverSlot({date,hour:Number(draggedAppointment.date.slice(11,13)),minute:Number(draggedAppointment.date.slice(14,16))});
   };
 
   const handleMonthDrop = (e: React.DragEvent, targetDate: Date | null) => {
     e.preventDefault();
     if (!targetDate || !draggedAppointment) { setDraggedAppointment(null); setDragOverSlot(null); return; }
-    const originalDate = new Date(draggedAppointment.date);
+    const originalDate = new Date(draggedAppointment.date.replace(" ","T"));
     const newDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), originalDate.getHours(), originalDate.getMinutes(), 0);
     if (isSameDay(originalDate, newDate)) { setDraggedAppointment(null); setDragOverSlot(null); return; }
-    updateAppointmentDate.mutate({ id: draggedAppointment.id, data: { date: toLocalDateString(newDate) } });
+    requestMove(draggedAppointment,toLocalDateString(newDate));
   };
 
   // ── Drag & Drop — Semanal/Diário ──────────────────────────────────────────
@@ -564,24 +569,27 @@ export default function Schedule() {
     if (!draggedAppointment) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    setDragOverSlot({ date, hour, minute });
+    const target=appointmentTarget(e.clientX,e.clientY,draggedAppointment.duration||60,dragOffsetMinutes.current);
+    setDragOverSlot(target?{date:new Date(target.day+"T12:00:00"),hour:target.hour,minute:target.minute}:{date,hour,minute});
   };
 
   const handleWeekDrop = (e: React.DragEvent, targetDate: Date, hour: number, minute: number) => {
     e.preventDefault();
     if (!draggedAppointment) return;
+    const precise=appointmentTarget(e.clientX,e.clientY,draggedAppointment.duration||60,dragOffsetMinutes.current);
+    if(precise){requestMove(draggedAppointment,precise.date);return;}
     const totalMinutes = hour * 60 + minute - dragOffsetMinutes.current;
     const adjustedHour = Math.floor(Math.max(0, totalMinutes) / 60);
     const adjustedMinute = Math.round((Math.max(0, totalMinutes) % 60) / 15) * 15;
     const newDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), adjustedHour, adjustedMinute, 0);
-    const originalDate = new Date(draggedAppointment.date);
+    const originalDate = new Date(draggedAppointment.date.replace(" ","T"));
     if (originalDate.getTime() === newDate.getTime()) { setDraggedAppointment(null); setDragOverSlot(null); return; }
-    updateAppointmentDate.mutate({ id: draggedAppointment.id, data: { date: toLocalDateString(newDate) } });
+    requestMove(draggedAppointment,toLocalDateString(newDate));
   };
 
   // ── Posicionamento de eventos na grade de horários ────────────────────────
   const getEventStyle = (apt: any) => {
-    const start = new Date(apt.date);
+    const start = new Date(apt.date.replace(" ", "T"));
     const startHour = start.getHours();
     const startMinute = start.getMinutes();
     const duration = apt.duration || 60;
@@ -743,6 +751,7 @@ export default function Schedule() {
           return (
             <div
               key={dayIndex}
+              data-agenda-day={toLocalDateString(day).slice(0,10)} data-slot-height={SLOT_HEIGHT}
               className={`relative border-l border-border ${isToday(day) ? "bg-primary/5" : ""}`}
             >
               {/* Slots de horário */}
@@ -797,6 +806,7 @@ export default function Schedule() {
                   <div
                     key={apt.id}
                     draggable
+                    onTouchStart={(e)=>touchMove.start(e,apt)}
                     onDragStart={(e) => handleWeekDragStart(e, apt)}
                     onDragEnd={handleMonthDragEnd}
                     onClick={(e) => handleAppointmentClick(apt, e)}
@@ -839,6 +849,7 @@ export default function Schedule() {
         {calendarDays.map((day, index) => (
           <div
             key={index}
+            data-agenda-month-day={day.date?toLocalDateString(day.date).slice(0,10):undefined}
             onDragOver={(e) => handleMonthDragOver(e, day.date)}
             onDragLeave={() => setDragOverSlot(null)}
             onDrop={(e) => handleMonthDrop(e, day.date)}
@@ -866,6 +877,7 @@ export default function Schedule() {
                       <div
                         key={apt.id}
                         draggable
+                      onTouchStart={(e)=>touchMove.start(e,apt)}
                         onDragStart={(e) => handleMonthDragStart(e, apt)}
                         onDragEnd={handleMonthDragEnd}
                         onClick={(e) => handleAppointmentClick(apt, e)}
@@ -1247,6 +1259,8 @@ export default function Schedule() {
       </Dialog>
 
       {/* ── EVENT MODAL ──────────────────────────────────────────────────── */}
+      <MoveConfirmation pending={pendingMove} onClose={()=>setPendingMove(null)} onSaved={invalidateAll} />
+      <DragIndicator date={draggedAppointment&&dragOverSlot?toLocalDateString(new Date(dragOverSlot.date.getFullYear(),dragOverSlot.date.getMonth(),dragOverSlot.date.getDate(),dragOverSlot.hour,dragOverSlot.minute)):null} />
       <EventModal
         isOpen={eventModalOpen}
         onClose={() => { setEventModalOpen(false); setEventModalId(null); }}
