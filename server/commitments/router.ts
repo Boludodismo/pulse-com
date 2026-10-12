@@ -2,7 +2,7 @@ import { getActiveIntegration } from "../messaging/service";
 import { commitmentIcs } from "./export";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, tenantProcedure } from "../_core/trpc";
+import { router, protectedProcedure } from "../_core/trpc";
 import {
   database,
   ensureCommitmentsSchema,
@@ -24,14 +24,13 @@ const date = z
     return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
   }, "Data inválida");
 const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
-const procedure = tenantProcedure.use(async ({ ctx, next }) => {
-  if (ctx.user.role === "superadmin")
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "Compromissos não estão disponíveis no painel global.",
-    });
+const procedure = protectedProcedure.use(async ({ ctx, next }) => {
+  // Namespace negativo, exclusivo do usuário global; nunca representa um estúdio real.
+  const studioId = ctx.user.role === "superadmin" ? -ctx.user.id : ctx.user.studioId;
+  if (!studioId || (ctx.user.role !== "superadmin" && studioId < 1))
+    throw new TRPCError({ code: "FORBIDDEN", message: "Conta sem escopo de compromissos." });
   await ensureCommitmentsSchema();
-  return next({ ctx });
+  return next({ ctx: { ...ctx, studioId } });
 });
 const scope = (ctx: any) => ({
   studioId: ctx.studioId,
@@ -53,8 +52,8 @@ export const commitmentsRouter = router({
     try {
       await connection.beginTransaction();
       await connection.query(
-        "SELECT id FROM users WHERE id=? AND studioId=? FOR UPDATE",
-        [ctx.user.id, ctx.studioId]
+        "SELECT id FROM users WHERE id=? AND (studioId=? OR (? < 0 AND role='superadmin')) FOR UPDATE",
+        [ctx.user.id, ctx.studioId, ctx.studioId]
       );
       let [rows]: any = await connection.query(
         "SELECT id,name,color,isDefault FROM calendars WHERE userId=? ORDER BY isDefault DESC,id",
@@ -191,7 +190,7 @@ export const commitmentsRouter = router({
       "SELECT phone,consent,timezone,before_time AS beforeTime,first_time AS firstTime,second_time AS secondTime,holidays_json AS holidaysJson FROM commitment_preferences WHERE studio_id=? AND user_id=?",
       [ctx.studioId, ctx.user.id]
     );
-    const integration = await getActiveIntegration(ctx.studioId);
+    const integration = ctx.studioId < 0 ? null : await getActiveIntegration(ctx.studioId);
     const whatsappReady = !!integration && !integration.sandboxMode;
     return rows[0]
       ? {
@@ -277,6 +276,7 @@ export const commitmentsRouter = router({
       return { success: true };
     }),
   assignees: procedure.query(async ({ ctx }) => {
+    if (ctx.studioId < 0) return [{ id: ctx.user.id, name: ctx.user.name || "Minha conta" }];
     const [rows]: any = await database().query(
       "SELECT id,name FROM users WHERE studioId=? AND isActive=1 AND accessStatus='active' AND role<>'superadmin' AND (?='admin' OR id=?)",
       [ctx.studioId, ctx.user.role, ctx.user.id]
@@ -317,8 +317,8 @@ export const commitmentsRouter = router({
       if (input.assigneeId !== ctx.user.id && ctx.user.role !== "admin")
         throw new TRPCError({ code: "FORBIDDEN" });
       const [users]: any = await database().query(
-        "SELECT id FROM users WHERE id=? AND studioId=? AND isActive=1 AND role<>'superadmin'",
-        [input.assigneeId, ctx.studioId]
+        "SELECT id FROM users WHERE id=? AND isActive=1 AND ((studioId=? AND role<>'superadmin') OR (? < 0 AND role='superadmin' AND id=?))",
+        [input.assigneeId, ctx.studioId, ctx.studioId, ctx.user.id]
       );
       if (!users[0])
         throw new TRPCError({
