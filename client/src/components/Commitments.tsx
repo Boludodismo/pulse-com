@@ -2,6 +2,15 @@ import { useLongPressDrag } from "./VisualMove";
 import { CalendarConnections } from "./CalendarConnections";
 import { ACCOUNT_TEMPLATES } from "../../../shared/commitmentTemplates";
 import { useEffect, useState } from "react";
+import {
+  CommitmentAttachmentPicker,
+  SavedCommitmentAttachment,
+  type DraftAttachment,
+} from "./CommitmentAttachments";
+import {
+  commitmentAppearance,
+  commitmentToday,
+} from "../../../shared/commitmentPresentation";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -16,6 +25,14 @@ import { toast } from "sonner";
 import { addDays, nationalHolidays } from "../../../shared/commitments";
 const day = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function useCommitmentToday(timezone?: string) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+  return commitmentToday(timezone, now);
+}
 const categories = {
   fixed: "Conta fixa",
   variable: "Conta variável",
@@ -30,33 +47,6 @@ const download = (name: string, data: string, type: string) => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
-function Attachment({ id, name }: { id: number; name: string }) {
-  const utils = trpc.useUtils();
-  return (
-    <Button
-      variant="outline"
-      className="h-auto whitespace-normal"
-      onClick={async () => {
-        try {
-          const file = await utils.commitments.attachment.fetch({ id });
-          const bytes = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
-          const url = URL.createObjectURL(
-            new Blob([bytes], { type: file.mime })
-          );
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = file.name;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch {
-          toast.error("Não foi possível abrir o anexo.");
-        }
-      }}
-    >
-      {name}
-    </Button>
-  );
-}
 export function CommitmentDetail({
   id,
   onClose,
@@ -87,43 +77,47 @@ export function CommitmentDetail({
     },
     onError: e => toast.error(e.message),
   });
-  const attach = trpc.commitments.attach.useMutation({
-    onSuccess: () => utils.commitments.detail.invalidate(),
-    onError: e => toast.error(e.message),
-  });
   const o = query.data;
   const { user } = useAuth();
-  const upload = async (files: FileList | null) => {
-    for (const f of Array.from(files || [])) {
-      if (f.size > 2 * 1024 * 1024) {
-        toast.error(`${f.name}: limite de 2 MB.`);
-        continue;
-      }
-      if (!["image/png", "image/jpeg", "application/pdf"].includes(f.type)) {
-        toast.error("Use PNG, JPG ou PDF.");
-        continue;
-      }
-      const data = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result).split(",")[1]);
-        r.onerror = reject;
-        r.readAsDataURL(f);
-      });
-      await attach
-        .mutateAsync({
-          seriesId: o.seriesId,
-          name: f.name,
-          mime: f.type as any,
-          data,
-        })
-        .catch(() => {});
+  const prefs = trpc.commitments.preferences.useQuery();
+  const [baseline, setBaseline] = useState<any>(null);
+  const [draft, setDraft] = useState<any>(null);
+  const [files, setFiles] = useState<DraftAttachment[]>([]);
+  const [removed, setRemoved] = useState<number[]>([]);
+  const [reading, setReading] = useState(false);
+  const editable = (value: any) => ({
+    title: value.title,
+    amount: value.amount == null ? "" : String(Number(value.amount) / 100),
+    notes: value.notes || "",
+    customColor: value.customColor || null,
+  });
+  useEffect(() => {
+    if (o && !baseline) {
+      setBaseline(o);
+      setDraft(editable(o));
     }
-  };
+  }, [o, baseline]);
+  const saveChanges = trpc.commitments.save.useMutation({
+    onSuccess: async () => {
+      setFiles([]);
+      setRemoved([]);
+      const result = await query.refetch();
+      if (result.data) {
+        setBaseline(result.data);
+        setDraft(editable(result.data));
+      }
+      refresh();
+      toast.success("Alterações salvas.");
+    },
+    onError: e => toast.error(e.message),
+  });
+  const today = useCommitmentToday(prefs.data?.timezone);
+  const appearance = o ? commitmentAppearance(o, today) : null;
   return (
     <Dialog
       open
       onOpenChange={open => {
-        if (!open) onClose();
+        if (!open && !saveChanges.isPending) onClose();
       }}
     >
       <DialogContent className="max-h-[90dvh] overflow-y-auto min-w-0">
@@ -142,11 +136,7 @@ export function CommitmentDetail({
             </p>
             <p>
               Data: {o.effectiveDate.split("-").reverse().join("/")} ·{" "}
-              {o.status === "paid"
-                ? o.category === "reminder"
-                  ? "Concluído"
-                  : "Pago"
-                : "Pendente"}
+              {appearance?.marker} {appearance?.label}
             </p>
             {o.snoozeUntil && (
               <p className="text-sm">Próximo aviso: {o.snoozeUntil}</p>
@@ -227,27 +217,172 @@ export function CommitmentDetail({
                 </p>
               </>
             )}
-            <div className="flex flex-wrap gap-2">
-              {o.attachments.map((a: any) => (
-                <Attachment key={a.id} {...a} />
-              ))}
-            </div>
+            {appearance?.overdue && (
+              <p
+                role="status"
+                className="rounded border border-orange-500 p-2 text-sm"
+              >
+                ⚠ Vencimento ultrapassado sem confirmação de{" "}
+                {o.category === "reminder" ? "conclusão" : "pagamento"}.
+              </p>
+            )}
+            {user?.id !== o.ownerId && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {o.attachments.map((a: any) => (
+                  <SavedCommitmentAttachment key={a.id} {...a} />
+                ))}
+              </div>
+            )}
             {user?.id === o.ownerId && (
               <>
-                <label className="block">
-                  Anexar boleto ou contrato (PNG, JPG ou PDF, até 2 MB; cinco
-                  por série)
-                  <Input
-                    type="file"
-                    accept="image/png,image/jpeg,application/pdf"
-                    multiple
-                    disabled={attach.isPending}
-                    onChange={e => void upload(e.target.files)}
-                  />
-                </label>
-                <p className="text-sm">
-                  Anexos ficam disponíveis nas ocorrências desta série.
-                </p>
+                {draft && baseline && (
+                  <div className="space-y-3 rounded border p-3">
+                    <p className="text-sm text-muted-foreground">
+                      Título, valor, cor, notas e anexos são compartilhados pela
+                      série. O pagamento continua independente em cada
+                      ocorrência.
+                    </p>
+                    <fieldset
+                      disabled={saveChanges.isPending || reading}
+                      className="space-y-3"
+                    >
+                      <label className="block">
+                        Título
+                        <Input
+                          value={draft.title}
+                          maxLength={200}
+                          onChange={e =>
+                            setDraft({ ...draft, title: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="block">
+                        Valor (R$, opcional)
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={draft.amount}
+                          onChange={e =>
+                            setDraft({ ...draft, amount: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="block">
+                        Cor da conta ou lembrete
+                        <Input
+                          type="color"
+                          value={draft.customColor || o.color}
+                          onChange={e =>
+                            setDraft({ ...draft, customColor: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="flex gap-2">
+                        <input
+                          type="checkbox"
+                          checked={draft.customColor === null}
+                          onChange={e =>
+                            setDraft({
+                              ...draft,
+                              customColor: e.target.checked ? null : o.color,
+                            })
+                          }
+                        />
+                        Usar cor do calendário
+                      </label>
+                      <label className="block">
+                        Notas
+                        <textarea
+                          className="block w-full rounded border bg-background p-2"
+                          maxLength={4000}
+                          value={draft.notes}
+                          onChange={e =>
+                            setDraft({ ...draft, notes: e.target.value })
+                          }
+                        />
+                      </label>
+                    </fieldset>
+                    <CommitmentAttachmentPicker
+                      files={files}
+                      onChange={setFiles}
+                      savedCount={baseline.attachments.length - removed.length}
+                      disabled={saveChanges.isPending}
+                      onReadingChange={setReading}
+                    />
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {baseline.attachments
+                        .filter((a: any) => !removed.includes(a.id))
+                        .map((a: any) => (
+                          <SavedCommitmentAttachment
+                            key={a.id}
+                            {...a}
+                            disabled={saveChanges.isPending || reading}
+                            onRemove={() => setRemoved([...removed, a.id])}
+                          />
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        disabled={
+                          saveChanges.isPending ||
+                          reading ||
+                          !draft.title.trim()
+                        }
+                        onClick={() =>
+                          saveChanges.mutate({
+                            id,
+                            revision: o.revision,
+                            title: draft.title,
+                            amount:
+                              draft.amount === ""
+                                ? null
+                                : Math.round(Number(draft.amount) * 100),
+                            notes: draft.notes,
+                            customColor: draft.customColor,
+                            attachments: files,
+                            removeAttachmentIds: removed,
+                            expectedAttachmentIds: baseline.attachments.map(
+                              (a: any) => a.id
+                            ),
+                            expected: {
+                              title: baseline.title,
+                              amount:
+                                baseline.amount == null
+                                  ? null
+                                  : Number(baseline.amount),
+                              notes: baseline.notes || "",
+                              customColor: baseline.customColor || null,
+                            },
+                          })
+                        }
+                      >
+                        {saveChanges.isPending ? "Salvando…" : "Salvar"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={saveChanges.isPending || reading}
+                        onClick={() => {
+                          setDraft(editable(baseline));
+                          setFiles([]);
+                          setRemoved([]);
+                        }}
+                      >
+                        Desfazer alterações
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={saveChanges.isPending}
+                        onClick={onClose}
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <Button
                   variant="outline"
                   className="h-auto whitespace-normal"
@@ -299,6 +434,10 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
     { from, to },
     { enabled: !!user && true }
   );
+  const prefs = trpc.commitments.preferences.useQuery(undefined, {
+    enabled: !!user,
+  });
+  const today = useCommitmentToday(prefs.data?.timezone);
   const [selected, setSelected] = useState<number | null>(null);
   const [dragged, setDragged] = useState<any>(null),
     [target, setTarget] = useState<string | null>(null),
@@ -379,36 +518,45 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
               ))}
             {query.data
               ?.filter(o => o.effectiveDate === day(d))
-              .map(o => (
-                <button
-                  key={o.id}
-                  title={o.title}
-                  className="block w-full rounded text-left p-1 text-xs sm:text-sm whitespace-normal [overflow-wrap:anywhere] border-l-4 bg-muted"
-                  style={{
-                    borderColor: o.color,
-                    opacity: o.status === "paid" ? 0.6 : 1,
-                  }}
-                  draggable={o.status === "pending"}
-                  onDragStart={e => {
-                    setDragged(o);
-                    e.dataTransfer.effectAllowed = "move";
-                    e.dataTransfer.setData("text/plain", `commitment:${o.id}`);
-                  }}
-                  onDragEnd={() => {
-                    setDragged(null);
-                    setTarget(null);
-                  }}
-                  onTouchStart={e => {
-                    if (o.status === "pending") touch.start(e, o);
-                  }}
-                  onClick={() => {
-                    if (!dragged) setSelected(o.id);
-                  }}
-                >
-                  {o.status === "paid" ? "✓ " : ""}
-                  {o.title}
-                </button>
-              ))}
+              .map(o => {
+                const appearance = commitmentAppearance(o, today);
+                return (
+                  <button
+                    key={o.id}
+                    title={`${o.title} · ${appearance.label}`}
+                    className="block w-full rounded text-left p-1 text-xs sm:text-sm whitespace-normal [overflow-wrap:anywhere] border-l-4 bg-muted"
+                    style={{
+                      borderColor: appearance.color,
+                      backgroundColor: `${appearance.color}18`,
+                    }}
+                    draggable={o.status === "pending"}
+                    onDragStart={e => {
+                      setDragged(o);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData(
+                        "text/plain",
+                        `commitment:${o.id}`
+                      );
+                    }}
+                    onDragEnd={() => {
+                      setDragged(null);
+                      setTarget(null);
+                    }}
+                    onTouchStart={e => {
+                      if (o.status === "pending") touch.start(e, o);
+                    }}
+                    onClick={() => {
+                      if (!dragged) setSelected(o.id);
+                    }}
+                  >
+                    {appearance.marker && `${appearance.marker} `}
+                    {o.title}
+                    <span className="block text-[10px]">
+                      {appearance.label}
+                    </span>
+                  </button>
+                );
+              })}
           </div>
         ))}
       </div>
@@ -499,6 +647,7 @@ export function CommitmentsManager({
   const prefs = trpc.commitments.preferences.useQuery(undefined, {
     enabled: open && !!user,
   });
+  const today = useCommitmentToday(prefs.data?.timezone);
   const savedCalendars = trpc.commitments.calendars.useQuery(undefined, {
     enabled: !!user && true,
   });
@@ -524,7 +673,7 @@ export function CommitmentsManager({
     [holidayDate, setHolidayDate] = useState(from),
     [holidayName, setHolidayName] = useState(""),
     [annual, setAnnual] = useState(true);
-  const [form, setForm] = useState<any>({
+  const initialForm = () => ({
     title: "",
     category: "fixed",
     calendarId: 0,
@@ -542,7 +691,11 @@ export function CommitmentsManager({
     shiftBusiness: true,
     notes: "",
     assigneeId: 0,
+    customColor: null as string | null,
   });
+  const [form, setForm] = useState<any>(initialForm);
+  const [newFiles, setNewFiles] = useState<DraftAttachment[]>([]);
+  const [readingFiles, setReadingFiles] = useState(false);
   useEffect(() => {
     if (prefs.data)
       setSettings({ ...prefs.data, consent: !!prefs.data.consent });
@@ -557,10 +710,9 @@ export function CommitmentsManager({
     onSuccess: async result => {
       await utils.commitments.list.invalidate();
       setTab("list");
-      toast.success(
-        "Compromisso cadastrado. Abra uma ocorrência para adicionar anexos."
-      );
-      setForm((f: any) => ({ ...f, title: "" }));
+      toast.success("Compromisso e anexos salvos.");
+      setForm(initialForm());
+      setNewFiles([]);
     },
     onError: e => toast.error(e.message),
   });
@@ -622,7 +774,17 @@ export function CommitmentsManager({
       >
         Contas e lembretes
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={value => {
+          if (create.isPending || readingFiles) return;
+          setOpen(value);
+          if (!value) {
+            setForm(initialForm());
+            setNewFiles([]);
+          }
+        }}
+      >
         <DialogContent className="max-h-[90dvh] overflow-y-auto max-w-2xl">
           <DialogHeader>
             <DialogTitle>Compromissos de dia inteiro</DialogTitle>
@@ -663,21 +825,23 @@ export function CommitmentsManager({
               {list.error && (
                 <p role="alert">Não foi possível carregar os compromissos.</p>
               )}
-              {list.data?.map(o => (
-                <button
-                  key={o.id}
-                  className="w-full text-left rounded border p-3 [overflow-wrap:anywhere] border-l-4"
-                  style={{ borderLeftColor: o.color }}
-                  onClick={() => setSelected(o.id)}
-                >
-                  {o.effectiveDate.split("-").reverse().join("/")} · {o.title} ·{" "}
-                  {o.status === "paid"
-                    ? o.category === "reminder"
-                      ? "Concluído"
-                      : "Pago"
-                    : "Pendente"}
-                </button>
-              ))}
+              {list.data?.map(o => {
+                const appearance = commitmentAppearance(o, today);
+                return (
+                  <button
+                    key={o.id}
+                    className="w-full text-left rounded border p-3 [overflow-wrap:anywhere] border-l-4"
+                    style={{
+                      borderLeftColor: appearance.color,
+                      backgroundColor: `${appearance.color}18`,
+                    }}
+                    onClick={() => setSelected(o.id)}
+                  >
+                    {o.effectiveDate.split("-").reverse().join("/")} · {o.title}{" "}
+                    · {appearance.marker} {appearance.label}
+                  </button>
+                );
+              })}
               {!list.isLoading && !list.data?.length && (
                 <p>Nenhum compromisso neste período.</p>
               )}
@@ -709,12 +873,14 @@ export function CommitmentsManager({
               className="space-y-3"
               onSubmit={e => {
                 e.preventDefault();
+                if (create.isPending || readingFiles) return;
                 const amount =
                   form.amount === ""
                     ? null
                     : Math.round(Number(form.amount) * 100);
                 create.mutate({
                   ...form,
+                  attachments: newFiles,
                   calendarId:
                     Number(form.calendarId) || savedCalendars.data?.[0]?.id,
                   reminderTimes: form.customTimes
@@ -845,6 +1011,38 @@ export function CommitmentsManager({
                   </Button>
                 </div>
               </details>
+              <label className="block">
+                Cor da conta ou lembrete
+                <Input
+                  type="color"
+                  value={
+                    form.customColor ||
+                    savedCalendars.data?.find(
+                      c =>
+                        c.id ===
+                        (Number(form.calendarId) ||
+                          savedCalendars.data?.[0]?.id)
+                    )?.color ||
+                    "#FF9500"
+                  }
+                  onChange={e =>
+                    setForm({ ...form, customColor: e.target.value })
+                  }
+                />
+              </label>
+              <label className="flex gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.customColor === null}
+                  onChange={e =>
+                    setForm({
+                      ...form,
+                      customColor: e.target.checked ? null : "#FF9500",
+                    })
+                  }
+                />
+                Usar cor do calendário
+              </label>
               {field("amount", "Valor (R$, opcional)", "number")}
               {field("startDate", "Data inicial / vencimento", "date")}
               <label className="block">
@@ -923,15 +1121,48 @@ export function CommitmentsManager({
                 </>
               )}
               {field("notes", "Notas")}
-              <Button
-                disabled={
-                  create.isPending ||
-                  savedCalendars.isLoading ||
-                  !!savedCalendars.error
-                }
-              >
-                Cadastrar compromisso
-              </Button>
+              <CommitmentAttachmentPicker
+                files={newFiles}
+                onChange={setNewFiles}
+                disabled={create.isPending}
+                onReadingChange={setReadingFiles}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="submit"
+                  disabled={
+                    create.isPending ||
+                    readingFiles ||
+                    savedCalendars.isLoading ||
+                    !!savedCalendars.error
+                  }
+                >
+                  {create.isPending ? "Salvando…" : "Salvar"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={create.isPending || readingFiles}
+                  onClick={() => {
+                    setForm(initialForm());
+                    setNewFiles([]);
+                  }}
+                >
+                  Desfazer alterações
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={create.isPending || readingFiles}
+                  onClick={() => {
+                    setForm(initialForm());
+                    setNewFiles([]);
+                    setOpen(false);
+                  }}
+                >
+                  Cancelar
+                </Button>
+              </div>
             </form>
           )}
           {tab === "settings" && settings && (

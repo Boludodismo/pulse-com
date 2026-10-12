@@ -24,6 +24,7 @@ export async function ensureCommitmentsSchema() {
     const additions = [
       ["commitment_series", "calendar_id", "INT NULL"],
       ["commitment_series", "reminder_times", "TEXT NULL"],
+      ["commitment_series", "custom_color", "VARCHAR(7) NULL"],
       ["commitment_occurrences", "manual_date", "TINYINT NOT NULL DEFAULT 0"],
     ];
     for (const [table, column, type] of additions) {
@@ -47,5 +48,5 @@ export async function ensureCommitmentsSchema() {
     throw e;
   }));
 }
-export const seriesSelect = `s.id,s.studio_id AS studioId,s.owner_id AS ownerId,s.assignee_id AS assigneeId,s.title,s.category,COALESCE((SELECT name FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.calendar_name) AS calendarName,COALESCE((SELECT color FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.color) AS color,s.amount,s.start_date AS startDate,s.end_date AS endDate,s.repeat_kind AS repeatKind,s.repeat_interval AS repeatInterval,s.shift_business AS shiftBusiness,s.notes,s.active`;
-export const occurrenceSelect = `o.id,o.series_id AS seriesId,o.original_date AS originalDate,o.effective_date AS effectiveDate,o.status,o.revision,o.snooze_until AS snoozeUntil,s.studio_id AS studioId,s.owner_id AS ownerId,s.assignee_id AS assigneeId,s.title,s.category,COALESCE((SELECT name FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.calendar_name) AS calendarName,COALESCE((SELECT color FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.color) AS color,s.amount,s.notes`;
+export const seriesSelect = `s.id,s.studio_id AS studioId,s.owner_id AS ownerId,s.assignee_id AS assigneeId,s.title,s.category,COALESCE((SELECT name FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.calendar_name) AS calendarName,s.custom_color AS customColor,COALESCE(s.custom_color,(SELECT color FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.color) AS color,s.amount,s.start_date AS startDate,s.end_date AS endDate,s.repeat_kind AS repeatKind,s.repeat_interval AS repeatInterval,s.shift_business AS shiftBusiness,s.notes,s.active`;
+export const occurrenceSelect = `o.id,o.series_id AS seriesId,o.original_date AS originalDate,o.effective_date AS effectiveDate,o.status,o.revision,o.snooze_until AS snoozeUntil,s.studio_id AS studioId,s.owner_id AS ownerId,s.assignee_id AS assigneeId,s.title,s.category,COALESCE((SELECT name FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.calendar_name) AS calendarName,s.custom_color AS customColor,COALESCE(s.custom_color,(SELECT color FROM calendars WHERE id=s.calendar_id AND userId=s.owner_id),s.color) AS color,s.amount,s.notes`;

@@ -24,14 +24,24 @@ const ctx = (id = 10, studioId = 7, role = "admin") =>
   ({ user: { id, studioId, role }, req: {}, res: {} }) as any;
 beforeEach(() => vi.clearAllMocks());
 describe("operações autenticadas de compromissos", () => {
-  it("superadmin não consulta dados nem inicializa tabelas", async () => {
-    await expect(
-      commitmentsRouter
-        .createCaller(ctx(10, 7, "superadmin"))
-        .list({ from: "2026-10-01", to: "2026-10-31" })
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(m.query).not.toHaveBeenCalled();
-    expect(m.ensure).not.toHaveBeenCalled();
+  it("superadmin usa apenas seu escopo pessoal sem consultar o estúdio ativo", async () => {
+    m.query.mockResolvedValue([[]]);
+    await commitmentsRouter
+      .createCaller(ctx(10, 7, "superadmin"))
+      .list({ from: "2026-10-01", to: "2026-10-31" });
+    expect(m.query.mock.calls[0][1]).toEqual([
+      -10,
+      10,
+      10,
+      "2026-10-01",
+      "2026-10-31",
+    ]);
+    expect(m.materialize).toHaveBeenCalledWith(
+      -10,
+      10,
+      "2026-10-01",
+      "2026-10-31"
+    );
   });
   it("listagem inclui estúdio e identidades da sessão", async () => {
     m.query.mockResolvedValue([[]]);

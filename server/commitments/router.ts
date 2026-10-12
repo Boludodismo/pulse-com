@@ -1,6 +1,7 @@
 import { getActiveIntegration } from "../messaging/service";
 import { commitmentIcs } from "./export";
 import { z } from "zod";
+import { commitmentAttachments } from "./attachments";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
 import {
@@ -26,9 +27,13 @@ const date = z
 const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const procedure = protectedProcedure.use(async ({ ctx, next }) => {
   // Namespace negativo, exclusivo do usuário global; nunca representa um estúdio real.
-  const studioId = ctx.user.role === "superadmin" ? -ctx.user.id : ctx.user.studioId;
+  const studioId =
+    ctx.user.role === "superadmin" ? -ctx.user.id : ctx.user.studioId;
   if (!studioId || (ctx.user.role !== "superadmin" && studioId < 1))
-    throw new TRPCError({ code: "FORBIDDEN", message: "Conta sem escopo de compromissos." });
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Conta sem escopo de compromissos.",
+    });
   await ensureCommitmentsSchema();
   return next({ ctx: { ...ctx, studioId } });
 });
@@ -190,7 +195,8 @@ export const commitmentsRouter = router({
       "SELECT phone,consent,timezone,before_time AS beforeTime,first_time AS firstTime,second_time AS secondTime,holidays_json AS holidaysJson FROM commitment_preferences WHERE studio_id=? AND user_id=?",
       [ctx.studioId, ctx.user.id]
     );
-    const integration = ctx.studioId < 0 ? null : await getActiveIntegration(ctx.studioId);
+    const integration =
+      ctx.studioId < 0 ? null : await getActiveIntegration(ctx.studioId);
     const whatsappReady = !!integration && !integration.sandboxMode;
     return rows[0]
       ? {
@@ -276,7 +282,8 @@ export const commitmentsRouter = router({
       return { success: true };
     }),
   assignees: procedure.query(async ({ ctx }) => {
-    if (ctx.studioId < 0) return [{ id: ctx.user.id, name: ctx.user.name || "Minha conta" }];
+    if (ctx.studioId < 0)
+      return [{ id: ctx.user.id, name: ctx.user.name || "Minha conta" }];
     const [rows]: any = await database().query(
       "SELECT id,name FROM users WHERE studioId=? AND isActive=1 AND accessStatus='active' AND role<>'superadmin' AND (?='admin' OR id=?)",
       [ctx.studioId, ctx.user.role, ctx.user.id]
@@ -295,6 +302,12 @@ export const commitmentsRouter = router({
           reminderTimes: z
             .object({ beforeTime: time, firstTime: time, secondTime: time })
             .refine(v => v.firstTime < v.secondTime)
+            .optional(),
+          attachments: commitmentAttachments.optional(),
+          customColor: z
+            .string()
+            .regex(/^#[0-9a-f]{6}$/i)
+            .nullable()
             .optional(),
           category: z.enum(["fixed", "variable", "payroll", "reminder"]),
           calendarName: z.string().trim().min(1).max(100),
@@ -352,28 +365,45 @@ export const commitmentsRouter = router({
           };
         }
       }
-      const [r]: any = await database().query(
-        "INSERT INTO commitment_series(studio_id,owner_id,assignee_id,title,category,calendar_name,color,amount,start_date,end_date,repeat_kind,repeat_interval,shift_business,notes,calendar_id,reminder_times) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [
-          ctx.studioId,
-          ctx.user.id,
-          input.assigneeId,
-          input.title,
-          input.category,
-          selectedCalendar?.name || input.calendarName,
-          selectedCalendar?.color || input.color,
-          input.amount,
-          input.startDate,
-          input.endDate,
-          input.repeatKind,
-          input.repeatInterval,
-          input.shiftBusiness ? 1 : 0,
-          input.notes,
-          selectedCalendar?.id || null,
-          input.reminderTimes ? JSON.stringify(input.reminderTimes) : null,
-        ]
-      );
-      return { id: Number(r.insertId) };
+      const connection = await database().getConnection();
+      try {
+        await connection.beginTransaction();
+        const [r]: any = await connection.query(
+          "INSERT INTO commitment_series(studio_id,owner_id,assignee_id,title,category,calendar_name,color,amount,start_date,end_date,repeat_kind,repeat_interval,shift_business,notes,calendar_id,reminder_times,custom_color) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [
+            ctx.studioId,
+            ctx.user.id,
+            input.assigneeId,
+            input.title,
+            input.category,
+            selectedCalendar?.name || input.calendarName,
+            selectedCalendar?.color || input.color,
+            input.amount,
+            input.startDate,
+            input.endDate,
+            input.repeatKind,
+            input.repeatInterval,
+            input.shiftBusiness ? 1 : 0,
+            input.notes,
+            selectedCalendar?.id || null,
+            input.reminderTimes ? JSON.stringify(input.reminderTimes) : null,
+            input.customColor || null,
+          ]
+        );
+        for (const file of input.attachments || []) {
+          await connection.query(
+            "INSERT INTO commitment_attachments(series_id,studio_id,name,mime,data) VALUES(?,?,?,?,?)",
+            [r.insertId, ctx.studioId, file.name, file.mime, file.data]
+          );
+        }
+        await connection.commit();
+        return { id: Number(r.insertId) };
+      } catch (e) {
+        await connection.rollback();
+        throw e;
+      } finally {
+        connection.release();
+      }
     }),
   list: procedure
     .input(
@@ -407,6 +437,126 @@ export const commitmentsRouter = router({
         [o.id]
       );
       return { ...o, attachments, deliveries };
+    }),
+  save: procedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        revision: z.number().int(),
+        title: z.string().trim().min(1).max(200),
+        amount: z.number().int().nonnegative().max(2147483647).nullable(),
+        notes: z.string().max(4000),
+        customColor: z
+          .string()
+          .regex(/^#[0-9a-f]{6}$/i)
+          .nullable(),
+        attachments: commitmentAttachments,
+        removeAttachmentIds: z.array(z.number().int().positive()).max(5),
+        expectedAttachmentIds: z.array(z.number().int().positive()).max(5),
+        expected: z.object({
+          title: z.string(),
+          amount: z.number().nullable(),
+          notes: z.string(),
+          customColor: z.string().nullable(),
+        }),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const c = await database().getConnection();
+      try {
+        await c.beginTransaction();
+        const [rows]: any = await c.query(
+          `SELECT ${occurrenceSelect} FROM commitment_occurrences o JOIN commitment_series s ON s.id=o.series_id AND s.studio_id=o.studio_id WHERE o.id=? AND o.studio_id=? AND s.active=1 FOR UPDATE`,
+          [input.id, ctx.studioId]
+        );
+        const o = rows[0];
+        if (
+          !o ||
+          o.ownerId !== ctx.user.id ||
+          !canReadCommitment(o, scope(ctx))
+        )
+          throw new TRPCError({ code: "NOT_FOUND" });
+        if (
+          o.revision !== input.revision ||
+          o.title !== input.expected.title ||
+          (o.amount == null ? null : Number(o.amount)) !==
+            input.expected.amount ||
+          (o.notes || "") !== input.expected.notes ||
+          (o.customColor || null) !== input.expected.customColor
+        )
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              "Este compromisso mudou. Feche e abra novamente antes de editar.",
+          });
+        const [files]: any = await c.query(
+          "SELECT id FROM commitment_attachments WHERE series_id=? AND studio_id=? FOR UPDATE",
+          [o.seriesId, ctx.studioId]
+        );
+        const ids = files
+          .map((f: any) => Number(f.id))
+          .sort((a: number, b: number) => a - b);
+        const removed = Array.from(new Set(input.removeAttachmentIds));
+        if (
+          JSON.stringify(ids) !==
+          JSON.stringify([...input.expectedAttachmentIds].sort((a, b) => a - b))
+        )
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              "Os anexos mudaram. Feche e abra novamente antes de editar.",
+          });
+        if (removed.some(id => !ids.includes(id)))
+          throw new TRPCError({ code: "NOT_FOUND" });
+        if (ids.length - removed.length + input.attachments.length > 5)
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Limite de cinco anexos por série.",
+          });
+        await c.query(
+          "UPDATE commitment_series SET title=?,amount=?,notes=?,custom_color=? WHERE id=? AND studio_id=? AND owner_id=?",
+          [
+            input.title,
+            input.amount,
+            input.notes,
+            input.customColor,
+            o.seriesId,
+            ctx.studioId,
+            ctx.user.id,
+          ]
+        );
+        for (const id of removed)
+          await c.query(
+            "DELETE FROM commitment_attachments WHERE id=? AND series_id=? AND studio_id=?",
+            [id, o.seriesId, ctx.studioId]
+          );
+        for (const file of input.attachments)
+          await c.query(
+            "INSERT INTO commitment_attachments(series_id,studio_id,name,mime,data) VALUES(?,?,?,?,?)",
+            [o.seriesId, ctx.studioId, file.name, file.mime, file.data]
+          );
+        await c.query(
+          "INSERT INTO commitment_actions(occurrence_id,studio_id,user_id,action,details) VALUES(?,?,?,?,?)",
+          [
+            o.id,
+            ctx.studioId,
+            ctx.user.id,
+            "edit",
+            JSON.stringify({
+              seriesId: o.seriesId,
+              added: input.attachments.length,
+              removed: removed.length,
+            }),
+          ]
+        );
+        await c.commit();
+        return { success: true };
+      } catch (e) {
+        await c.rollback();
+        throw e;
+      } finally {
+        c.release();
+      }
     }),
   action: procedure
     .input(
