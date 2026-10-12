@@ -22,6 +22,24 @@ beforeEach(() => {
   mock.getDb.mockResolvedValue({ select: () => { throw new Error("Unknown column studio_id in whatsapp_integrations"); } });
 });
 describe("Falha do WhatsApp após salvar agendamento", () => {
+  it("salva região e lado opcionais sem inferir ou alterar outros dados", async () => {
+    await appRouter.createCaller(ctx).appointments.create({ clientId: 1, artistId: 2, artist: saved.artist, date: saved.date, duration: 60, service: "Teste", bodyRegion: " Antebraço ", bodySide: "esquerdo" });
+    expect(mock.createAppointment).toHaveBeenCalledWith(expect.objectContaining({ bodyRegion: "Antebraço", bodySide: "esquerdo", date: saved.date, duration: 60 }));
+  });
+  it("permite apagar a região e o lado ao editar", async () => {
+    await appRouter.createCaller(ctx).appointments.update({ id: 77, data: { bodyRegion: null, bodySide: null } });
+    expect(mock.updateAppointment).toHaveBeenCalledWith(77, { bodyRegion: null, bodySide: null });
+  });
+  it("preserva campos anatômicos quando uma edição antiga não os envia", async () => {
+    await appRouter.createCaller(ctx).appointments.update({ id: 77, data: { notes: "Teste" } });
+    expect(mock.updateAppointment.mock.calls[0][1]).not.toHaveProperty("bodyRegion");
+    expect(mock.updateAppointment.mock.calls[0][1]).not.toHaveProperty("bodySide");
+  });
+  it("recusa lados inválidos e regiões maiores que 100 caracteres", async () => {
+    await expect(appRouter.createCaller(ctx).appointments.update({ id: 77, data: { bodySide: "inferido" as any } })).rejects.toThrow();
+    await expect(appRouter.createCaller(ctx).appointments.update({ id: 77, data: { bodyRegion: "a".repeat(101) } })).rejects.toThrow();
+    expect(mock.updateAppointment).not.toHaveBeenCalled();
+  });
   it("criação retorna o agendamento salvo e aviso, sem falso erro nem lembrete após falha do consentimento", async () => {
     const result = await appRouter.createCaller(ctx).appointments.create({ clientId: 1, artistId: 2, artist: saved.artist, date: saved.date, duration: 60, service: "Teste", recordWhatsAppConsent: true, autoReminder: { timing: "day_before", sendTime: "09:00" } });
     expect(result.id).toBe(77);

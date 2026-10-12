@@ -401,6 +401,8 @@ export async function listAppointments(studioId?: number | null, artistId?: numb
       date: appointments.date,
       duration: appointments.duration,
       service: appointments.service,
+      bodyRegion: appointments.bodyRegion,
+      bodySide: appointments.bodySide,
       artist: appointments.artist,
       artistId: appointments.artistId,
       includeArtistCard: appointments.includeArtistCard,
