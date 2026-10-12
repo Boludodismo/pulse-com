@@ -32,7 +32,19 @@ const download = (name: string, data: string, type: string) => {
 };
 function Attachment({ id, name }: { id: number; name: string }) {
   const utils = trpc.useUtils();
+  const [preview, setPreview] = useState<string | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    if (!/\.(png|jpe?g)$/i.test(name)) return;
+    utils.commitments.attachment.fetch({ id }).then(file => {
+      if (mounted && file.mime.startsWith("image/"))
+        setPreview(`data:${file.mime};base64,${file.data}`);
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, [id, name]);
   return (
+    <div className="flex flex-col gap-1 max-w-36">
+      {preview && <img src={preview} alt={`Prévia de ${name}`} className="w-24 h-20 rounded border object-cover" />}
     <Button
       variant="outline"
       className="h-auto whitespace-normal"
@@ -55,7 +67,17 @@ function Attachment({ id, name }: { id: number; name: string }) {
     >
       {name}
     </Button>
+    </div>
   );
+}
+function PendingImagePreview({ file }: { file: File }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  return src ? <img src={src} alt={`Prévia de ${file.name}`} className="w-24 h-20 rounded border object-cover" /> : null;
 }
 export function CommitmentDetail({
   id,
@@ -68,6 +90,15 @@ export function CommitmentDetail({
     query = trpc.commitments.detail.useQuery({ id });
   const [date, setDate] = useState(day(new Date())),
     [time, setTime] = useState("16:00");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingAction, setPendingAction] = useState<"snooze" | "reschedule" | null>(null);
+  const [saving, setSaving] = useState(false);
+  const resetDraft = () => {
+    setDate(day(new Date()));
+    setTime("16:00");
+    setPendingFiles([]);
+    setPendingAction(null);
+  };
   const refresh = () => {
     utils.commitments.list.invalidate();
     utils.commitments.detail.invalidate();
@@ -93,8 +124,8 @@ export function CommitmentDetail({
   });
   const o = query.data;
   const { user } = useAuth();
-  const upload = async (files: FileList | null) => {
-    for (const f of Array.from(files || [])) {
+  const upload = async (files: File[]) => {
+    for (const f of files) {
       if (f.size > 2 * 1024 * 1024) {
         toast.error(`${f.name}: limite de 2 MB.`);
         continue;
@@ -109,14 +140,29 @@ export function CommitmentDetail({
         r.onerror = reject;
         r.readAsDataURL(f);
       });
-      await attach
-        .mutateAsync({
-          seriesId: o.seriesId,
-          name: f.name,
-          mime: f.type as any,
-          data,
-        })
-        .catch(() => {});
+      await attach.mutateAsync({
+        seriesId: o.seriesId,
+        name: f.name,
+        mime: f.type as any,
+        data,
+      });
+    }
+  };
+  const saveDraft = async () => {
+    if (!o || saving) return;
+    setSaving(true);
+    try {
+      if (pendingAction) await action.mutateAsync({
+        id, revision: o.revision, action: pendingAction, date, time,
+      });
+      if (pendingFiles.length) await upload(pendingFiles);
+      resetDraft();
+      await utils.commitments.detail.invalidate();
+      toast.success("Alterações salvas.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar.");
+    } finally {
+      setSaving(false);
     }
   };
   return (
@@ -202,18 +248,10 @@ export function CommitmentDetail({
                   {(["snooze", "reschedule"] as const).map(a => (
                     <Button
                       key={a}
-                      variant="outline"
-                      disabled={action.isPending}
+                      variant={pendingAction === a ? "default" : "outline"}
+                      disabled={saving}
                       className="h-auto whitespace-normal"
-                      onClick={() =>
-                        action.mutate({
-                          id,
-                          revision: o.revision,
-                          action: a,
-                          date,
-                          time,
-                        })
-                      }
+                      onClick={() => setPendingAction(a)}
                     >
                       {a === "snooze"
                         ? "Lembrar mais tarde"
@@ -241,12 +279,26 @@ export function CommitmentDetail({
                     type="file"
                     accept="image/png,image/jpeg,application/pdf"
                     multiple
-                    disabled={attach.isPending}
-                    onChange={e => void upload(e.target.files)}
+                    disabled={saving}
+                    onChange={e => {
+                      setPendingFiles(current => [...current, ...Array.from(e.target.files || [])]);
+                      e.target.value = "";
+                    }}
                   />
                 </label>
+                {pendingFiles.length > 0 && (
+                  <div className="flex flex-wrap gap-3" aria-label="Anexos pendentes">
+                    {pendingFiles.map((file, index) => (
+                      <div key={index} className="flex flex-col gap-1 max-w-32">
+                        {file.type.startsWith("image/") ? <PendingImagePreview file={file} /> : <span className="text-xs border rounded p-2">{file.name} (PDF)</span>}
+                        <span className="text-xs break-all">{file.name}</span>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setPendingFiles(current => current.filter((_, i) => i !== index))}>Remover</Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <p className="text-sm">
-                  Anexos ficam disponíveis nas ocorrências desta série.
+                  Os anexos serão compartilhados pelas ocorrências desta série após salvar.
                 </p>
                 <Button
                   variant="outline"
@@ -265,6 +317,11 @@ export function CommitmentDetail({
                 </Button>
               </>
             )}
+            <div className="flex flex-wrap gap-2 border-t pt-3">
+              <Button type="button" disabled={saving || (!pendingAction && pendingFiles.length === 0)} onClick={() => void saveDraft()}>{saving ? "Salvando…" : "Salvar"}</Button>
+              <Button type="button" variant="outline" disabled={saving} onClick={resetDraft}>Desfazer alterações</Button>
+              <Button type="button" variant="outline" disabled={saving} onClick={onClose}>Cancelar</Button>
+            </div>
             {o.deliveries.length > 0 && (
               <div className="text-sm">
                 <h3>Histórico de avisos</h3>
@@ -385,8 +442,8 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
                   title={o.title}
                   className="block w-full rounded text-left p-1 text-xs sm:text-sm whitespace-normal [overflow-wrap:anywhere] border-l-4 bg-muted"
                   style={{
-                    borderColor: o.color,
-                    opacity: o.status === "paid" ? 0.6 : 1,
+                    borderColor: o.status === "paid" ? "#22c55e" : o.color,
+                    backgroundColor: o.status === "paid" ? "rgba(34,197,94,0.12)" : undefined,
                   }}
                   draggable={o.status === "pending"}
                   onDragStart={e => {
@@ -407,6 +464,7 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
                 >
                   {o.status === "paid" ? "✓ " : ""}
                   {o.title}
+                  {o.status === "paid" ? " ✓" : o.category !== "reminder" && o.effectiveDate < day(new Date()) ? " ⚠" : ""}
                 </button>
               ))}
           </div>
@@ -667,10 +725,11 @@ export function CommitmentsManager({
                 <button
                   key={o.id}
                   className="w-full text-left rounded border p-3 [overflow-wrap:anywhere] border-l-4"
-                  style={{ borderLeftColor: o.color }}
+                  style={{ borderLeftColor: o.status === "paid" ? "#22c55e" : o.color, backgroundColor: o.status === "paid" ? "rgba(34,197,94,0.12)" : undefined }}
                   onClick={() => setSelected(o.id)}
                 >
                   {o.effectiveDate.split("-").reverse().join("/")} · {o.title} ·{" "}
+                  {o.status === "pending" && o.category !== "reminder" && o.effectiveDate < day(new Date()) ? "⚠ Atrasado · " : ""}
                   {o.status === "paid"
                     ? o.category === "reminder"
                       ? "Concluído"
