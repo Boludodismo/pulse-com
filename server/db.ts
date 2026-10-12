@@ -5270,6 +5270,12 @@ export async function getCollaboratorsSummary(
     .from(artists)
     .where(and(eq(artists.studioId, studioId), eq(artists.active, 1)));
 
+  // Resolve profile photos by the linked artist ID within this studio.
+  const profiles = await db
+    .select({ artistId: users.artistId, profilePhotoUrl: users.profilePhotoUrl })
+    .from(users)
+    .where(and(eq(users.studioId, studioId), eq(users.isActive, 1)));
+
   const rates = await db
     .select()
     .from(collaboratorRates)
@@ -5309,6 +5315,7 @@ export async function getCollaboratorsSummary(
     return {
       artistId: artist.id,
       artistName: artist.name,
+      profilePhotoUrl: profiles.find((profile) => profile.artistId === artist.id && profile.profilePhotoUrl)?.profilePhotoUrl ?? artist.photoUrl,
       specialty: artist.specialty,
       percentage,
       totalAppointments: artistApts.length,

@@ -3,6 +3,7 @@ import { trpc } from "../lib/trpc";
 import { useAuth } from "../_core/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { Avatar, AvatarImage, AvatarFallback } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -256,9 +257,14 @@ export default function CollaboratorReports() {
                     <div className="flex items-center justify-between flex-wrap gap-3">
                       {/* Info do artista */}
                       <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
-                          {artist.artistName.charAt(0).toUpperCase()}
-                        </div>
+                        <Avatar className="h-10 w-10">
+                          {artist.profilePhotoUrl && (
+                            <AvatarImage src={artist.profilePhotoUrl} alt={`Foto de ${artist.artistName}`} className="object-cover" />
+                          )}
+                          <AvatarFallback className="bg-primary/10 text-sm font-bold text-primary">
+                            {artist.artistName.charAt(0).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
                         <div>
                           <p className="font-medium">{artist.artistName}</p>
                           <p className="text-xs text-muted-foreground">
