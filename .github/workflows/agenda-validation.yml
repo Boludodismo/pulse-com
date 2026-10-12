@@ -1,0 +1,44 @@
+name: Agenda validation
+
+on:
+  push:
+    branches: [fix/agenda-release-20261012]
+
+permissions:
+  contents: read
+
+jobs:
+  calendar:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:9
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-rootpass
+          MYSQL_DATABASE: agenda_validation
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-rootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Calendar and appointment regressions
+        run: pnpm exec vitest run server/ics-presentation.test.ts server/ics-generator.apple-calendar.test.ts server/appointmentAnatomySchema.test.ts server/appointmentPostSave.test.ts server/appointmentTime.test.ts server/appointmentActions.test.ts server/appointmentResponseRegression.test.ts server/messaging/appointmentReminderSchedule.test.ts
+      - name: Validate migration on disposable MySQL
+        env:
+          DATABASE_URL: mysql://root:ci-only-rootpass@127.0.0.1:3306/agenda_validation
+        run: pnpm exec tsx scripts/validate-appointment-anatomy.ts
+      - name: Build
+        run: pnpm build
