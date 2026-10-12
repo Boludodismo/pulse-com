@@ -1,3 +1,4 @@
+import { CommitmentsManager } from "./components/Commitments";
 import AccountSecurity from "./pages/AccountSecurity";
 import NativeBot from "./pages/NativeBot";
 import LegacyArchive from './pages/LegacyArchive';
@@ -102,6 +103,7 @@ function Router() {
         </DashboardLayout>
       )} />
       
+      <Route path="/commitments" component={() => <DashboardLayout><CommitmentsManager initialOpen /></DashboardLayout>} />
       <Route path="/calendar" component={() => (
         <DashboardLayout>
           <CalendarPage />

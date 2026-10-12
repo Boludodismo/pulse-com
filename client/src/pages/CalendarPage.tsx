@@ -1,3 +1,4 @@
+import { CommitmentStrip, CommitmentsManager } from "@/components/Commitments";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { trpc } from "../lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -537,6 +538,7 @@ export default function CalendarPage() {
           </div>
         ))}
       </div>
+      <CommitmentStrip days={weekDays} />
       <div ref={weekScrollRef} className="flex-1 overflow-y-auto">
         <div
           className="relative grid select-none"
@@ -694,6 +696,7 @@ export default function CalendarPage() {
             {currentDate.getDate()}
           </div>
         </div>
+        <CommitmentStrip days={[currentDate]} />
         <div ref={weekScrollRef} className="flex-1 overflow-y-auto">
           <div
             className="relative grid grid-cols-[56px_1fr] select-none"
@@ -1141,6 +1144,7 @@ export default function CalendarPage() {
 
         {/* Conteúdo */}
         <div className="flex-1 overflow-hidden flex flex-col">
+          <div className="p-2"><CommitmentsManager date={currentDate} /></div>
           {viewMode === "week" && renderWeekView()}
           {viewMode === "month" && renderMonthView()}
           {viewMode === "day" && renderDayView()}

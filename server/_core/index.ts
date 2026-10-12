@@ -1,3 +1,4 @@
+import { ensureCommitmentsSchema } from "../commitments/db";
 import { registerArtistContactDownload } from "../artistCardContactFile";
 import { ensureSecuritySchema } from '../security/database';
 import { securityHeaders } from '../security/http';
@@ -44,6 +45,7 @@ async function startServer() {
   // Disabled by default so existing Manus/production behavior is unchanged.
   if (ENV.authMode === "local" && Buffer.byteLength(ENV.authSecurityKey) < 32) throw new Error("AUTH_SECURITY_KEY deve ter pelo menos 32 bytes.");
   await runStartupMigrations();
+  try { await ensureCommitmentsSchema(); } catch { console.error("[Commitments] Inicialização indisponível; demais módulos continuam ativos."); }
   await ensureSecuritySchema();
   await ensureSessionCockpitSchema();
   await ensureStagingInventorySchema();

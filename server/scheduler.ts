@@ -1,3 +1,4 @@
+import { runCommitmentCycle } from "./commitments/service";
 import { firstName } from "./messaging/messagePresentation";
 import {runProcurementCycle} from './messaging/studioRelations';
 import { runCustomerCareCycle } from "./messaging/customerCare";
@@ -357,6 +358,7 @@ export async function runLegacyNotificationCycle() {
   // origem cria jobs próprios, idempotentes e escopados, que o Heartbeat entrega
   // posteriormente pela integração ativa do respectivo estúdio.
   await runCustomerCareCycle();
+  try { await runCommitmentCycle(); } catch (error) { console.error("[Commitments] Falha no ciclo", error instanceof Error ? error.name : "erro"); }
   await runProcurementCycle();
   try { await runCriticalInventoryForecastCycle(); } catch (error) { console.error("[Inventory] Falha no ciclo de avisos", error instanceof Error ? error.name : "erro"); }
   const automatic = await runAutomaticMessageCycle();

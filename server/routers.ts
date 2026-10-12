@@ -1,3 +1,4 @@
+import { commitmentsRouter } from "./commitments/router";
 import { securityRouter } from './security/router';
 import { passwordPolicy } from '../shared/passwordPolicy';
 import { requestReset, resetPassword as secureResetPassword, resetTokenValid } from './security/passwordReset';
@@ -74,6 +75,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  commitments: commitmentsRouter,
   security: securityRouter,
   nativeBot: nativeBotRouter,
   legacyArchive: legacyArchiveRouter,

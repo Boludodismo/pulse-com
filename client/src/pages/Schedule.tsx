@@ -1,3 +1,4 @@
+import { CommitmentStrip, CommitmentsManager } from "@/components/Commitments";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { EventModal } from "@/components/EventModal";
 import { trpc } from "@/lib/trpc";
@@ -686,9 +687,10 @@ export default function Schedule() {
       className="overflow-y-auto overflow-x-hidden"
       style={{ maxHeight: "calc(100vh - 220px)", minHeight: "400px" }}
     >
+      <div className="sticky top-0 z-10 bg-background">
       {/* Cabeçalho dos dias */}
       <div
-        className="grid border-b border-border sticky top-0 z-10 bg-background"
+        className="grid border-b border-border bg-background"
         style={{
           gridTemplateColumns: `38px repeat(${days.length}, minmax(0, 1fr))`,
         }}
@@ -712,6 +714,8 @@ export default function Schedule() {
         ))}
       </div>
 
+      <CommitmentStrip days={days} />
+      </div>
       {/* Grade de horários */}
       <div
         className="relative grid"
@@ -1168,6 +1172,7 @@ export default function Schedule() {
           </div>
         )}
 
+        <div className="px-4 py-2"><CommitmentsManager date={currentDate}/></div>
         {/* Área do calendário */}
         <div
           className="flex-1 overflow-auto px-4 py-3"
