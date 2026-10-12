@@ -3305,6 +3305,7 @@ export async function getCollaboratorsSummary(
     return {
       artistId: artist.id,
       artistName: artist.name,
+      photoUrl: artist.photoUrl,
       specialty: artist.specialty,
       percentage,
       totalAppointments: artistApts.length,
