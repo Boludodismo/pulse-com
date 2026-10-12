@@ -1,0 +1,39 @@
+name: Commitment edits validation
+on:
+  push:
+    branches: [fix/commitment-colors-attachments-20261012]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:9
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-rootpass
+          MYSQL_DATABASE: commitment_validation
+        ports: [3306:3306]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-rootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Commitment regressions
+        run: pnpm exec vitest run server/commitments/edit.test.ts server/commitments/router.test.ts server/commitments/commitments.test.ts server/commitments/worker.test.ts client/src/lib/commitmentPresentation.test.ts server/ics-presentation.test.ts server/ics-generator.apple-calendar.test.ts
+      - name: Real MySQL validation
+        env:
+          DATABASE_URL: mysql://root:ci-only-rootpass@127.0.0.1:3306/commitment_validation
+        run: pnpm exec tsx scripts/validate-commitment-edits.ts
+      - name: Build
+        run: pnpm build
