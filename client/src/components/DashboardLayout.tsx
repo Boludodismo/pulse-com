@@ -263,7 +263,7 @@ function DashboardLayoutContent({
               )}
               {(!isCollapsed || isMobile) ? (
                 <div className="flex items-center gap-2 min-w-0">
-                  <img src="/tatuei-logo.png" alt="" className="h-9 w-9 object-contain shrink-0" />
+                  <img src="/tatuei-logo-20261012.svg" alt="" className="h-9 w-9 object-contain shrink-0" />
                   <span className="font-semibold tracking-tight truncate text-base">
                     tatuei.com
                   </span>
