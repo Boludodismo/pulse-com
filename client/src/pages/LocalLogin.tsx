@@ -78,7 +78,7 @@ export default function LocalLogin({ onSuccess }: LocalLoginProps) {
       <div className="w-full max-w-sm px-4">
         {/* Logo / título */}
         <div className="flex flex-col items-center gap-2 mb-8">
-          <img src="/tatuei-logo.png" alt="Logo tatuei.com" className="w-16 h-16 object-contain" />
+          <img src="/tatuei-logo-20261012.svg" alt="Logo tatuei.com" className="w-16 h-16 object-contain" />
           <h1 className="text-2xl font-bold tracking-tight text-foreground">tatuei.com</h1>
           <p className="text-sm text-muted-foreground text-center">
             Estúdios de Tatuagem
