@@ -297,7 +297,7 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
     to = day(days[days.length - 1]);
   const query = trpc.commitments.list.useQuery(
     { from, to },
-    { enabled: !!user && user.role !== "superadmin" }
+    { enabled: !!user && true }
   );
   const [selected, setSelected] = useState<number | null>(null);
   const [dragged, setDragged] = useState<any>(null),
@@ -337,7 +337,6 @@ export function CommitmentStrip({ days }: { days: Date[] }) {
     }
   );
 
-  if (user?.role === "superadmin") return null;
   return (
     <div className="shrink-0 border-b bg-background text-foreground">
       <div
@@ -495,13 +494,13 @@ export function CommitmentsManager({
     to = addDays(from, 31);
   const list = trpc.commitments.list.useQuery(
     { from, to },
-    { enabled: open && user?.role !== "superadmin" }
+    { enabled: open && !!user }
   );
   const prefs = trpc.commitments.preferences.useQuery(undefined, {
-    enabled: open && user?.role !== "superadmin",
+    enabled: open && !!user,
   });
   const savedCalendars = trpc.commitments.calendars.useQuery(undefined, {
-    enabled: !!user && user.role !== "superadmin",
+    enabled: !!user && true,
   });
   useEffect(() => {
     if (savedCalendars.dataUpdatedAt) utils.calendars.list.invalidate();
@@ -519,7 +518,7 @@ export function CommitmentsManager({
     onError: e => toast.error(e.message),
   });
   const assignees = trpc.commitments.assignees.useQuery(undefined, {
-    enabled: open && user?.role !== "superadmin",
+    enabled: open && !!user,
   });
   const [settings, setSettings] = useState<any>(null),
     [holidayDate, setHolidayDate] = useState(from),
@@ -603,7 +602,7 @@ export function CommitmentsManager({
       toast.error("Falha na exportação.");
     }
   };
-  if (!user || user.role === "superadmin") return null;
+  if (!user) return null;
   const field = (name: string, label: string, type = "text") => (
     <label className="block">
       {label}
@@ -647,7 +646,7 @@ export function CommitmentsManager({
           </div>
           {prefs.data && !prefs.data.whatsappReady && (
             <p role="status" className="rounded border p-2 text-sm">
-              Os avisos dependem de uma conexão WhatsApp ativa do estúdio.
+              Os avisos por WhatsApp exigem uma conexão ativa autorizada.
               Nenhuma conexão de produção está disponível no momento.
             </p>
           )}
