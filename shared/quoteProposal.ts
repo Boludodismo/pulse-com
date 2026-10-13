@@ -150,37 +150,51 @@ export const DEFAULT_IMAGE_DESCRIPTION_PRESETS = [
 export const DEFAULT_CONCEPT_PRESETS = [
   {
     "name": "Realismo preto e cinza",
-    "content": "Projeto em realismo preto e cinza, desenvolvido a partir das referências escolhidas. A composição dará atenção aos volumes, à luz e ao contraste, com adaptação ao formato da região do corpo. Os detalhes e a dimensão final serão alinhados antes da execução."
+    "content": "{primeiro_nome}, este projeto em realismo preto e cinza foi desenvolvido a partir das referências que você escolheu. A composição dará atenção aos volumes, à luz e ao contraste, com adaptação ao formato da região do corpo. Os detalhes e a dimensão final serão alinhados com você antes da execução."
   },
   {
     "name": "Realismo colorido",
-    "content": "Projeto em realismo colorido, com paleta e composição definidas a partir das referências. A distribuição das cores, os pontos de luz e o contraste serão planejados para a região escolhida. A proposta visual e os ajustes de tamanho serão apresentados para alinhamento antes da execução."
+    "content": "{primeiro_nome}, seu projeto em realismo colorido terá paleta e composição definidas a partir das suas referências. A distribuição das cores, os pontos de luz e o contraste serão planejados para a região escolhida. A proposta visual e os ajustes de tamanho serão apresentados para alinhamento com você antes da execução."
   },
   {
     "name": "Retrato ou homenagem",
-    "content": "Tatuagem de retrato ou homenagem, baseada nas fotografias e referências fornecidas. O projeto buscará preservar a expressão e as características mais importantes da imagem. A escolha da foto, a nitidez disponível e o tamanho serão avaliados juntos para definir os detalhes viáveis."
+    "content": "{primeiro_nome}, seu retrato ou homenagem será desenvolvido a partir das fotografias e referências que você forneceu. O projeto buscará preservar a expressão e as características mais importantes da imagem. A escolha da foto, a nitidez disponível e o tamanho serão avaliados juntos para definir os detalhes viáveis."
   },
   {
     "name": "Fine line, botânica ou escrita",
-    "content": "Projeto delicado em linhas finas, com desenho, elementos botânicos ou escrita conforme a proposta escolhida. O espaçamento e a espessura dos traços serão adaptados ao tamanho e à região do corpo. Quando houver palavras, nomes ou datas, a grafia será conferida com o cliente antes da aplicação."
+    "content": "{primeiro_nome}, seu projeto delicado em linhas finas terá desenho, elementos botânicos ou escrita conforme a proposta que você escolheu. O espaçamento e a espessura dos traços serão adaptados ao tamanho e à região do corpo. Quando houver palavras, nomes ou datas, a grafia será conferida com você antes da aplicação."
   },
   {
     "name": "Cobertura de tatuagem",
-    "content": "Projeto de cobertura desenvolvido a partir da avaliação da tatuagem existente. O novo desenho considerará o tamanho, a posição e a intensidade dos pigmentos atuais, podendo exigir ampliação da área ou ajustes de composição e contraste. A viabilidade e as limitações serão alinhadas antes da execução; a referência visual representa a proposta e não uma garantia de ocultação integral."
+    "content": "{primeiro_nome}, seu projeto de cobertura será desenvolvido a partir da avaliação da sua tatuagem existente. O novo desenho considerará o tamanho, a posição e a intensidade dos pigmentos atuais, podendo exigir ampliação da área ou ajustes de composição e contraste. A viabilidade e as limitações serão alinhadas com você antes da execução; a referência visual representa a proposta e não uma garantia de ocultação integral."
   },
   {
     "name": "Reforma e complementação",
-    "content": "Projeto de reforma ou complementação de uma tatuagem existente. O trabalho poderá incluir reforço de contraste, revisão de detalhes e inclusão de elementos, conforme a avaliação e o escopo descrito neste orçamento. As partes preservadas e as alterações propostas serão definidas com o cliente antes da execução."
+    "content": "{primeiro_nome}, esta proposta de reforma ou complementação foi pensada para a sua tatuagem existente. O trabalho poderá incluir reforço de contraste, revisão de detalhes e inclusão de elementos, conforme a avaliação e o escopo descrito neste orçamento. As partes preservadas e as alterações propostas serão definidas com você antes da execução."
   },
   {
     "name": "Fechamento ou projeto em etapas",
-    "content": "Projeto de fechamento planejado para integrar os elementos e acompanhar a anatomia da região escolhida. A composição poderá ser executada em etapas, com uma sequência de trabalho apresentada pelo artista. A previsão de sessões e o que está incluído em cada etapa serão descritos nas condições deste orçamento."
+    "content": "{primeiro_nome}, seu projeto de fechamento será planejado para integrar os elementos e acompanhar a anatomia da região que você escolheu. A composição poderá ser executada em etapas, com uma sequência de trabalho apresentada pelo artista. A previsão de sessões e o que está incluído em cada etapa serão descritos nas condições deste orçamento."
   },
   {
     "name": "Vários projetos no mesmo orçamento",
-    "content": "Esta proposta reúne diferentes tatuagens, apresentadas separadamente com suas descrições e referências. Os valores, as condições e os itens incluídos serão identificados no orçamento. A ordem de execução e a possibilidade de realizar os projetos na mesma sessão serão alinhadas com o artista."
+    "content": "{primeiro_nome}, esta proposta reúne as suas diferentes tatuagens, apresentadas separadamente com suas descrições e referências. Os valores, as condições e os itens incluídos serão identificados no orçamento. A ordem de execução e a possibilidade de realizar os projetos na mesma sessão serão alinhadas com o artista."
   }
 ] as const;
+
+// Adapt reusable concepts only; existing quote snapshots are never rewritten.
+export function personalizedConceptPreset(content: string): string {
+  if (!content.trim() || content.includes("{primeiro_nome}")) return content;
+  return `{primeiro_nome}, ${content}`;
+}
+
+export function reusableQuoteText(text: string, clientName?: string): string {
+  const names = [clientName?.trim(), quoteClientFirstName(clientName)].filter((name): name is string => !!name);
+  if (!names.length) return text;
+  const escaped = Array.from(new Set(names)).map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${escaped.join("|")})(?![\\p{L}\\p{N}_])`, "giu");
+  return text.replace(pattern, "{primeiro_nome}");
+}
 
 export const DEFAULT_TERMS_PRESETS = [
   {
@@ -299,11 +313,8 @@ export function quoteModel(editor: QuoteEditorData): QuoteEditorData {
 }
 export function encodeQuoteModel(editor: QuoteEditorData, clientName?: string): string {
   let model = quoteModel(editor);
-  const names = [clientName?.trim(), quoteClientFirstName(clientName)].filter((name): name is string => !!name);
-  if (names.length) {
-    const escaped = Array.from(new Set(names)).map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${escaped.join("|")})(?![\\p{L}\\p{N}_])`, "giu");
-    const replace = (text: string) => text.replace(pattern, "{primeiro_nome}");
+  if (clientName?.trim()) {
+    const replace = (text: string) => reusableQuoteText(text, clientName);
     model = { ...model, project: { ...model.project, concept: replace(model.project.concept) }, terms: replace(model.terms),
       pricing: { ...model.pricing, depositText: replace(model.pricing.depositText), installmentInfo: replace(model.pricing.installmentInfo) },
       additionalProjects: model.additionalProjects.map(p => ({ ...p, project: { ...p.project, concept: replace(p.project.concept) } })) };

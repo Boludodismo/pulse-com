@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import QuotePreview from "../client/src/components/quotes/QuotePreview";
-import { buildEmptyQuoteEditorData, encodeQuoteModel, decodeQuoteModel, quoteCover, quoteMediaSchema, resolveQuoteText } from "../shared/quoteProposal";
+import { buildEmptyQuoteEditorData, encodeQuoteModel, decodeQuoteModel, quoteCover, quoteMediaSchema, resolveQuoteText, DEFAULT_CONCEPT_PRESETS, personalizedConceptPreset, reusableQuoteText } from "../shared/quoteProposal";
 
 const image = (n: number) => quoteMediaSchema.parse({ key: `quotes/1/2/media/${n}.png`, url: `https://example.test/${n}.png` });
 describe("complete quote models and arbitrary cover", () => {
@@ -45,5 +45,43 @@ describe("complete quote models and arbitrary cover", () => {
     const html = renderToStaticMarkup(createElement(QuotePreview, { editor, identity: { client: { name: "Ana Maria" }, artist: { name: "Artista" }, studio: { name: "Estúdio" } }, createdDate: "2026-10-13", validUntil: "2026-10-28" }));
     expect(quoteCover(editor)?.key).toBe(image(2).key); expect(html).toContain("Olá, Ana!"); expect(html).not.toContain("{primeiro_nome}");
     editor.media.gallery = []; expect(quoteCover(editor)).toBeNull();
+  });
+});
+
+
+describe("personalized concept presets", () => {
+  it.each(DEFAULT_CONCEPT_PRESETS)("personalizes $name without retaining the previous client", preset => {
+    const editor = buildEmptyQuoteEditorData(); editor.project.concept = preset.content;
+    const original = JSON.stringify(editor);
+    expect(resolveQuoteText(editor, "  Gabriel   Henrique ").project.concept).toContain("Gabriel,");
+    expect(resolveQuoteText(editor, "Ágatha Cunha").project.concept).toContain("Ágatha,");
+    expect(resolveQuoteText(editor, "Ágatha Cunha").project.concept).not.toContain("Gabriel");
+    expect(resolveQuoteText(editor, "Ágatha Cunha").project.concept).not.toContain("Cunha");
+    expect(JSON.stringify(editor)).toBe(original);
+  });
+  it("adapts a saved generic concept once and preserves artist edits", () => {
+    const text = "Projeto autoral. Manter o detalhe escolhido pelo artista.";
+    const template = personalizedConceptPreset(text);
+    expect(template).toBe("{primeiro_nome}, " + text);
+    expect(personalizedConceptPreset(template)).toBe(template);
+    expect(personalizedConceptPreset("Olá, {primeiro_nome}! Seu projeto.")).toBe("Olá, {primeiro_nome}! Seu projeto.");
+    expect(personalizedConceptPreset("")).toBe("");
+    const editor = buildEmptyQuoteEditorData(); editor.project.concept = template;
+    const finalized = resolveQuoteText(editor, "João da Silva");
+    expect(finalized.project.concept).toBe("João, " + text);
+    expect(resolveQuoteText(finalized, "Maria Souza").project.concept).toBe(finalized.project.concept);
+  });
+  it("stores reusable text without the selected client's literal full or first name", () => {
+    expect(reusableQuoteText("João da Silva, João escolheu a arte.", "João da Silva")).toBe("{primeiro_nome}, {primeiro_nome} escolheu a arte.");
+    expect(reusableQuoteText("Ana, manter Anabela e banana.", "Ana Maria")).toBe("{primeiro_nome}, manter Anabela e banana.");
+    expect(reusableQuoteText("Olá, Ana (M.)!", "Ana (M.)")).toBe("Olá, {primeiro_nome}!");
+    expect(reusableQuoteText("Texto livre")).toBe("Texto livre");
+  });
+  it("renders every default concept for the client without exposing template variables", () => {
+    for (const preset of DEFAULT_CONCEPT_PRESETS) {
+      const editor = buildEmptyQuoteEditorData(); editor.project.concept = preset.content;
+      const html = renderToStaticMarkup(createElement(QuotePreview, { editor, identity: { client: { name: "Maria Fernanda" }, artist: { name: "Artista" }, studio: { name: "Estúdio" } }, createdDate: "2026-10-13", validUntil: "2026-10-28" }));
+      expect(html).toContain("Maria,"); expect(html).not.toContain("{primeiro_nome}");
+    }
   });
 });

@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { ArrowLeft, CheckCircle2, Copy, ExternalLink, Eye, FileText, Image as ImageIcon, Plus, Save, Search, Share2, Trash2, Upload } from "lucide-react";
-import { quoteEditorDataSchema, encodeQuoteModel, decodeQuoteModel, quoteCover, quoteClientFirstName, DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, DEFAULT_IMAGE_DESCRIPTION_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
+import { quoteEditorDataSchema, encodeQuoteModel, decodeQuoteModel, quoteCover, quoteClientFirstName, personalizedConceptPreset, reusableQuoteText, DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, DEFAULT_IMAGE_DESCRIPTION_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
 import QuotePreview, { type QuotePreviewIdentity } from "@/components/quotes/QuotePreview";
 import "@/styles/quotes.css";
 
@@ -61,7 +61,7 @@ function statusClass(status: string) {
 type PresetOption = { id?: number; name: string; content: string };
 
 function PresetPicker(props: {
-  title: string; value: string; options: PresetOption[]; disabled?: boolean; compact?: boolean;
+  title: string; value: string; options: PresetOption[]; disabled?: boolean; compact?: boolean; clientName?: string;
   onChange: (value: string) => void; onSave: (name: string) => Promise<void>;
 }) {
   const textId = useId();
@@ -69,6 +69,7 @@ function PresetPicker(props: {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<PresetOption | null>(null);
   const [previous, setPrevious] = useState<string | null>(null);
+  const showName = (text: string) => props.clientName ? text.replace(/\{primeiro_nome\}/g, quoteClientFirstName(props.clientName)) : text;
   function apply(append: boolean) {
     if (!selected) return;
     const next = append && props.value ? props.value + "\n\n" + selected.content : selected.content;
@@ -92,9 +93,13 @@ function PresetPicker(props: {
         <strong className="mt-1 block text-sm">{item.name}</strong>
       </button>)}
     </div>}
-    {selected && <div className="rounded-lg border border-primary/30 p-3 space-y-3"><p className="whitespace-pre-wrap text-sm">{selected.content}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => apply(false)}>Usar este texto</Button><Button type="button" variant="outline" onClick={() => apply(true)}>Acrescentar</Button></div></div>}
+    {selected && <div className="rounded-lg border border-primary/30 p-3 space-y-3"><p className="whitespace-pre-wrap text-sm">{showName(selected.content)}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => apply(false)}>Usar este texto</Button><Button type="button" variant="outline" onClick={() => apply(true)}>Acrescentar</Button></div></div>}
     <Textarea id={textId} aria-label={props.title} value={props.value} maxLength={QUOTE_TEXT_LIMIT} onChange={(e) => props.onChange(e.target.value)} rows={props.compact ? 3 : 6} disabled={props.disabled} placeholder={props.compact ? "Escreva livremente ou aplique um modelo e ajuste para esta imagem." : undefined} />
     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{props.value.length.toLocaleString("pt-BR")} / 8.000 caracteres</span><Button type="button" variant="ghost" size="sm" disabled={props.disabled || props.value.length + 16 > QUOTE_TEXT_LIMIT} onClick={() => props.onChange(props.value + "{primeiro_nome}")}>Inserir primeiro nome</Button>{previous !== null && <Button type="button" variant="ghost" size="sm" onClick={() => { props.onChange(previous); setPrevious(null); }}>Desfazer aplicação</Button>}</div>
+    {props.clientName !== undefined && <div className="rounded-lg bg-muted/30 p-3 text-sm">
+      <p className="mb-1 text-xs text-muted-foreground">{props.clientName ? "Texto para o cliente selecionado — o primeiro nome acompanha a seleção automaticamente." : "Selecione o cliente para visualizar o texto com o primeiro nome."}</p>
+      <p className="whitespace-pre-wrap break-words">{showName(props.value)}</p>
+    </div>}
     <details open={props.compact ? undefined : true} className={props.compact ? "text-sm" : ""}>
       <summary className={props.compact ? "cursor-pointer text-muted-foreground" : "hidden"}>Salvar este texto como modelo pessoal</summary>
     <div className={"flex flex-col gap-2" + (props.compact ? " mt-3" : " sm:flex-row")}>
@@ -346,7 +351,7 @@ export default function Quotes() {
     const all: PresetOption[] = [...(saved || []).map((p) => ({ id: p.id, name: p.name, content: p.content })), ...defaults.map((p) => ({ name: p.name, content: p.content }))];
     return all.filter((p, i) => all.findIndex((x) => x.name === p.name) === i);
   }
-  const conceptOptions = useMemo(() => combinePresets(conceptPresetsQuery.data, DEFAULT_CONCEPT_PRESETS), [conceptPresetsQuery.data]);
+  const conceptOptions = useMemo(() => combinePresets(conceptPresetsQuery.data, DEFAULT_CONCEPT_PRESETS).map(p => ({ ...p, content: personalizedConceptPreset(p.content) })), [conceptPresetsQuery.data]);
   const termsOptions = useMemo(() => combinePresets(termsPresetsQuery.data, DEFAULT_TERMS_PRESETS), [termsPresetsQuery.data]);
   const depositOptions = useMemo(() => combinePresets(depositPresetsQuery.data, DEFAULT_DEPOSIT_PRESETS), [depositPresetsQuery.data]);
   const installmentOptions = useMemo(() => combinePresets(installmentPresetsQuery.data, DEFAULT_INSTALLMENT_PRESETS), [installmentPresetsQuery.data]);
@@ -446,6 +451,8 @@ export default function Quotes() {
     if (!window.confirm("Aplicar este modelo? Os textos e configurações serão substituídos. O cliente e as imagens anexadas serão mantidos.")) return;
     try {
       const next = decodeQuoteModel(model.content);
+      next.project.concept = personalizedConceptPreset(next.project.concept);
+      next.additionalProjects = next.additionalProjects.map(p => ({ ...p, project: { ...p.project, concept: personalizedConceptPreset(p.project.concept) } }));
       const applied = quoteEditorDataSchema.parse({ ...next, media: editor.media, additionalProjects: [...next.additionalProjects.map(p => ({ ...p, id: crypto.randomUUID() })), ...editor.additionalProjects.filter(p => p.images.length > 0)], pricing: { ...next.pricing, totalAmount: editor.pricing.totalAmount, depositAmount: editor.pricing.depositAmount } });
       setEditor(applied);
       setSnapshot(null); setSelectedModelId(id); setModelName(model.name); toast.success("Modelo aplicado. Confira região, tamanho e valor.");
@@ -510,7 +517,9 @@ export default function Quotes() {
 
   async function savePreset(category: QuotePresetCategory, name: string, value: string) {
     if (!artistId) return;
-    try { await savePresetMutation.mutateAsync({ artistId, category, name, content: value, scope: "artist" }); await utils.quotes.presets.list.invalidate(); toast.success("Modelo salvo."); }
+    const content = category === "concept" ? personalizedConceptPreset(reusableQuoteText(value, currentClient?.name)) : value;
+    if (content.length > QUOTE_TEXT_LIMIT) { toast.error("O modelo com o primeiro nome ultrapassa 8.000 caracteres. Reduza o texto antes de salvar."); return; }
+    try { await savePresetMutation.mutateAsync({ artistId, category, name, content, scope: "artist" }); await utils.quotes.presets.list.invalidate(); toast.success("Modelo salvo."); }
     catch (e) { toast.error(e instanceof Error ? e.message : "Não foi possível salvar o modelo."); }
   }
 
@@ -751,14 +760,14 @@ export default function Quotes() {
 
           </section>
 
-          <section className="rounded-xl border bg-card p-4 sm:p-5"><PresetPicker title="4. Conceito artístico" value={editor.project.concept} options={conceptOptions} onChange={(concept) => setEditor((v) => ({ ...v, project: { ...v.project, concept } }))} onSave={(name) => savePreset("concept", name, editor.project.concept)} /></section>
+          <section className="rounded-xl border bg-card p-4 sm:p-5"><PresetPicker title="4. Conceito artístico" clientName={identity.client.name} value={editor.project.concept} options={conceptOptions} onChange={(concept) => setEditor((v) => ({ ...v, project: { ...v.project, concept } }))} onSave={(name) => savePreset("concept", name, editor.project.concept)} /></section>
 
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Outros projetos no mesmo orçamento</h2><Button type="button" variant="outline" disabled={editor.additionalProjects.length >= 19} onClick={() => setEditor(v => ({ ...v, additionalProjects: [...v.additionalProjects, { id: crypto.randomUUID(), project: quoteProjectSchema.parse({ title: "Novo projeto" }), images: [] }] }))}><Plus className="mr-2 h-4 w-4" />Adicionar projeto</Button></div>
             <p className="text-xs text-muted-foreground">Os projetos abaixo fazem parte do valor total informado em Investimento.</p>
             {editor.additionalProjects.map((item, index) => <details key={item.id} className="rounded-lg border p-3" open><summary className="cursor-pointer font-medium">Projeto {index + 2} · {item.project.title}</summary><div className="mt-4 space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">{([["title", "Título"], ["style", "Estilo"], ["bodyRegion", "Região"], ["sizeText", "Tamanho"], ["durationText", "Tempo estimado"]] as const).map(([key, label]) => <Label key={key}>{label}<Input value={item.project[key]} maxLength={key === "title" ? 160 : 120} onChange={e => updateAdditionalProject(item.id, { [key]: e.target.value })} /></Label>)}<Label>Sessões<Input type="number" min={1} max={30} value={item.project.sessions} onChange={e => updateAdditionalProject(item.id, { sessions: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} /></Label></div>
-              <PresetPicker title="Descrição da tatuagem" value={item.project.concept} options={conceptOptions} onChange={concept => updateAdditionalProject(item.id, { concept })} onSave={name => savePreset("concept", name, item.project.concept)} />
+              <PresetPicker title="Descrição da tatuagem" clientName={identity.client.name} value={item.project.concept} options={conceptOptions} onChange={concept => updateAdditionalProject(item.id, { concept })} onSave={name => savePreset("concept", name, item.project.concept)} />
               <MediaCollection {...imageDescriptionProps} images={item.images} busy={Boolean(uploadingSlot)} coverKey={quoteCover(editor)?.key} onCover={key => setEditor(v => ({ ...v, media: { ...v.media, coverKey: key } }))} projects={editor.additionalProjects.map(p => ({ id: p.id, title: p.project.title }))} projectId={item.id} onMoveProject={moveImageProject} onFiles={files => void uploadImages(files, item.id)} onChange={images => setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === item.id ? { ...p, images } : p) }))} />
               <Button type="button" variant="ghost" onClick={() => { setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.filter(p => p.id !== item.id) })); setFailedUploads(v => v.filter(f => f.projectId !== item.id)); }}>Remover projeto</Button>
             </div></details>)}
