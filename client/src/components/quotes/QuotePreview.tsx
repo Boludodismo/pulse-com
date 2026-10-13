@@ -1,3 +1,4 @@
+import { QUOTE_DURATION_NOTE } from "@shared/quoteProposal";
 import type { QuoteEditorData, QuoteMedia } from "@shared/quoteProposal";
 import { quoteClientFirstName, quoteCover, resolveQuoteText } from "@shared/quoteProposal";
 import React, { useState } from "react";
@@ -287,7 +288,7 @@ function ProjectDetails({ project }: { project: QuoteEditorData["project"] }) {
     {project.style && <li><b>Estilo:</b> {project.style}</li>}
     {project.bodyRegion && <li><b>Região:</b> {project.bodyRegion}</li>}
     {project.sizeText && <li><b>Tamanho:</b> {project.sizeText}</li>}
-    {project.durationText && <li><b>Tempo estimado:</b> {project.durationText}</li>}
+    {project.durationText && <li><b>Tempo estimado:</b> {project.durationText}. <span>{QUOTE_DURATION_NOTE}</span></li>}
     <li><b>Sessões:</b> {project.sessions}</li>
   </ul></div>;
 }
@@ -343,7 +344,7 @@ function SummaryPage(props: Props) {
           {editor.project.style && <li><b>Estilo:</b> {editor.project.style}</li>}
           {editor.project.bodyRegion && <li><b>Região:</b> {editor.project.bodyRegion}</li>}
           {editor.project.sizeText && <li><b>Tamanho:</b> {editor.project.sizeText}</li>}
-          {editor.project.durationText && <li><b>Tempo estimado:</b> {editor.project.durationText}</li>}
+          {editor.project.durationText && <li><b>Tempo estimado:</b> {editor.project.durationText}. <span>{QUOTE_DURATION_NOTE}</span></li>}
           <li><b>Sessões:</b> {editor.project.sessions}</li>
         </ul>
       </div>

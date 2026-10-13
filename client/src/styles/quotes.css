@@ -1104,3 +1104,29 @@
     min-height: 2.9rem;
   }
 }
+
+/* Keep narrow artist previews in the same content flow as the public proposal. */
+.quote-preview-stage { min-width: 0; }
+.quote-summary-page, .quote-artist-page { width: min(100%, 680px); }
+.quote-summary-page .quote-topline, .quote-artist-page .quote-topline { flex-wrap: wrap; }
+.quote-topline > div { min-width: 0; overflow-wrap: anywhere; }
+.quote-summary-page .quote-topline b, .quote-artist-page .quote-topline b { letter-spacing: 0.12em; }
+.quote-summary-page .quote-footer-copy, .quote-artist-page .quote-footer-copy {
+  display: flex; flex-wrap: wrap; gap: 0.25rem 0.55rem;
+}
+.quote-summary-page .quote-footer-copy strong, .quote-summary-page .quote-footer-copy span,
+.quote-artist-page .quote-footer-copy strong, .quote-artist-page .quote-footer-copy span {
+  white-space: normal; overflow: visible; overflow-wrap: anywhere;
+}
+.quote-summary-page .quote-footer-copy small, .quote-artist-page .quote-footer-copy small { flex-basis: 100%; }
+.quote-artist-page .quote-artist-copy h2 { line-height: 1.12; overflow-wrap: anywhere; }
+.quote-summary-page .quote-total strong, .quote-summary-page .quote-money-row b { overflow-wrap: anywhere; }
+@container (max-width: 480px) {
+  .quote-summary-page .quote-details ul { grid-template-columns: 1fr; }
+  .quote-summary-page .quote-project-overview, .quote-summary-page .quote-extra-gallery { grid-template-columns: 1fr; }
+  .quote-summary-page .quote-topline-tag, .quote-artist-page .quote-topline-tag { max-width: 100%; }
+}
+@media print {
+  body.quote-print-mode .quote-print-root .quote-summary-page,
+  body.quote-print-mode .quote-print-root .quote-artist-page { height: auto !important; overflow: visible !important; }
+}

@@ -4,6 +4,34 @@ export const QUOTE_TEXT_LIMIT = 8000;
 export const QUOTE_IMAGE_LIMIT = 40;
 export const quoteClientFirstName = (name: string | null | undefined) => name?.trim().split(/\s+/)[0] || "";
 
+// Explicit insertion points for informative presets; free text uses a greeting.
+export function personalizeQuoteInformation(text: string): string {
+  const clean = text.trim().replace(/\s*\{primeiro_nome\}\s*$/, "").trim();
+  if (!clean || clean.includes("{primeiro_nome}")) return clean;
+  if (clean.startsWith("Orçamento válido ")) return clean.replace("Orçamento válido ", "Este orçamento, {primeiro_nome}, é válido ");
+  for (const start of ["O sinal", "O valor base da tatuagem", "O valor", "O projeto", "A reserva", "Este orçamento", "No parcelamento pelo cartão de crédito", "Você pode parcelar"]) {
+    if (clean.startsWith(start + " ") || clean.startsWith(start + ",")) {
+      return start + ", {primeiro_nome}, " + clean.slice(start.length).replace(/^,?\s*/, "");
+    }
+  }
+  return `{primeiro_nome}, ${clean.charAt(0).toLocaleLowerCase("pt-BR")}${clean.slice(1)}`;
+}
+
+export function removeQuotePersonalization(text: string): string {
+  return text.replace(/,\s*\{primeiro_nome\},\s*/g, " ")
+    .replace(/,\s*\{primeiro_nome\}(?=[!.;])/g, "")
+    .replace(/^\{primeiro_nome\},\s*/g, "")
+    .replace(/\s*\{primeiro_nome\}\s*$/g, "");
+}
+
+export const QUOTE_DURATION_NOTE = "Essa duração é uma estimativa e pode variar para mais ou para menos.";
+export const QUOTE_CARD_FEE_TEXT = "As taxas da operadora do cartão de crédito serão repassadas a você. O total e o valor de cada parcela serão informados antes da confirmação do pagamento.";
+export const QUOTE_DURATION_OPTIONS = Array.from({ length: 48 }, (_, index) => {
+  const minutes = (index + 1) * 30;
+  const hours = Math.floor(minutes / 60);
+  return hours ? `${hours} ${hours === 1 ? "hora" : "horas"}${minutes % 60 ? " e 30 minutos" : ""}` : "30 minutos";
+});
+
 const mediaUrl = z.string().max(3000).refine((value) => {
   if (value.startsWith("/api/storage?")) return true;
   try {
@@ -58,6 +86,7 @@ export const quoteEditorDataSchema = z.object({
     depositAmount: z.number().int().min(0).max(100_000_000).default(0),
     showDeposit: z.boolean().default(true),
     installmentText: z.string().trim().max(120).default(""),
+    passCardFees: z.boolean().optional(),
     depositText: z.string().trim().max(QUOTE_TEXT_LIMIT).default(""),
     installmentInfo: z.string().trim().max(QUOTE_TEXT_LIMIT).default(""),
     showDepositText: z.boolean().default(true),
@@ -295,7 +324,11 @@ export function resolveQuoteText(editor: QuoteEditorData, name: string): QuoteEd
   const projectText = (project: QuoteEditorData["project"]) => {
     const vars: Record<string, string> = { primeiro_nome: first, estilo: project.style, local_corpo: project.bodyRegion, tamanho: project.sizeText,
       valor: new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(editor.pricing.totalAmount / 100) };
-    const fill = (text: string) => text.replace(/\{(primeiro_nome|estilo|local_corpo|tamanho|valor)\}/g, (_, key: string) => vars[key]);
+    const fill = (text: string) => {
+      const positioned = /\{primeiro_nome\}\s*$/.test(text) ? personalizeQuoteInformation(text) : text;
+      const template = first ? positioned : removeQuotePersonalization(positioned);
+      return template.replace(/\{(primeiro_nome|estilo|local_corpo|tamanho|valor)\}/g, (_, key: string) => vars[key]);
+    };
     return { fill, project: { ...project, title: fill(project.title), concept: fill(project.concept) } };
   };
   const { fill, project } = projectText(editor.project);

@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { ArrowLeft, CheckCircle2, Copy, ExternalLink, Eye, FileText, Image as ImageIcon, Plus, Save, Search, Share2, Trash2, Upload } from "lucide-react";
-import { quoteEditorDataSchema, encodeQuoteModel, decodeQuoteModel, quoteCover, quoteClientFirstName, personalizedConceptPreset, reusableQuoteText, DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, DEFAULT_IMAGE_DESCRIPTION_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
+import { quoteEditorDataSchema, personalizeQuoteInformation, removeQuotePersonalization, QUOTE_DURATION_OPTIONS, QUOTE_CARD_FEE_TEXT, encodeQuoteModel, decodeQuoteModel, quoteCover, quoteClientFirstName, personalizedConceptPreset, reusableQuoteText, DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, DEFAULT_IMAGE_DESCRIPTION_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
 import QuotePreview, { type QuotePreviewIdentity } from "@/components/quotes/QuotePreview";
 import "@/styles/quotes.css";
 
@@ -65,11 +65,18 @@ function PresetPicker(props: {
   onChange: (value: string) => void; onSave: (name: string) => Promise<void>;
 }) {
   const textId = useId();
+  const personalize = (text: string) => personalizeQuoteInformation(text);
+  const hasPositionedName = props.value.includes("{primeiro_nome}") && !/\{primeiro_nome\}\s*$/.test(props.value);
+  function togglePersonalization() {
+    const next = hasPositionedName ? removeQuotePersonalization(props.value) : personalize(props.value);
+    if (next.length > QUOTE_TEXT_LIMIT) { toast.error("O texto com o primeiro nome ultrapassaria 8.000 caracteres."); return; }
+    setPrevious(props.value); props.onChange(next);
+  }
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<PresetOption | null>(null);
   const [previous, setPrevious] = useState<string | null>(null);
-  const showName = (text: string) => props.clientName ? text.replace(/\{primeiro_nome\}/g, quoteClientFirstName(props.clientName)) : text;
+  const showName = (text: string) => props.clientName ? (/\{primeiro_nome\}\s*$/.test(text) ? personalize(text) : text).replace(/\{primeiro_nome\}/g, quoteClientFirstName(props.clientName)) : text;
   function apply(append: boolean) {
     if (!selected) return;
     const next = append && props.value ? props.value + "\n\n" + selected.content : selected.content;
@@ -95,7 +102,7 @@ function PresetPicker(props: {
     </div>}
     {selected && <div className="rounded-lg border border-primary/30 p-3 space-y-3"><p className="whitespace-pre-wrap text-sm">{showName(selected.content)}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => apply(false)}>Usar este texto</Button><Button type="button" variant="outline" onClick={() => apply(true)}>Acrescentar</Button></div></div>}
     <Textarea id={textId} aria-label={props.title} value={props.value} maxLength={QUOTE_TEXT_LIMIT} onChange={(e) => props.onChange(e.target.value)} rows={props.compact ? 3 : 6} disabled={props.disabled} placeholder={props.compact ? "Escreva livremente ou aplique um modelo e ajuste para esta imagem." : undefined} />
-    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{props.value.length.toLocaleString("pt-BR")} / 8.000 caracteres</span><Button type="button" variant="ghost" size="sm" disabled={props.disabled || props.value.length + 16 > QUOTE_TEXT_LIMIT} onClick={() => props.onChange(props.value + "{primeiro_nome}")}>Inserir primeiro nome</Button>{previous !== null && <Button type="button" variant="ghost" size="sm" onClick={() => { props.onChange(previous); setPrevious(null); }}>Desfazer aplicação</Button>}</div>
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{props.value.length.toLocaleString("pt-BR")} / 8.000 caracteres</span><Button type="button" variant="ghost" size="sm" disabled={props.disabled || !props.value.trim()} onClick={togglePersonalization}>{hasPositionedName ? "Remover primeiro nome" : "Inserir primeiro nome"}</Button>{previous !== null && <Button type="button" variant="ghost" size="sm" onClick={() => { props.onChange(previous); setPrevious(null); }}>Desfazer aplicação</Button>}</div>
     {props.clientName !== undefined && <div className="rounded-lg bg-muted/30 p-3 text-sm">
       <p className="mb-1 text-xs text-muted-foreground">{props.clientName ? "Texto para o cliente selecionado — o primeiro nome acompanha a seleção automaticamente." : "Selecione o cliente para visualizar o texto com o primeiro nome."}</p>
       <p className="whitespace-pre-wrap break-words">{showName(props.value)}</p>
@@ -111,6 +118,14 @@ function PresetPicker(props: {
     </div>
     </details>
   </div>;
+}
+
+function DurationPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return <select aria-label="Tempo estimado de execução" className="block w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={value} onChange={e => onChange(e.target.value)}>
+    <option value="">Não informar</option>
+    {value && !QUOTE_DURATION_OPTIONS.includes(value) && <option value={value}>{value}</option>}
+    {QUOTE_DURATION_OPTIONS.map(duration => <option key={duration} value={duration}>{duration}</option>)}
+  </select>;
 }
 
 type ImageDescriptionProps = {
@@ -740,7 +755,7 @@ export default function Quotes() {
               <div className="space-y-2"><Label>Estilo</Label><Input value={editor.project.style} placeholder="Realismo preto e cinza" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, style: e.target.value } }))} /></div>
               <div className="space-y-2"><datalist id="quote-body-regions">{["Braço", "Antebraço", "Perna", "Coxa", "Panturrilha", "Costas", "Peito", "Ombro", "Pescoço", "Mão", "Pé"].map(region => <option key={region} value={region} />)}</datalist><Label>Região / lado (selecione ou digite)</Label><Input list="quote-body-regions" value={editor.project.bodyRegion} placeholder="Antebraço esquerdo" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, bodyRegion: e.target.value } }))} /></div>
               <div className="space-y-2"><Label>Tamanho</Label><Input value={editor.project.sizeText} placeholder="aproximadamente 18 cm" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, sizeText: e.target.value } }))} /></div>
-              <div className="space-y-2"><Label>Tempo estimado</Label><Input value={editor.project.durationText} placeholder="4 a 5 horas" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, durationText: e.target.value } }))} /></div>
+              <div className="space-y-2"><Label>Tempo estimado</Label><DurationPicker value={editor.project.durationText} onChange={durationText => setEditor(v => ({ ...v, project: { ...v.project, durationText } }))} /></div>
               <div className="space-y-2"><Label>Sessões</Label><Input type="number" min={1} max={30} value={editor.project.sessions} onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, sessions: Math.max(1, Number(e.target.value) || 1) } }))} /></div>
             </div>
           </section>
@@ -766,7 +781,7 @@ export default function Quotes() {
             <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Outros projetos no mesmo orçamento</h2><Button type="button" variant="outline" disabled={editor.additionalProjects.length >= 19} onClick={() => setEditor(v => ({ ...v, additionalProjects: [...v.additionalProjects, { id: crypto.randomUUID(), project: quoteProjectSchema.parse({ title: "Novo projeto" }), images: [] }] }))}><Plus className="mr-2 h-4 w-4" />Adicionar projeto</Button></div>
             <p className="text-xs text-muted-foreground">Os projetos abaixo fazem parte do valor total informado em Investimento.</p>
             {editor.additionalProjects.map((item, index) => <details key={item.id} className="rounded-lg border p-3" open><summary className="cursor-pointer font-medium">Projeto {index + 2} · {item.project.title}</summary><div className="mt-4 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">{([["title", "Título"], ["style", "Estilo"], ["bodyRegion", "Região"], ["sizeText", "Tamanho"], ["durationText", "Tempo estimado"]] as const).map(([key, label]) => <Label key={key}>{label}<Input value={item.project[key]} maxLength={key === "title" ? 160 : 120} onChange={e => updateAdditionalProject(item.id, { [key]: e.target.value })} /></Label>)}<Label>Sessões<Input type="number" min={1} max={30} value={item.project.sessions} onChange={e => updateAdditionalProject(item.id, { sessions: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} /></Label></div>
+              <div className="grid gap-3 sm:grid-cols-2">{([["title", "Título"], ["style", "Estilo"], ["bodyRegion", "Região"], ["sizeText", "Tamanho"]] as const).map(([key, label]) => <Label key={key}>{label}<Input value={item.project[key]} maxLength={key === "title" ? 160 : 120} onChange={e => updateAdditionalProject(item.id, { [key]: e.target.value })} /></Label>)}<Label>Tempo estimado<DurationPicker value={item.project.durationText} onChange={durationText => updateAdditionalProject(item.id, { durationText })} /></Label><Label>Sessões<Input type="number" min={1} max={30} value={item.project.sessions} onChange={e => updateAdditionalProject(item.id, { sessions: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} /></Label></div>
               <PresetPicker title="Descrição da tatuagem" clientName={identity.client.name} value={item.project.concept} options={conceptOptions} onChange={concept => updateAdditionalProject(item.id, { concept })} onSave={name => savePreset("concept", name, item.project.concept)} />
               <MediaCollection {...imageDescriptionProps} images={item.images} busy={Boolean(uploadingSlot)} coverKey={quoteCover(editor)?.key} onCover={key => setEditor(v => ({ ...v, media: { ...v.media, coverKey: key } }))} projects={editor.additionalProjects.map(p => ({ id: p.id, title: p.project.title }))} projectId={item.id} onMoveProject={moveImageProject} onFiles={files => void uploadImages(files, item.id)} onChange={images => setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === item.id ? { ...p, images } : p) }))} />
               <Button type="button" variant="ghost" onClick={() => { setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.filter(p => p.id !== item.id) })); setFailedUploads(v => v.filter(f => f.projectId !== item.id)); }}>Remover projeto</Button>
@@ -775,6 +790,7 @@ export default function Quotes() {
 
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <h2 className="font-semibold">5. Investimento</h2>
+            <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={editor.pricing.passCardFees ?? /taxas/.test(editor.pricing.installmentInfo)} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, passCardFees: e.target.checked, showInstallmentInfo: e.target.checked, installmentInfo: e.target.checked ? QUOTE_CARD_FEE_TEXT : "" } }))} />Repassar taxas da operadora do cartão ao cliente</label>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2 sm:col-span-2"><Label>Descrição</Label><Input value={editor.pricing.mainLabel} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, mainLabel: e.target.value } }))} /></div>
               <div className="space-y-2">
@@ -794,18 +810,18 @@ export default function Quotes() {
                 />
               </div>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showDeposit} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, showDeposit: e.target.checked } }))} />Mostrar sinal e saldo</label>
-              <div className="space-y-2"><Label>Parcelamento</Label><Input value={editor.pricing.installmentText} placeholder="até 3x no cartão" onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, installmentText: e.target.value } }))} /></div>
+              <div className="space-y-2"><Label>Parcelamento</Label><select aria-label="Número máximo de parcelas" className="block w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={editor.pricing.installmentText} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, installmentText: e.target.value } }))}><option value="">Não informar</option><option value="À vista">À vista</option>{editor.pricing.installmentText && !["À vista", ...Array.from({ length: 18 }, (_, i) => `Até ${i + 1}x no cartão de crédito`)].includes(editor.pricing.installmentText) && <option value={editor.pricing.installmentText}>{editor.pricing.installmentText}</option>}{Array.from({ length: 18 }, (_, i) => <option key={i} value={`Até ${i + 1}x no cartão de crédito`}>{i + 1 === 1 ? "1x no cartão de crédito" : `Até ${i + 1}x no cartão de crédito`}</option>)}</select></div>
             </div>
           </section>
 
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-5">
-            <details><summary className="cursor-pointer font-medium">Informativo sobre o sinal</summary><div className="mt-4 space-y-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showDepositText} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, showDepositText: e.target.checked } }))} />Exibir informativo do sinal</label><PresetPicker title="Escolha o texto sobre o sinal" value={editor.pricing.depositText} options={depositOptions} onChange={depositText => setEditor(v => ({ ...v, pricing: { ...v.pricing, depositText } }))} onSave={name => savePreset("deposit", name, editor.pricing.depositText)} /></div></details>
-            <details><summary className="cursor-pointer font-medium">Informativo sobre taxas do cartão</summary><div className="mt-4 space-y-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showInstallmentInfo} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, showInstallmentInfo: e.target.checked } }))} />Exibir informativo do parcelamento</label><PresetPicker title="Escolha o texto sobre o cartão" value={editor.pricing.installmentInfo} options={installmentOptions} onChange={installmentInfo => setEditor(v => ({ ...v, pricing: { ...v.pricing, installmentInfo } }))} onSave={name => savePreset("installment", name, editor.pricing.installmentInfo)} /></div></details>
+            <details><summary className="cursor-pointer font-medium">Informativo sobre o sinal</summary><div className="mt-4 space-y-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showDepositText} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, showDepositText: e.target.checked } }))} />Exibir informativo do sinal</label><PresetPicker clientName={currentClient?.name || ""} title="Escolha o texto sobre o sinal" value={editor.pricing.depositText} options={depositOptions} onChange={depositText => setEditor(v => ({ ...v, pricing: { ...v.pricing, depositText } }))} onSave={name => savePreset("deposit", name, editor.pricing.depositText)} /></div></details>
+            <details><summary className="cursor-pointer font-medium">Informativo sobre taxas do cartão</summary><div className="mt-4 space-y-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showInstallmentInfo} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, showInstallmentInfo: e.target.checked } }))} />Exibir informativo do parcelamento</label><PresetPicker clientName={currentClient?.name || ""} title="Escolha o texto sobre o cartão" value={editor.pricing.installmentInfo} options={installmentOptions} onChange={installmentInfo => setEditor(v => ({ ...v, pricing: { ...v.pricing, installmentInfo } }))} onSave={name => savePreset("installment", name, editor.pricing.installmentInfo)} /></div></details>
             <p className="text-xs text-muted-foreground">Os textos são informativos. Não alteram o sinal, o valor total nem calculam taxas.</p>
             <Label>Contato no link do cliente<select className="mt-2 block w-full rounded-md border border-input bg-background p-2 text-sm" value={editor.contactSource} onChange={e => setEditor(v => ({ ...v, contactSource: e.target.value as "artist" | "studio" }))}><option value="studio">Estúdio</option><option value="artist">Artista responsável pelo orçamento</option></select></Label>
           </section>
 
-          <section className="rounded-xl border bg-card p-4 sm:p-5"><PresetPicker title="6. Condições e observações" value={editor.terms} options={termsOptions} onChange={(terms) => setEditor((v) => ({ ...v, terms }))} onSave={(name) => savePreset("terms", name, editor.terms)} /></section>
+          <section className="rounded-xl border bg-card p-4 sm:p-5"><PresetPicker clientName={currentClient?.name || ""} title="6. Condições e observações" value={editor.terms} options={termsOptions} onChange={(terms) => setEditor((v) => ({ ...v, terms }))} onSave={(name) => savePreset("terms", name, editor.terms)} /></section>
 
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <h2 className="font-semibold">7. Identidade do documento</h2>
