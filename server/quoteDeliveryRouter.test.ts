@@ -45,6 +45,15 @@ describe("envio de orçamento pela integração existente", () => {
     expect(mocks.privateAccess).toHaveBeenCalledWith(ctx.user, 1);
     expect(queries.filter(q => q.table === "message_queue").every(q => q.params.includes(1) && q.params.includes(3) && q.params.includes("quote_proposal:5"))).toBe(true);
   });
+  it("validates consent and sends using the explicitly selected connection", async () => {
+    const caller = quotesRouter.createCaller(ctx);
+    await caller.sendViaIntegration({ id: 5, integrationId: 7 });
+    expect(mocks.integration).toHaveBeenCalledWith(1, 7);
+    expect(queries.find(q => q.table === "integration_contacts")?.params).toEqual([1, 7, 3]);
+    mocks.integration.mockResolvedValue(null);
+    await expect(caller.sendViaIntegration({ id: 5, integrationId: 999 })).rejects.toThrow("Conecte");
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
   it("shows queued and failed delivery without sending the same quote again", async () => {
     for (const status of ["pendente", "erro", "enviada"]) {
       delivery = { id: 99, status, sentAt: null, error: status === "erro" ? "Falha no provedor" : null };

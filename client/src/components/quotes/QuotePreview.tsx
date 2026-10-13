@@ -1,5 +1,5 @@
 import type { QuoteEditorData, QuoteMedia } from "@shared/quoteProposal";
-import { quoteClientFirstName } from "@shared/quoteProposal";
+import { quoteClientFirstName, quoteCover, resolveQuoteText } from "@shared/quoteProposal";
 import React, { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
@@ -131,9 +131,7 @@ function Footer({
 
 function CoverPage(props: Props) {
   const { editor, identity, createdDate, validUntil } = props;
-  const cover = editor.media.coverSource === "suggested"
-    ? editor.media.suggestedArtwork
-    : editor.media.clientReference;
+  const cover = quoteCover(editor);
   const logoUrl = activeLogo(editor, identity);
 
   return (
@@ -404,7 +402,8 @@ function SummaryPage(props: Props) {
   );
 }
 
-export default function QuotePreview(props: Props) {
+export default function QuotePreview(input: Props) {
+  const props = { ...input, editor: resolveQuoteText(input.editor, input.identity.client.name) };
   return (
     <div className={`quote-document ${props.className || ""}`}>
       <CoverPage {...props} />

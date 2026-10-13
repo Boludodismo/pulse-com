@@ -83,6 +83,23 @@ describe("real quote router round-trip", () => {
     await expect(caller.branding.get({ artistId: 99 })).rejects.toThrow("Artista ativo");
     expect(writes.every(w => w.table === "quote_proposals")).toBe(true);
   });
+  it("finalizes with a gallery cover and resolves personal text in the saved public version", async () => {
+    const caller = quotesRouter.createCaller(ctx); const editor = buildEmptyQuoteEditorData();
+    editor.project.concept = "Olá, {primeiro_nome}! Região: {local_corpo}"; editor.project.bodyRegion = "Braço";
+    editor.media.gallery = [quoteMediaSchema.parse({ key: "gallery-cover", url: "https://example.test/cover.png" })];
+    editor.media.coverKey = "gallery-cover";
+    const draft = await caller.create({ clientId: 3, artistId: 2, validUntil: "2099-10-10", editor });
+    const final = await caller.finalize({ id: draft.id });
+    const customer = await caller.public.get({ token: final.publicToken });
+    expect(customer.payload.editor.project.concept).toBe("Olá, Cliente! Região: Braço");
+    expect(customer.payload.editor.media.coverKey).toBe("gallery-cover");
+  });
+  it("rejects foreign model updates and invalid serialized models", async () => {
+    const caller = quotesRouter.createCaller(ctx);
+    await expect(caller.presets.create({ artistId: 2, category: "model", name: "Modelo", content: "invalid" })).rejects.toThrow("inválido");
+    await expect(caller.presets.create({ id: 99, artistId: 2, category: "concept", name: "Outro", content: "Texto" })).rejects.toThrow("não encontrado");
+    expect(writes).toHaveLength(0);
+  });
   it("keeps drafts private and refuses other artists and studios", async () => {
     const caller = quotesRouter.createCaller(ctx); const editor = buildEmptyQuoteEditorData();
     await expect(caller.create({ clientId: 3, artistId: 99, validUntil: "2099-10-10", editor })).rejects.toThrow("Artista ativo");

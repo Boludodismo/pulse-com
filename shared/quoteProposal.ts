@@ -44,6 +44,7 @@ export const quoteEditorDataSchema = z.object({
     clientReference: quoteMediaSchema.nullable().default(null),
     suggestedArtwork: quoteMediaSchema.nullable().default(null),
     coverSource: z.enum(["reference", "suggested"]).default("reference"),
+    coverKey: z.string().max(500).nullable().default(null),
     gallery: z.array(quoteMediaSchema).max(QUOTE_IMAGE_LIMIT).default([]),
   }).strict(),
   additionalProjects: z.array(z.object({
@@ -132,7 +133,7 @@ export const quoteStoredPayloadSchema = z.object({
 
 export type QuoteStoredPayload = z.infer<typeof quoteStoredPayloadSchema>;
 
-export const QUOTE_PRESET_CATEGORIES = ["concept", "terms", "bio", "payment", "notes", "deposit", "installment", "image"] as const;
+export const QUOTE_PRESET_CATEGORIES = ["concept", "terms", "bio", "payment", "notes", "deposit", "installment", "image", "model"] as const;
 export type QuotePresetCategory = (typeof QUOTE_PRESET_CATEGORIES)[number];
 
 export const DEFAULT_IMAGE_DESCRIPTION_PRESETS = [
@@ -268,3 +269,49 @@ export const DEFAULT_INSTALLMENT_PRESETS = [
     "content": "O valor base da tatuagem não inclui as taxas do parcelamento no cartão. Ao escolher essa modalidade, as taxas da maquininha serão acrescentadas. O total e as parcelas serão apresentados para sua aprovação antes da cobrança."
   }
 ] as const;
+
+
+export function quoteCover(editor: QuoteEditorData): QuoteMedia | null {
+  if (editor.media.coverKey) return allQuoteMedia(editor).find(m => m.key === editor.media.coverKey) || null;
+  return editor.media.coverSource === "suggested" ? editor.media.suggestedArtwork : editor.media.clientReference;
+}
+
+export function resolveQuoteText(editor: QuoteEditorData, name: string): QuoteEditorData {
+  const first = quoteClientFirstName(name);
+  const projectText = (project: QuoteEditorData["project"]) => {
+    const vars: Record<string, string> = { primeiro_nome: first, estilo: project.style, local_corpo: project.bodyRegion, tamanho: project.sizeText,
+      valor: new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(editor.pricing.totalAmount / 100) };
+    const fill = (text: string) => text.replace(/\{(primeiro_nome|estilo|local_corpo|tamanho|valor)\}/g, (_, key: string) => vars[key]);
+    return { fill, project: { ...project, title: fill(project.title), concept: fill(project.concept) } };
+  };
+  const { fill, project } = projectText(editor.project);
+  const media = (m: QuoteMedia) => ({ ...m, alt: fill(m.alt), description: fill(m.description) });
+  return { ...editor, project, terms: fill(editor.terms), pricing: { ...editor.pricing, mainLabel: fill(editor.pricing.mainLabel), depositText: fill(editor.pricing.depositText), installmentInfo: fill(editor.pricing.installmentInfo) },
+    media: { ...editor.media, clientReference: editor.media.clientReference && media(editor.media.clientReference), suggestedArtwork: editor.media.suggestedArtwork && media(editor.media.suggestedArtwork), gallery: editor.media.gallery.map(media) },
+    additionalProjects: editor.additionalProjects.map(p => { const resolved = projectText(p.project); return { ...p, project: resolved.project, images: p.images.map(m => ({ ...m, alt: resolved.fill(m.alt), description: resolved.fill(m.description) })) }; }) };
+}
+
+// Reusable models never retain customer uploads, identifiers or negotiated amounts.
+export function quoteModel(editor: QuoteEditorData): QuoteEditorData {
+  return quoteEditorDataSchema.parse({ ...editor, media: { clientReference: null, suggestedArtwork: null, coverSource: editor.media.coverSource, coverKey: null, gallery: [] },
+    pricing: { ...editor.pricing, totalAmount: 0, depositAmount: 0 },
+    additionalProjects: editor.additionalProjects.map((p, i) => ({ ...p, id: `model-project-${i + 1}`, images: [] })) });
+}
+export function encodeQuoteModel(editor: QuoteEditorData, clientName?: string): string {
+  let model = quoteModel(editor);
+  const names = [clientName?.trim(), quoteClientFirstName(clientName)].filter((name): name is string => !!name);
+  if (names.length) {
+    const escaped = Array.from(new Set(names)).map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${escaped.join("|")})(?![\\p{L}\\p{N}_])`, "giu");
+    const replace = (text: string) => text.replace(pattern, "{primeiro_nome}");
+    model = { ...model, project: { ...model.project, concept: replace(model.project.concept) }, terms: replace(model.terms),
+      pricing: { ...model.pricing, depositText: replace(model.pricing.depositText), installmentInfo: replace(model.pricing.installmentInfo) },
+      additionalProjects: model.additionalProjects.map(p => ({ ...p, project: { ...p.project, concept: replace(p.project.concept) } })) };
+  }
+  const content = JSON.stringify(model);
+  if (new TextEncoder().encode(content).length > 60000) throw new Error("O modelo completo ultrapassa 60 KB. Reduza os textos ou projetos antes de salvar.");
+  return content;
+}
+export function decodeQuoteModel(content: string): QuoteEditorData {
+  return quoteModel(quoteEditorDataSchema.parse(JSON.parse(content)));
+}

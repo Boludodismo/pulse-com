@@ -1,4 +1,5 @@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import QuoteRecipient from "@/components/quotes/QuoteRecipient";
 import WhatsappConsentField from "@/components/WhatsappConsentField";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import WatermarkControl from "@/components/quotes/WatermarkControl";
@@ -13,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { ArrowLeft, CheckCircle2, Copy, ExternalLink, Eye, FileText, Image as ImageIcon, Plus, Save, Search, Share2, Trash2, Upload } from "lucide-react";
-import { DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, DEFAULT_IMAGE_DESCRIPTION_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
+import { quoteEditorDataSchema, encodeQuoteModel, decodeQuoteModel, quoteCover, quoteClientFirstName, DEFAULT_CONCEPT_PRESETS, DEFAULT_TERMS_PRESETS, DEFAULT_DEPOSIT_PRESETS, DEFAULT_INSTALLMENT_PRESETS, DEFAULT_IMAGE_DESCRIPTION_PRESETS, QUOTE_TEXT_LIMIT, QUOTE_IMAGE_LIMIT, allQuoteMedia, quoteProjectSchema, buildEmptyQuoteEditorData, type QuoteEditorData, type QuoteMedia, type QuoteStoredPayload, type QuotePresetCategory } from "@shared/quoteProposal";
 import QuotePreview, { type QuotePreviewIdentity } from "@/components/quotes/QuotePreview";
 import "@/styles/quotes.css";
 
@@ -93,7 +94,7 @@ function PresetPicker(props: {
     </div>}
     {selected && <div className="rounded-lg border border-primary/30 p-3 space-y-3"><p className="whitespace-pre-wrap text-sm">{selected.content}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => apply(false)}>Usar este texto</Button><Button type="button" variant="outline" onClick={() => apply(true)}>Acrescentar</Button></div></div>}
     <Textarea id={textId} aria-label={props.title} value={props.value} maxLength={QUOTE_TEXT_LIMIT} onChange={(e) => props.onChange(e.target.value)} rows={props.compact ? 3 : 6} disabled={props.disabled} placeholder={props.compact ? "Escreva livremente ou aplique um modelo e ajuste para esta imagem." : undefined} />
-    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{props.value.length.toLocaleString("pt-BR")} / 8.000 caracteres</span>{previous !== null && <Button type="button" variant="ghost" size="sm" onClick={() => { props.onChange(previous); setPrevious(null); }}>Desfazer aplicação</Button>}</div>
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{props.value.length.toLocaleString("pt-BR")} / 8.000 caracteres</span><Button type="button" variant="ghost" size="sm" disabled={props.disabled || props.value.length + 16 > QUOTE_TEXT_LIMIT} onClick={() => props.onChange(props.value + "{primeiro_nome}")}>Inserir primeiro nome</Button>{previous !== null && <Button type="button" variant="ghost" size="sm" onClick={() => { props.onChange(previous); setPrevious(null); }}>Desfazer aplicação</Button>}</div>
     <details open={props.compact ? undefined : true} className={props.compact ? "text-sm" : ""}>
       <summary className={props.compact ? "cursor-pointer text-muted-foreground" : "hidden"}>Salvar este texto como modelo pessoal</summary>
     <div className={"flex flex-col gap-2" + (props.compact ? " mt-3" : " sm:flex-row")}>
@@ -156,7 +157,7 @@ function MediaAdjuster(props: ImageDescriptionProps & {
   </div>;
 }
 
-function MediaCollection(props: ImageDescriptionProps & { images: QuoteMedia[]; busy: boolean; onFiles: (files: File[]) => void; onChange: (images: QuoteMedia[]) => void }) {
+function MediaCollection(props: ImageDescriptionProps & { images: QuoteMedia[]; busy: boolean; onFiles: (files: File[]) => void; onChange: (images: QuoteMedia[]) => void; coverKey?: string | null; onCover?: (key: string) => void; projects?: {id: string; title: string}[]; projectId?: string | null; onMoveProject?: (key: string, id: string | null) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const patch = (index: number, value: Partial<QuoteMedia>) => props.onChange(props.images.map((m, i) => i === index ? { ...m, ...value } : m));
   const move = (index: number, step: number) => { const images = [...props.images]; [images[index], images[index + step]] = [images[index + step], images[index]]; props.onChange(images); };
@@ -166,6 +167,9 @@ function MediaCollection(props: ImageDescriptionProps & { images: QuoteMedia[]; 
     <p className="text-xs text-muted-foreground">Selecione uma ou mais imagens · JPG, PNG ou WebP · até 6 MB cada. Até {QUOTE_IMAGE_LIMIT} imagens por orçamento. Legendas, descrições e ordem aparecem no link do cliente.</p>
     {props.images.map((media, index) => <div key={media.key} className="rounded-lg border p-3 space-y-2">
       <img src={media.url} alt={media.alt} className="h-40 w-full rounded object-contain bg-black" />
+      <div className="flex flex-wrap items-center gap-2"><strong className="text-sm">Imagem {index + 1}</strong>{props.onCover && <Button type="button" size="sm" variant={props.coverKey === media.key ? "default" : "outline"} disabled={props.busy} onClick={() => props.onCover?.(media.key)}>{props.coverKey === media.key ? "Capa selecionada" : "Definir como capa"}</Button>}</div>
+      <Label>Posição na sequência<select className="mt-1 block w-full rounded-md border bg-background p-2" value={index} disabled={props.busy} onChange={e => { const images = [...props.images]; const [image] = images.splice(index, 1); images.splice(Number(e.target.value), 0, image); props.onChange(images); }}>{props.images.map((_, i) => <option key={i} value={i}>{i + 1}ª imagem</option>)}</select></Label>
+      {props.onMoveProject && <Label>Projeto desta imagem<select className="mt-1 block w-full rounded-md border bg-background p-2" disabled={props.busy} value={props.projectId || ""} onChange={e => props.onMoveProject?.(media.key, e.target.value || null)}><option value="">Projeto principal</option>{props.projects?.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></Label>}
       <Label>Legenda<Input maxLength={200} value={media.alt} onChange={(e) => patch(index, { alt: e.target.value })} /></Label>
       <ImageDescriptionEditor media={media} imageOptions={props.imageOptions} onSaveImagePreset={props.onSaveImagePreset} onChange={description => patch(index, { description })} />
       <label className="block text-sm">Tipo<select className="mt-1 w-full rounded-md border border-input bg-background p-2" value={media.kind} onChange={(e) => patch(index, { kind: e.target.value as QuoteMedia["kind"] })}>{[["reference", "Referência"], ["current", "Tatuagem atual"], ["artwork", "Arte desenvolvida"], ["detail", "Detalhe"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -248,6 +252,13 @@ export default function Quotes() {
   const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState("");
   const [failedUploads, setFailedUploads] = useState<{ file: File; projectId: string | null }[]>([]);
+  const [modelName, setModelName] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
+  const [integrationId, setIntegrationId] = useState<number | undefined>();
+  const [recipientAuthorized, setRecipientAuthorized] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const finishLock = useRef(false);
   const brandingAppliedRef = useRef<number | null>(null);
 
   const quotesQuery = trpc.quotes.list.useQuery();
@@ -255,6 +266,8 @@ export default function Quotes() {
   const artistsQuery = trpc.artists.list.useQuery();
   const queryArtistId = artistId || 1;
   const brandingQuery = trpc.quotes.branding.get.useQuery({ artistId: queryArtistId }, { enabled: artistId > 0 });
+  const modelsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "model" }, { enabled: artistId > 0 });
+  const sendQuoteMutation = trpc.quotes.sendViaIntegration.useMutation();
   const conceptPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "concept" }, { enabled: artistId > 0 });
   const termsPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "terms" }, { enabled: artistId > 0 });
   const depositPresetsQuery = trpc.quotes.presets.list.useQuery({ artistId: queryArtistId, category: "deposit" }, { enabled: artistId > 0 });
@@ -354,6 +367,7 @@ export default function Quotes() {
 
   function resetEditor() {
     const preferred = user?.artistId && artists.some((a) => a.id === user.artistId) ? user.artistId : (artists[0]?.id || 0);
+    setSelectedModelId(null); setModelName(""); setRecipientAuthorized(false);
     setQuoteId(null); setQuoteNumber("RASCUNHO"); setQuoteStatus("draft"); setPublicToken(null); setCreatedDate(isoToday()); setValidUntil(addDaysIso(15));
     setClientId(0); setArtistId(preferred); setEditor(buildEmptyQuoteEditorData()); setSnapshot(null); setClientFilter(""); setMobileTab("edit"); setFailedUploads([]);
     brandingAppliedRef.current = null; setMode("editor");
@@ -361,6 +375,7 @@ export default function Quotes() {
 
   function loadQuote(row: NonNullable<typeof quotesQuery.data>[number]) {
     if (!row.parsedPayload) { toast.error("Não foi possível ler este orçamento."); return; }
+    setSelectedModelId(null); setModelName(""); setRecipientAuthorized(false);
     setQuoteId(row.id); setQuoteNumber(row.quoteNumber); setQuoteStatus(row.status); setPublicToken(row.publicToken || null); setCreatedDate(row.createdDate.slice(0, 10));
     setValidUntil(row.validUntil.slice(0, 10)); setClientId(row.clientId); setArtistId(row.artistId); setEditor(row.parsedPayload.editor);
     setSnapshot(row.parsedPayload); setFailedUploads([]); setMobileTab("edit"); setMode("editor");
@@ -381,10 +396,66 @@ export default function Quotes() {
     } catch (e) { toast.error(e instanceof Error ? e.message : "Não foi possível salvar."); return null; }
   }
 
-  async function finalizeQuote() {
-    const id = await saveDraft(); if (!id) return;
-    try { const result = await finalizeMutation.mutateAsync({ id }); setQuoteStatus("finalized"); setPublicToken(result.publicToken); await utils.quotes.list.invalidate(); toast.success("Proposta finalizada. O link individual já está pronto para envio."); }
-    catch (e) { toast.error(e instanceof Error ? e.message : "Não foi possível finalizar."); }
+  function whatsappMessage(url: string) {
+    return `Olá, ${quoteClientFirstName(currentClient?.name) || "cliente"}! Segue sua proposta de tatuagem com ${currentArtist?.name || identity.artist.name}.\n\n${url}`;
+  }
+  async function finalizeQuote(action: "link" | "copy" | "integration" | "external" = "link") {
+    if (finishLock.current) return;
+    if ((action === "integration" || action === "external") && !recipientAuthorized) { toast.error("Registre a autorização do cliente antes de enviar."); return; }
+    if (action === "integration" && !integrationId) { toast.error("Selecione a conexão para envio."); return; }
+    const phone = parsePhoneNumberFromString(currentClient?.phone || "", "BR");
+    if (action === "external" && !phone?.isValid()) { toast.error("Confira o WhatsApp do cliente."); return; }
+    // Open synchronously so mobile browsers do not block the WhatsApp handoff after saving.
+    const handoff = action === "external" ? window.open("about:blank", "_blank") : null;
+    if (handoff) handoff.opener = null;
+    finishLock.current = true; setFinishing(true);
+    try {
+      const id = await saveDraft(); if (!id) { handoff?.close(); return; }
+      const result = await finalizeMutation.mutateAsync({ id });
+      setQuoteStatus("finalized"); setPublicToken(result.publicToken);
+      await utils.quotes.list.invalidate();
+      const url = window.location.origin + result.publicPath;
+      toast.success("Proposta finalizada. O link está pronto.");
+      if (action === "copy") {
+        try { await navigator.clipboard.writeText(url); toast.success("Link copiado."); }
+        catch { toast.error("A proposta foi salva. Use Copiar link para tentar novamente."); }
+      }
+      if (action === "integration") {
+        try { const sent = await sendQuoteMutation.mutateAsync({ id, integrationId }); toast.success(sent.duplicate ? "Este orçamento já possui um envio registrado." : "Orçamento na fila de envio. Confira a confirmação abaixo."); await utils.quotes.deliveryInfo.invalidate(); }
+        catch (e) { toast.error(`Orçamento salvo, mas o envio falhou: ${e instanceof Error ? e.message : "confira a conexão"}`); }
+      }
+      if (action === "external") {
+        const target = `https://wa.me/${phone!.number.replace(/\D/g, "")}?text=${encodeURIComponent(whatsappMessage(url))}`;
+        if (handoff) handoff.location.href = target;
+        else toast.info("Proposta salva. Toque em Abrir WhatsApp para continuar.");
+      }
+    } catch (e) { handoff?.close(); toast.error(e instanceof Error ? e.message : "Não foi possível finalizar."); }
+    finally { finishLock.current = false; setFinishing(false); }
+  }
+
+  async function saveModel(update: boolean) {
+    if (!artistId || !modelName.trim() || savePresetMutation.isPending) return;
+    try {
+      const content = encodeQuoteModel(editor, currentClient?.name);
+      await savePresetMutation.mutateAsync({ artistId, category: "model", name: modelName.trim(), content, scope: "artist", ...(update && selectedModelId ? { id: selectedModelId } : {}) });
+      await utils.quotes.presets.list.invalidate(); toast.success(update ? "Modelo atualizado." : "Modelo completo salvo.");
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Não foi possível salvar o modelo."); }
+  }
+  function applyModel(id: number) {
+    const model = modelsQuery.data?.find(m => m.id === id); if (!model) return;
+    if (!window.confirm("Aplicar este modelo? Os textos e configurações serão substituídos. O cliente e as imagens anexadas serão mantidos.")) return;
+    try {
+      const next = decodeQuoteModel(model.content);
+      const applied = quoteEditorDataSchema.parse({ ...next, media: editor.media, additionalProjects: [...next.additionalProjects.map(p => ({ ...p, id: crypto.randomUUID() })), ...editor.additionalProjects.filter(p => p.images.length > 0)], pricing: { ...next.pricing, totalAmount: editor.pricing.totalAmount, depositAmount: editor.pricing.depositAmount } });
+      setEditor(applied);
+      setSnapshot(null); setSelectedModelId(id); setModelName(model.name); toast.success("Modelo aplicado. Confira região, tamanho e valor.");
+    } catch { toast.error("Não foi possível aplicar este modelo."); }
+  }
+  function moveImageProject(key: string, destination: string | null) {
+    setEditor(v => {
+      const image = allQuoteMedia(v).find(m => m.key === key); if (!image) return v;
+      return { ...v, media: { ...v.media, gallery: [...v.media.gallery.filter(m => m.key !== key), ...(destination === null ? [image] : [])] }, additionalProjects: v.additionalProjects.map(p => ({ ...p, images: [...p.images.filter(m => m.key !== key), ...(p.id === destination ? [image] : [])] })) };
+    });
   }
 
   async function removeDraft() {
@@ -424,7 +495,10 @@ export default function Quotes() {
       try {
         if (file.size > 6 * 1024 * 1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("Use JPG, PNG ou WebP com até 6 MB.");
         const media = await uploadMediaMutation.mutateAsync({ artistId, fileName: file.name, imageBase64: await fileToDataUrl(file), mimeType: file.type as "image/jpeg" | "image/png" | "image/webp" });
-        setEditor((v) => projectId ? { ...v, additionalProjects: v.additionalProjects.map(p => p.id === projectId ? { ...p, images: [...p.images, media] } : p) } : { ...v, media: { ...v.media, gallery: [...v.media.gallery, media] } });
+        setEditor((v) => {
+          const coverKey = quoteCover(v)?.key || media.key;
+          return projectId ? { ...v, media: { ...v.media, coverKey }, additionalProjects: v.additionalProjects.map(p => p.id === projectId ? { ...p, images: [...p.images, media] } : p) } : { ...v, media: { ...v.media, coverKey, gallery: [...v.media.gallery, media] } };
+        });
       } catch (error) { setFailedUploads(v => [...v, { file, projectId }]); toast.error(`${file.name}: ${error instanceof Error ? error.message : "Falha no envio."}`); }
     }
     setUploadingSlot(null); setUploadProgress("");
@@ -485,7 +559,7 @@ export default function Quotes() {
   async function shareProposalLink() {
     if (!proposalUrl) return;
     const title = "Sua proposta de tatuagem";
-    const text = "Olá! Segue sua proposta personalizada.";
+    const text = `Olá, ${quoteClientFirstName(currentClient?.name) || "cliente"}! Segue sua proposta personalizada.`;
     try {
       if (navigator.share) {
         await navigator.share({ title, text, url: proposalUrl });
@@ -510,6 +584,7 @@ export default function Quotes() {
     }, 0);
   }
 
+  const actionBusy = saving || Boolean(uploadingSlot) || finalizeMutation.isPending || finishing;
   function renderActionButtons(location: "top" | "bottom") {
     return (
       <div className="quote-editor-actions">
@@ -521,7 +596,7 @@ export default function Quotes() {
         )}
 
         {quoteStatus === "draft" && (
-          <Button variant="outline" onClick={() => void saveDraft()} disabled={saving || Boolean(uploadingSlot) || finalizeMutation.isPending}>
+          <Button variant="outline" onClick={() => void saveDraft()} disabled={actionBusy}>
             <Save className="mr-2 h-4 w-4" />
             Salvar
           </Button>
@@ -533,12 +608,18 @@ export default function Quotes() {
         </Button>
 
         {quoteStatus === "draft" && (
-          <Button onClick={() => void finalizeQuote()} disabled={saving || Boolean(uploadingSlot) || finalizeMutation.isPending}>
+          <Button onClick={() => void finalizeQuote()} disabled={actionBusy}>
             <CheckCircle2 className="mr-2 h-4 w-4" />
             Finalizar e criar link
           </Button>
         )}
 
+        {quoteStatus === "draft" && <>
+          <Button variant="outline" disabled={actionBusy} onClick={() => void finalizeQuote("copy")}>Finalizar e copiar link</Button>
+          <Button disabled={actionBusy || !recipientAuthorized || !integrationId} onClick={() => void finalizeQuote("integration")}>Finalizar e enviar pelo CRM</Button>
+          <Button variant="outline" disabled={actionBusy || !recipientAuthorized} onClick={() => void finalizeQuote("external")}>Finalizar e abrir WhatsApp</Button>
+        </>}
+        {publicToken && <Button variant="outline" disabled={!recipientAuthorized || !currentClient?.phone} onClick={() => { const phone = parsePhoneNumberFromString(currentClient?.phone || "", "BR"); if (!phone?.isValid()) { toast.error("Confira o telefone do cliente."); return; } window.open(`https://wa.me/${phone.number.replace(/\D/g, "")}?text=${encodeURIComponent(whatsappMessage(proposalUrl))}`, "_blank", "noopener,noreferrer"); }}>Abrir WhatsApp</Button>}
         {quoteStatus !== "draft" && !publicToken && (
           <Button onClick={() => void ensureProposalLink()} disabled={ensurePublicLinkMutation.isPending}>
             <ExternalLink className="mr-2 h-4 w-4" />
@@ -601,13 +682,14 @@ export default function Quotes() {
         </div>
         {renderActionButtons("top")}
       </div>
-      {locked && quoteId && clientId && <QuoteFollowupActions id={quoteId} clientId={clientId} responded={quoteStatus === "approved" || !!quotesQuery.data?.find(q=>q.id === quoteId)?.respondedAt} disabled={quoteStatus === "cancelled"}/>}
+      {locked && currentClient && <QuoteRecipient key={clientId} clientId={clientId} phone={currentClient.phone} integrationId={integrationId} onIntegrationChange={setIntegrationId} onAuthorized={setRecipientAuthorized} disabled={actionBusy} />}
+      {locked && quoteId && clientId && <QuoteFollowupActions integrationId={integrationId} id={quoteId} clientId={clientId} responded={quoteStatus === "approved" || !!quotesQuery.data?.find(q=>q.id === quoteId)?.respondedAt} disabled={quoteStatus === "cancelled"}/>}
       {locked && <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">Proposta finalizada: conteúdo bloqueado para preservar exatamente a versão compartilhada com o cliente.</div>}
       {isMobile && <div className="grid grid-cols-2 rounded-lg border bg-card p-1"><button type="button" onClick={() => setMobileTab("edit")} className={"rounded-md px-3 py-2 text-sm " + (mobileTab === "edit" ? "bg-primary text-primary-foreground" : "")}>Editar</button><button type="button" onClick={() => setMobileTab("preview")} className={"rounded-md px-3 py-2 text-sm " + (mobileTab === "preview" ? "bg-primary text-primary-foreground" : "")}>Visualizar</button></div>}
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
         {editorVisible && <div className="min-w-0 space-y-5">
-          <fieldset disabled={locked || saving || Boolean(uploadingSlot) || finalizeMutation.isPending} className="min-w-0 space-y-5 disabled:opacity-80">
+          <fieldset disabled={locked || actionBusy} className="min-w-0 space-y-5 disabled:opacity-80">
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <h2 className="font-semibold">1. Cliente e identificação</h2>
             <Dialog open={quickClientOpen} onOpenChange={open => { if (!quickClientMutation.isPending) setQuickClientOpen(open); }}>
@@ -624,8 +706,9 @@ export default function Quotes() {
             </Dialog>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2 sm:col-span-2"><div className="flex flex-wrap items-center justify-between gap-2"><Label>Buscar cliente</Label><Button type="button" size="sm" variant="outline" disabled={Boolean(quoteId) || quickClientMutation.isPending} onClick={() => setQuickClientOpen(true)}><Plus className="mr-2 h-4 w-4" />Novo cliente</Button></div><Input value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} disabled={Boolean(quoteId)} placeholder="Nome, telefone ou e-mail" />
-                <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={clientId || ""} disabled={Boolean(quoteId)} onChange={(e) => { setClientId(Number(e.target.value)); setSnapshot(null); }}><option value="">Selecione o cliente</option>{filteredClients.filter((c, index) => index < 120 || c.id === clientId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-              <div className="space-y-2"><Label>Artista</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={artistId || ""} disabled={Boolean(quoteId) || Boolean(user?.artistId)} onChange={(e) => { setArtistId(Number(e.target.value)); setSnapshot(null); brandingAppliedRef.current = null; }}><option value="">Selecione</option>{artists.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+                <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={clientId || ""} disabled={Boolean(quoteId)} onChange={(e) => { setClientId(Number(e.target.value)); setRecipientAuthorized(false); setSnapshot(null); }}><option value="">Selecione o cliente</option>{filteredClients.filter((c, index) => index < 120 || c.id === clientId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+              {!locked && currentClient && <QuoteRecipient key={clientId} clientId={clientId} phone={currentClient.phone} integrationId={integrationId} onIntegrationChange={setIntegrationId} onAuthorized={setRecipientAuthorized} disabled={actionBusy} />}
+              <div className="space-y-2"><Label>Artista</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={artistId || ""} disabled={Boolean(quoteId) || Boolean(user?.artistId)} onChange={(e) => { setArtistId(Number(e.target.value)); setSelectedModelId(null); setModelName(""); setSnapshot(null); brandingAppliedRef.current = null; }}><option value="">Selecione</option>{artists.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
                 {brandingQuery.data?.artistCardPath ? <Button asChild variant="outline" className="h-auto min-h-10 w-full whitespace-normal"><a href={brandingQuery.data.artistCardPath} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4 shrink-0" />Acessar cartão virtual do artista</a></Button> : <p className="text-xs text-muted-foreground">{!artistId ? "Selecione um artista para acessar o cartão virtual." : brandingQuery.isLoading ? "Consultando cartão virtual…" : brandingQuery.isError ? "Não foi possível consultar o cartão virtual." : "Este artista ainda não tem um cartão virtual publicado."}</p>}
               </div>
               <div className="space-y-2"><Label>Validade</Label><Input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} /></div>
@@ -634,12 +717,19 @@ export default function Quotes() {
             </div>
           </section>
 
+          <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
+            <h2 className="font-semibold">Modelo completo do orçamento</h2>
+            <Input aria-label="Buscar modelo completo" placeholder="Buscar modelo por nome" value={modelSearch} onChange={e => setModelSearch(e.target.value)} />
+            <select aria-label="Selecionar modelo completo" className="w-full rounded-md border bg-background p-2" value={selectedModelId || ""} onChange={e => applyModel(Number(e.target.value))}><option value="">Selecione um modelo salvo</option>{modelsQuery.data?.filter(m => m.name.toLocaleLowerCase().includes(modelSearch.toLocaleLowerCase()) || m.id === selectedModelId).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
+            {modelsQuery.error && <p role="alert">Não foi possível consultar os modelos.</p>}
+            <p className="text-xs text-muted-foreground">O modelo preenche os textos e configurações. Confira o local, tamanho e valor e anexe as imagens deste cliente. Use {'{primeiro_nome}'}, {'{estilo}'}, {'{local_corpo}'}, {'{tamanho}'} e {'{valor}'} nos textos para preenchimento automático.</p>
+          </section>
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <h2 className="font-semibold">2. Projeto</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2 sm:col-span-2"><Label>Título</Label><Input value={editor.project.title} onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, title: e.target.value } }))} /></div>
               <div className="space-y-2"><Label>Estilo</Label><Input value={editor.project.style} placeholder="Realismo preto e cinza" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, style: e.target.value } }))} /></div>
-              <div className="space-y-2"><Label>Região</Label><Input value={editor.project.bodyRegion} placeholder="Antebraço esquerdo" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, bodyRegion: e.target.value } }))} /></div>
+              <div className="space-y-2"><datalist id="quote-body-regions">{["Braço", "Antebraço", "Perna", "Coxa", "Panturrilha", "Costas", "Peito", "Ombro", "Pescoço", "Mão", "Pé"].map(region => <option key={region} value={region} />)}</datalist><Label>Região / lado (selecione ou digite)</Label><Input list="quote-body-regions" value={editor.project.bodyRegion} placeholder="Antebraço esquerdo" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, bodyRegion: e.target.value } }))} /></div>
               <div className="space-y-2"><Label>Tamanho</Label><Input value={editor.project.sizeText} placeholder="aproximadamente 18 cm" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, sizeText: e.target.value } }))} /></div>
               <div className="space-y-2"><Label>Tempo estimado</Label><Input value={editor.project.durationText} placeholder="4 a 5 horas" onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, durationText: e.target.value } }))} /></div>
               <div className="space-y-2"><Label>Sessões</Label><Input type="number" min={1} max={30} value={editor.project.sessions} onChange={(e) => setEditor((v) => ({ ...v, project: { ...v.project, sessions: Math.max(1, Number(e.target.value) || 1) } }))} /></div>
@@ -648,15 +738,17 @@ export default function Quotes() {
 
           <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
             <div className="flex items-center gap-2"><ImageIcon className="h-4 w-4 text-primary" /><h2 className="font-semibold">3. Imagens e capa</h2></div>
+            <p className="text-sm text-muted-foreground">Selecione várias imagens de uma vez. Em cada miniatura, escolha a capa, a posição e o projeto.</p>
+            <details className="rounded-lg border p-3" open><summary className="cursor-pointer text-sm font-medium">Anexar e organizar imagens deste projeto · {editor.media.gallery.length}</summary><div className="mt-3"><MediaCollection {...imageDescriptionProps} images={editor.media.gallery} busy={Boolean(uploadingSlot)} coverKey={quoteCover(editor)?.key} onCover={key => setEditor(v => ({ ...v, media: { ...v.media, coverKey: key } }))} projects={editor.additionalProjects.map(p => ({ id: p.id, title: p.project.title }))} onMoveProject={moveImageProject} onFiles={(files) => void uploadImages(files, null)} onChange={(gallery) => setEditor(v => ({ ...v, media: { ...v.media, gallery } }))} /></div></details>
             <div className="grid gap-4 sm:grid-cols-2">
               <MediaAdjuster {...imageDescriptionProps} label="Referência do cliente" media={editor.media.clientReference} uploading={uploadingSlot === "clientReference"} onUpload={(f) => void uploadMedia("clientReference", f)} onChange={(p) => updateMedia("clientReference", p)} onRemove={() => setEditor(v => ({ ...v, media: { ...v.media, clientReference: null } }))} />
               <MediaAdjuster {...imageDescriptionProps} label="Arte sugerida" media={editor.media.suggestedArtwork} uploading={uploadingSlot === "suggestedArtwork"} onUpload={(f) => void uploadMedia("suggestedArtwork", f)} onChange={(p) => updateMedia("suggestedArtwork", p)} onRemove={() => setEditor(v => ({ ...v, media: { ...v.media, suggestedArtwork: null } }))} />
             </div>
-            <div className="space-y-2"><Label>Imagem principal da capa</Label><div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "reference" } }))} className={"rounded-lg border p-3 text-sm " + (editor.media.coverSource === "reference" ? "border-primary bg-primary/10" : "border-border")}>Referência</button>
-              <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "suggested" } }))} className={"rounded-lg border p-3 text-sm " + (editor.media.coverSource === "suggested" ? "border-primary bg-primary/10" : "border-border")}>Arte sugerida</button>
+            <div className="space-y-2"><Label>Imagem principal da capa</Label>{quoteCover(editor) && <p className="text-xs text-muted-foreground">Capa atual: {quoteCover(editor)?.alt || "imagem selecionada"}</p>}<div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "reference", coverKey: null } }))} className={"rounded-lg border p-3 text-sm " + (!editor.media.coverKey && editor.media.coverSource === "reference" ? "border-primary bg-primary/10" : "border-border")}>Referência</button>
+              <button type="button" onClick={() => setEditor((v) => ({ ...v, media: { ...v.media, coverSource: "suggested", coverKey: null } }))} className={"rounded-lg border p-3 text-sm " + (!editor.media.coverKey && editor.media.coverSource === "suggested" ? "border-primary bg-primary/10" : "border-border")}>Arte sugerida</button>
             </div></div>
-            <details className="rounded-lg border p-3" open><summary className="cursor-pointer text-sm font-medium">Mais imagens deste projeto · {editor.media.gallery.length}</summary><div className="mt-3"><MediaCollection {...imageDescriptionProps} images={editor.media.gallery} busy={Boolean(uploadingSlot)} onFiles={(files) => void uploadImages(files, null)} onChange={(gallery) => setEditor(v => ({ ...v, media: { ...v.media, gallery } }))} /></div></details>
+
           </section>
 
           <section className="rounded-xl border bg-card p-4 sm:p-5"><PresetPicker title="4. Conceito artístico" value={editor.project.concept} options={conceptOptions} onChange={(concept) => setEditor((v) => ({ ...v, project: { ...v.project, concept } }))} onSave={(name) => savePreset("concept", name, editor.project.concept)} /></section>
@@ -667,7 +759,7 @@ export default function Quotes() {
             {editor.additionalProjects.map((item, index) => <details key={item.id} className="rounded-lg border p-3" open><summary className="cursor-pointer font-medium">Projeto {index + 2} · {item.project.title}</summary><div className="mt-4 space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">{([["title", "Título"], ["style", "Estilo"], ["bodyRegion", "Região"], ["sizeText", "Tamanho"], ["durationText", "Tempo estimado"]] as const).map(([key, label]) => <Label key={key}>{label}<Input value={item.project[key]} maxLength={key === "title" ? 160 : 120} onChange={e => updateAdditionalProject(item.id, { [key]: e.target.value })} /></Label>)}<Label>Sessões<Input type="number" min={1} max={30} value={item.project.sessions} onChange={e => updateAdditionalProject(item.id, { sessions: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} /></Label></div>
               <PresetPicker title="Descrição da tatuagem" value={item.project.concept} options={conceptOptions} onChange={concept => updateAdditionalProject(item.id, { concept })} onSave={name => savePreset("concept", name, item.project.concept)} />
-              <MediaCollection {...imageDescriptionProps} images={item.images} busy={Boolean(uploadingSlot)} onFiles={files => void uploadImages(files, item.id)} onChange={images => setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === item.id ? { ...p, images } : p) }))} />
+              <MediaCollection {...imageDescriptionProps} images={item.images} busy={Boolean(uploadingSlot)} coverKey={quoteCover(editor)?.key} onCover={key => setEditor(v => ({ ...v, media: { ...v.media, coverKey: key } }))} projects={editor.additionalProjects.map(p => ({ id: p.id, title: p.project.title }))} projectId={item.id} onMoveProject={moveImageProject} onFiles={files => void uploadImages(files, item.id)} onChange={images => setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === item.id ? { ...p, images } : p) }))} />
               <Button type="button" variant="ghost" onClick={() => { setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.filter(p => p.id !== item.id) })); setFailedUploads(v => v.filter(f => f.projectId !== item.id)); }}>Remover projeto</Button>
             </div></details>)}
           </section>
@@ -715,6 +807,12 @@ export default function Quotes() {
             </div>
             <WatermarkControl editor={editor} artistName={identity.artist.name} onChange={value => setEditor(v => ({...v,watermarkOpacity:value}))}/>
             <Button type="button" variant="outline" onClick={() => void saveBranding()}><Save className="mr-2 h-4 w-4" />Salvar identidade como padrão</Button>
+          </section>
+          <section className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
+            <h2 className="font-semibold">Salvar modelo completo</h2>
+            <Input aria-label="Nome do modelo completo" maxLength={120} placeholder="Ex.: Realismo preto e cinza de braço" value={modelName} onChange={e => setModelName(e.target.value)} />
+            <p className="text-xs text-muted-foreground">Salva textos, estilo, região, tamanho e apresentação. Nome, telefone, autorização, imagens do cliente e valores não são guardados no modelo. Prefira os campos automáticos nos textos.</p>
+            <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={savePresetMutation.isPending || modelName.trim().length < 2} onClick={() => void saveModel(false)}>Salvar como novo modelo</Button>{selectedModelId && modelsQuery.data?.find(m => m.id === selectedModelId)?.artistId === artistId && <Button type="button" variant="outline" disabled={savePresetMutation.isPending || modelName.trim().length < 2} onClick={() => { if (window.confirm("Atualizar este modelo? Orçamentos já criados serão preservados.")) void saveModel(true); }}>Atualizar modelo selecionado</Button>}</div>
           </section>
           </fieldset>
           {uploadProgress && <p role="status" className="text-sm text-primary">{uploadProgress}</p>}

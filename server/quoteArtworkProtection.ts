@@ -87,5 +87,6 @@ export function publicQuotePayload(payload: QuoteStoredPayload): QuoteStoredPayl
     if (!copy) throw new TRPCError({ code: "CONFLICT", message: "A cópia protegida desta proposta precisa ser preparada pelo artista." });
     return { ...image, key: copy.key, url: copy.url, protect: true };
   });
+  if (editor.media.coverKey && copies.has(editor.media.coverKey)) editor.media.coverKey = copies.get(editor.media.coverKey)!.key;
   return { ...payload, client: { ...payload.client, name: payload.client.name.trim().split(/\s+/)[0] || "" }, editor, protectedMedia: [] };
 }

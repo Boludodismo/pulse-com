@@ -17,7 +17,7 @@ import { normalizeBrazilianPhone } from "../messaging/phone";
 import { isOutboundMessagingBlocked, OUTBOUND_BLOCKED_ERROR } from "../messaging/outboundSafety";
 import { quoteDeliveryTrigger, quoteDeliveryMessage, quoteDeliveryError } from "../quoteDelivery";
 import {
-  QUOTE_PRESET_CATEGORIES,
+  QUOTE_PRESET_CATEGORIES, quoteCover, resolveQuoteText, decodeQuoteModel, encodeQuoteModel,
   parseQuotePayload,
   quoteEditorDataSchema,
   quoteStoredPayloadSchema,
@@ -197,11 +197,11 @@ function requireHistoryArtist(ctx: { user: { role: string }; artistId: number | 
   if (ctx.user.role === "collaborator" && !ctx.artistId) throw new TRPCError({ code: "FORBIDDEN" });
 }
 
-async function deliveryDetails(ctx: Parameters<typeof assertPrivateConnectionAccess>[0] & { studioId: number }, row: typeof quoteProposals.$inferSelect) {
+async function deliveryDetails(ctx: Parameters<typeof assertPrivateConnectionAccess>[0] & { studioId: number }, row: typeof quoteProposals.$inferSelect, integrationId?: number) {
   await assertPrivateConnectionAccess(ctx, row.studioId);
   const db = await connection();
   const [integration, client, deliveries] = await Promise.all([
-    getActiveIntegration(row.studioId), resolveClient(row.studioId, row.clientId),
+    getActiveIntegration(row.studioId, integrationId), resolveClient(row.studioId, row.clientId),
     db.select({ id: messageQueue.id, status: messageQueue.status, sentAt: messageQueue.sentAt, error: messageQueue.errorMessage })
       .from(messageQueue).where(and(eq(messageQueue.studioId, row.studioId), eq(messageQueue.clientId, row.clientId), eq(messageQueue.trigger, quoteDeliveryTrigger(row.id)))).orderBy(desc(messageQueue.id)).limit(1),
   ]);
@@ -221,11 +221,11 @@ async function deliveryDetails(ctx: Parameters<typeof assertPrivateConnectionAcc
 }
 
 export const quotesRouter = router({
-  deliveryInfo: tenantProcedure.input(z.object({ id: idSchema })).query(async ({ ctx, input }) => {
+  deliveryInfo: tenantProcedure.input(z.object({ id: idSchema, integrationId: idSchema.optional() })).query(async ({ ctx, input }) => {
     requireHistoryArtist(ctx);
     const row = await accessibleQuote(ctx, input.id);
     try {
-      const details = await deliveryDetails(ctx.user as typeof ctx.user & { studioId: number }, row);
+      const details = await deliveryDetails(ctx.user as typeof ctx.user & { studioId: number }, row, input.integrationId);
       return { available: !details.reason, reason: details.reason, provider: details.integration?.provider || null, phone: details.phone,
         clientName: details.clientName, lastDelivery: details.lastDelivery, message: details.message, sentAt: row.sentAt, sentSource: row.sentSource };
     } catch (error) {
@@ -233,10 +233,10 @@ export const quotesRouter = router({
       return { available: false, reason: error.message, provider: null, phone: "", clientName: "", lastDelivery: null, message: "", sentAt: row.sentAt, sentSource: row.sentSource };
     }
   }),
-  sendViaIntegration: tenantProcedure.input(z.object({ id: idSchema })).mutation(async ({ ctx, input }) => {
+  sendViaIntegration: tenantProcedure.input(z.object({ id: idSchema, integrationId: idSchema.optional() })).mutation(async ({ ctx, input }) => {
     requireHistoryArtist(ctx);
     const row = await accessibleQuote(ctx, input.id);
-    const details = await deliveryDetails(ctx.user as typeof ctx.user & { studioId: number }, row);
+    const details = await deliveryDetails(ctx.user as typeof ctx.user & { studioId: number }, row, input.integrationId);
     if (details.reason || !details.integration) throw new TRPCError({ code: "PRECONDITION_FAILED", message: details.reason || "Integração indisponível." });
     // A stable key prevents double-clicks/concurrent sessions from sending this version twice.
     if (details.lastDelivery) return { queued: details.lastDelivery.status === "pendente", duplicate: true };
@@ -404,15 +404,13 @@ export const quotesRouter = router({
       if (!payload) {
         throw new TRPCError({ code: "CONFLICT", message: "Os dados deste orçamento precisam ser salvos novamente antes da finalização." });
       }
-      const cover = payload.editor.media.coverSource === "reference"
-        ? payload.editor.media.clientReference
-        : payload.editor.media.suggestedArtwork;
+      const cover = quoteCover(payload.editor);
       if (!cover) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Adicione a imagem que será usada na capa antes de finalizar." });
       }
       const db = await connection();
       const publicToken = current.publicToken || randomBytes(24).toString("hex");
-      const protectedPayload = await prepareProtectedQuoteArtwork(payload, ctx.studioId, current.artistId, current.quoteNumber);
+      const protectedPayload = await prepareProtectedQuoteArtwork({ ...payload, editor: resolveQuoteText(payload.editor, payload.client.name) }, ctx.studioId, current.artistId, current.quoteNumber);
       const result = await db.update(quoteProposals).set({
         status: "finalized",
         publicToken,
@@ -573,7 +571,8 @@ export const quotesRouter = router({
         artistId: idSchema,
         category: z.enum(QUOTE_PRESET_CATEGORIES),
         name: z.string().trim().min(2).max(120),
-        content: z.string().trim().min(2).max(QUOTE_TEXT_LIMIT),
+        content: z.string().trim().min(2).max(60000),
+        id: idSchema.optional(),
         scope: z.enum(["artist", "studio"]).default("artist"),
       }))
       .mutation(async ({ ctx, input }) => {
@@ -581,13 +580,27 @@ export const quotesRouter = router({
         if (input.scope === "studio" && ctx.user.role === "collaborator") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Somente o administrador pode criar modelos para todo o estúdio." });
         }
+        let content = input.content;
+        if (input.category === "model") {
+          try { content = encodeQuoteModel(decodeQuoteModel(content)); }
+          catch { throw new TRPCError({ code: "BAD_REQUEST", message: "Modelo completo inválido ou maior que 60 KB." }); }
+        } else if (content.length > QUOTE_TEXT_LIMIT) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "O texto ultrapassa 8.000 caracteres." });
+        }
         const db = await connection();
+        if (input.id) {
+          const scope = and(eq(quotePresets.id, input.id), eq(quotePresets.studioId, ctx.studioId), eq(quotePresets.artistId, input.artistId), eq(quotePresets.category, input.category), eq(quotePresets.isActive, 1));
+          const [existing] = await db.select({ id: quotePresets.id }).from(quotePresets).where(scope).limit(1);
+          if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Modelo pessoal não encontrado." });
+          await db.update(quotePresets).set({ name: input.name, content }).where(scope);
+          return { id: input.id };
+        }
         const result = await db.insert(quotePresets).values({
           studioId: ctx.studioId,
           artistId: input.scope === "artist" ? input.artistId : null,
           category: input.category,
           name: input.name,
-          content: input.content,
+          content,
           isActive: 1,
           createdByUserId: ctx.user.id,
         });

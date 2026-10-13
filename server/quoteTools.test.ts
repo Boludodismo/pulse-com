@@ -65,7 +65,7 @@ describe("quote artwork customer copy", () => {
   beforeEach(() => { vi.restoreAllMocks(); storage.get.mockReset(); storage.put.mockReset(); });
   it("removes source URLs and keys from every occurrence, including the cover", () => {
     const p = fixture(); const source = media(1, true);
-    p.editor.media.suggestedArtwork = source; p.editor.media.coverSource = "suggested";
+    p.editor.media.suggestedArtwork = source; p.editor.media.coverSource = "suggested"; p.editor.media.coverKey = source.key;
     p.editor.media.gallery = [{ ...source, protect: false, description: "Descrição exclusiva da galeria" }];
     p.editor.additionalProjects = [{ id: "two", project: p.editor.project, images: [source] }];
     p.protectedMedia = [{ sourceKey: source.key, media: { ...source, key: "quotes/1/2/protected/copy.jpg", url: "https://example.test/watermarked" } }];
