@@ -1,6 +1,7 @@
 import type { QuoteEditorData, QuoteMedia } from "@shared/quoteProposal";
 import { quoteClientFirstName, quoteCover, resolveQuoteText } from "@shared/quoteProposal";
 import React, { useState } from "react";
+import quoteHeading from "@/assets/quote-heading.png";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 export type QuotePreviewIdentity = {
@@ -145,7 +146,9 @@ function CoverPage(props: Props) {
       </div>
 
       <div className="quote-cover-copy">
-        <h1>Orçamento</h1>
+        <h1 className="quote-cover-heading">
+          <img src={quoteHeading} alt="Orçamento" draggable={false} />
+        </h1>
         <p className="quote-kicker">ARTE QUE PERMANECE</p>
         <div className="quote-client-block">
           <strong>Cliente: {quoteClientFirstName(identity.client.name) || "Nome do cliente"}</strong>
