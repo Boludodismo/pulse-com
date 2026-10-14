@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { Server } from "node:http";
+import { createHash } from "node:crypto";
 import { Script, createContext, runInContext } from "node:vm";
 const mocks = vi.hoisted(() => ({ authenticate: vi.fn() }));
 vi.mock("../_core/sdk", () => ({ sdk: { authenticateRequest: mocks.authenticate } }));
@@ -35,8 +36,8 @@ describe("private color calculator route", () => {
   it("denies anonymous requests and assets, with no SPA fallback or calculator source", async () => {
     mocks.authenticate.mockRejectedValue(new Error("Invalid session"));
     for (const path of ["", "/index.html", "/app.js"]) {
-      const response = await fetch(base + path); expect(response.status).toBe(401); const body = await response.text();
-      expect(body).not.toContain("const BASE"); expect(body).not.toContain("SPA fallback");
+      const response = await fetch(base + path); expect(response.status).toBe(path === "/app.js" ? 404 : 200); const body = await response.text();
+      expect(body).not.toContain("const BASE"); expect(body).not.toContain("SPA fallback"); expect(body).not.toContain('href="/login"');
     }
   });
   it("denies scheduled identities and unknown assets; local project data has no write endpoint", async () => {
@@ -44,6 +45,26 @@ describe("private color calculator route", () => {
     mocks.authenticate.mockResolvedValue(owner); expect((await fetch(base + "/save")).status).toBe(404);
     expect((await fetch(base, { method: "POST" })).status).toBe(405);
     expect(() => colorLabHtml(-1, "nonce")).toThrow();
+  });
+  it("exchanges a fragment capability for a scoped cookie without authenticating the CRM", async () => {
+    const key = "a".repeat(64);
+    vi.stubEnv("COLOR_LAB_ACCESS_KEY_SHA256", createHash("sha256").update(key).digest("hex"));
+    mocks.authenticate.mockRejectedValue(new Error("No CRM session"));
+    expect((await fetch(base + "/access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "wrong" }) })).status).toBe(403);
+    const response = await fetch(base + "/access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+    expect(response.status).toBe(204);
+    const cookie = response.headers.get("set-cookie")!;
+    expect(cookie).toContain("Path=/laboratorio/cores"); expect(cookie).toContain("HttpOnly"); expect(cookie).toContain("Secure"); expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).not.toContain("app_session");
+    const html = await (await fetch(base, { headers: { Cookie: cookie.split(";")[0] } })).text();
+    expect(html).toContain("Média 5×5"); expect(html).not.toContain('href="/"');
+    expect(mocks.authenticate).not.toHaveBeenCalled();
+  });
+  it("revokes capability cookies when the configured key is removed", async () => {
+    mocks.authenticate.mockRejectedValue(new Error("No CRM session"));
+    vi.stubEnv("COLOR_LAB_ACCESS_KEY_SHA256", "");
+    const response = await fetch(base, { headers: { Cookie: "tatuei_color_lab=" + "a".repeat(64) } });
+    expect(await response.text()).not.toContain("const BASE");
   });
   it("preserves integral drop totals in all cup sizes and the standard CIEDE2000 reference", () => {
     const js = /<script>([\s\S]*?)<\/script>/.exec(COLOR_LAB_HTML)![1];
