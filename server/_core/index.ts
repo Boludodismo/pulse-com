@@ -1,3 +1,4 @@
+import { registerPrivateColorLab } from "../privateColorLab/route";
 import { ensureCalendarSyncSchema } from "../calendarSync/db";
 import { registerGoogleCallback } from "../calendarSync/router";
 import { ensureCommitmentsSchema } from "../commitments/db";
@@ -338,6 +339,7 @@ async function startServer() {
       createContext,
     })
   );
+  registerPrivateColorLab(app);
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
