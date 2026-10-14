@@ -54,7 +54,7 @@ export async function recordQuoteInteraction(input: Interaction) {
         changes.responseText = row.acceptedAt ? null : input.text || null;
         changes.responseByUserId = row.acceptedAt ? null : input.userId || null;
       }
-      if (input.kind === "public_question" && !row.questionAt) {
+      if (input.kind === "public_question") {
         changes.questionAt = now;
         changes.questionText = input.text;
       }

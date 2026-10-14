@@ -88,5 +88,5 @@ export function publicQuotePayload(payload: QuoteStoredPayload): QuoteStoredPayl
     return { ...image, key: copy.key, url: copy.url, protect: true };
   });
   if (editor.media.coverKey && copies.has(editor.media.coverKey)) editor.media.coverKey = copies.get(editor.media.coverKey)!.key;
-  return { ...payload, client: { ...payload.client, name: payload.client.name.trim().split(/\s+/)[0] || "" }, editor, protectedMedia: [] };
+  return { ...payload, artist: editor.contactSource === "studio" ? { ...payload.artist, phone: null, email: null, instagram: null } : payload.artist, client: { ...payload.client, name: payload.client.name.trim().split(/\s+/)[0] || "" }, editor, protectedMedia: [] };
 }

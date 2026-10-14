@@ -321,12 +321,16 @@ export async function processPendingIntegrationJobs(limit = 10) {
           )).limit(1))[0];
           const preference = (await db.select({
             enabled: artistNotificationSettings.whatsappOperationalEnabled,
+            notifyClientActionsEnabled: artistNotificationSettings.notifyClientActionsEnabled,
           }).from(artistNotificationSettings).where(and(
             eq(artistNotificationSettings.studioId, job.studioId),
             eq(artistNotificationSettings.artistId, payload.artistId),
           )).limit(1))[0];
           if (!artist || artist.active !== 1 || !artist.phone || preference?.enabled !== 1) {
             throw new PermanentDeliveryError("O artista não autorizou avisos operacionais por WhatsApp.");
+          }
+          if (queueItem?.trigger?.startsWith("quote_artist_action:") && preference.notifyClientActionsEnabled !== 1) {
+            throw new PermanentDeliveryError("O artista desativou os avisos de ações dos clientes.");
           }
           if (normalizeBrazilianPhone(artist.phone) !== normalizeBrazilianPhone(payload.recipientPhone)) {
             throw new PermanentDeliveryError("O telefone do aviso não corresponde ao WhatsApp cadastrado do artista.");

@@ -1,3 +1,4 @@
+import { queueQuoteArtistNotification } from "../quoteNotifications";
 import { randomBytes, randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, isNull, isNotNull, ne, not, lt, or, sql } from "drizzle-orm";
@@ -501,7 +502,7 @@ export const quotesRouter = router({
       .input(z.object({ token: publicTokenSchema }))
       .query(async ({ input }) => {
         const { row, payload, expired } = await publicQuoteByToken(input.token);
-        const artistCardPath = await publishedArtistCardPath(row.studioId, payload.artist.id);
+        const artistCardPath = payload.editor.contactSource === "artist" ? await publishedArtistCardPath(row.studioId, payload.artist.id) : null;
         return {
           status: row.status,
           createdDate: row.createdDate,
@@ -536,11 +537,18 @@ export const quotesRouter = router({
         if (expired) throw new TRPCError({ code: "BAD_REQUEST", message: "Esta proposta está vencida. Fale com o estúdio para receber uma nova versão." });
         if (row.status === "rejected") throw new TRPCError({ code: "CONFLICT", message: "Esta proposta já foi recusada." });
         const recorded = await recordQuoteInteraction({ id: row.id, studioId: row.studioId, kind: "public_accept" });
+        await queueQuoteArtistNotification(row, "accepted");
         return { ok: true, acceptedAt: recorded.acceptedAt };
       }),
+    whatsappOpened: publicProcedure.input(z.object({ token: publicTokenSchema })).mutation(async ({ input }) => {
+      const { row } = await publicQuoteByToken(input.token);
+      await queueQuoteArtistNotification(row, "whatsapp_opened");
+      return { ok: true };
+    }),
     question: publicProcedure.input(z.object({ token: publicTokenSchema, text: z.string().trim().min(2).max(2000) })).mutation(async ({ input }) => {
       const { row } = await publicQuoteByToken(input.token);
       await recordQuoteInteraction({ id: row.id, studioId: row.studioId, kind: "public_question", text: input.text });
+      await queueQuoteArtistNotification(row, "question", input.text);
       return { ok: true };
     }),
   }),

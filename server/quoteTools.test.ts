@@ -83,7 +83,7 @@ describe("quote artwork customer copy", () => {
   it("does not touch unprotected legacy media", async () => {
     const p = fixture(); p.editor.media.clientReference = media(1);
     expect(await prepareProtectedQuoteArtwork(p, 1, 2, "ORC-1")).toEqual(p);
-    expect(publicQuotePayload(p)).toEqual({...p,client:{...p.client,name:p.client.name.split(" ")[0]}}); expect(storage.get).not.toHaveBeenCalled();
+    expect(publicQuotePayload(p)).toEqual({...p,artist:{...p.artist,phone:null,email:null,instagram:null},client:{...p.client,name:p.client.name.split(" ")[0]}}); expect(storage.get).not.toHaveBeenCalled();
   });
   it("rejects cross-tenant, cross-artist and arbitrary source URLs before I/O", async () => {
     for (const key of ["quotes/9/2/media/abc.png", "quotes/1/9/media/abc.png", "quotes/1/2/media/../../abc.png", "https://evil.test/asset"]) {

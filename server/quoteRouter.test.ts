@@ -3,8 +3,9 @@ import { getTableName } from "drizzle-orm";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { buildEmptyQuoteEditorData, quoteMediaSchema } from "../shared/quoteProposal";
 
-const mocks = vi.hoisted(() => ({ getDb: vi.fn(), artist: vi.fn(), client: vi.fn(), settings: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getDb: vi.fn(), artist: vi.fn(), client: vi.fn(), settings: vi.fn(), notify: vi.fn() }));
 vi.mock("./db", () => ({ getDb: mocks.getDb, getArtistById: mocks.artist, getClientById: mocks.client, getStudioSettings: mocks.settings }));
+vi.mock("./quoteNotifications", () => ({ queueQuoteArtistNotification: mocks.notify }));
 vi.mock("./saas", () => ({ isUserAccessActive: async () => true }));
 vi.mock("./invitedArtistAccess", () => ({ assertInvitedArtistAccess: async () => {} }));
 import { quotesRouter } from "./routers/quotes";
@@ -13,6 +14,7 @@ describe("real quote router round-trip", () => {
   let row: any; let card: { token: string } | null; let cardQueries: { sql: string; params: unknown[] }[]; let writes: { table: string; values: any }[]; let filters: unknown[][];
   const ctx: any = { user: { id: 10, studioId: 1, role: "admin" }, req: {}, res: {} };
   beforeEach(() => {
+    mocks.notify.mockReset().mockResolvedValue(true);
     row = null; card = null; cardQueries = []; writes = []; filters = [];
     mocks.artist.mockImplementation(async (id: number, studioId: number) => id === 2 && studioId === 1 ? { id: 2, studioId: 1, active: 1, name: "Artista", phone: "5538999999999" } : null);
     mocks.client.mockResolvedValue({ id: 3, studioId: 1, name: "Cliente" });
@@ -66,7 +68,7 @@ describe("real quote router round-trip", () => {
     expect((await caller.branding.get({ artistId: 2 })).artistCardPath).toBeNull();
     card = { token: "public-artist-token" };
     const branding = await caller.branding.get({ artistId: 2 });
-    const editor = buildEmptyQuoteEditorData();
+    const editor = buildEmptyQuoteEditorData(); editor.contactSource = "artist";
     editor.media.clientReference = quoteMediaSchema.parse({ key: "cover", url: "https://example.test/cover.png" });
     const draft = await caller.create({ clientId: 3, artistId: 2, validUntil: "2099-10-10", editor });
     const final = await caller.finalize({ id: draft.id });
@@ -82,6 +84,23 @@ describe("real quote router round-trip", () => {
     expect((await caller.public.get({ token: final.publicToken })).artistCardPath).toBeNull();
     await expect(caller.branding.get({ artistId: 99 })).rejects.toThrow("Artista ativo");
     expect(writes.every(w => w.table === "quote_proposals")).toBe(true);
+  });
+  it("keeps private artist contact and card links out of studio-contact public proposals and routes actions internally", async () => {
+    card = { token: "private-artist-card" };
+    const caller = quotesRouter.createCaller(ctx); const editor = buildEmptyQuoteEditorData();
+    editor.media.clientReference = quoteMediaSchema.parse({ key: "cover", url: "https://example.test/cover.png" });
+    const draft = await caller.create({ clientId: 3, artistId: 2, validUntil: "2099-10-10", editor });
+    const final = await caller.finalize({ id: draft.id });
+    const proposal = await caller.public.get({ token: final.publicToken });
+    expect(proposal.artistCardPath).toBeNull(); expect(proposal.payload.artist.phone).toBeNull();
+    expect(proposal.payload.studio.phone).toBe("5538999990000");
+    await caller.public.question({ token: final.publicToken, text: "Pergunta A" });
+    await caller.public.question({ token: final.publicToken, text: "Pergunta B" });
+    expect(row.questionText).toBe("Pergunta B");
+    await caller.public.whatsappOpened({ token: final.publicToken });
+    await caller.public.accept({ token: final.publicToken });
+    expect(mocks.notify.mock.calls.map(c => c[1])).toEqual(["question", "question", "whatsapp_opened", "accepted"]);
+    expect(mocks.notify.mock.calls[0][2]).toBe("Pergunta A"); expect(mocks.notify.mock.calls.every(c => c[0].artistId === 2 && c[0].studioId === 1)).toBe(true);
   });
   it("finalizes with a gallery cover and resolves personal text in the saved public version", async () => {
     const caller = quotesRouter.createCaller(ctx); const editor = buildEmptyQuoteEditorData();
