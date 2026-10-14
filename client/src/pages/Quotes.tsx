@@ -1,3 +1,4 @@
+import QuickQuoteField from "@/components/quotes/QuickQuoteField";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import QuoteRecipient from "@/components/quotes/QuoteRecipient";
 import WhatsappConsentField from "@/components/WhatsappConsentField";
@@ -121,11 +122,7 @@ function PresetPicker(props: {
 }
 
 function DurationPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  return <select aria-label="Tempo estimado de execução" className="block w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={value} onChange={e => onChange(e.target.value)}>
-    <option value="">Não informar</option>
-    {value && !QUOTE_DURATION_OPTIONS.includes(value) && <option value={value}>{value}</option>}
-    {QUOTE_DURATION_OPTIONS.map(duration => <option key={duration} value={duration}>{duration}</option>)}
-  </select>;
+  return <QuickQuoteField label="Tempo estimado" value={value} onChange={onChange} options={QUOTE_DURATION_OPTIONS} />;
 }
 
 type ImageDescriptionProps = {
@@ -781,7 +778,7 @@ export default function Quotes() {
             <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Outros projetos no mesmo orçamento</h2><Button type="button" variant="outline" disabled={editor.additionalProjects.length >= 19} onClick={() => setEditor(v => ({ ...v, additionalProjects: [...v.additionalProjects, { id: crypto.randomUUID(), project: quoteProjectSchema.parse({ title: "Novo projeto" }), images: [] }] }))}><Plus className="mr-2 h-4 w-4" />Adicionar projeto</Button></div>
             <p className="text-xs text-muted-foreground">Os projetos abaixo fazem parte do valor total informado em Investimento.</p>
             {editor.additionalProjects.map((item, index) => <details key={item.id} className="rounded-lg border p-3" open><summary className="cursor-pointer font-medium">Projeto {index + 2} · {item.project.title}</summary><div className="mt-4 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">{([["title", "Título"], ["style", "Estilo"], ["bodyRegion", "Região"], ["sizeText", "Tamanho"]] as const).map(([key, label]) => <Label key={key}>{label}<Input value={item.project[key]} maxLength={key === "title" ? 160 : 120} onChange={e => updateAdditionalProject(item.id, { [key]: e.target.value })} /></Label>)}<Label>Tempo estimado<DurationPicker value={item.project.durationText} onChange={durationText => updateAdditionalProject(item.id, { durationText })} /></Label><Label>Sessões<Input type="number" min={1} max={30} value={item.project.sessions} onChange={e => updateAdditionalProject(item.id, { sessions: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} /></Label></div>
+              <div className="grid gap-3 sm:grid-cols-2">{([["title", "Título"], ["style", "Estilo"], ["bodyRegion", "Região"], ["sizeText", "Tamanho"]] as const).map(([key, label]) => <Label key={key}>{label}<Input value={item.project[key]} maxLength={key === "title" ? 160 : 120} onChange={e => updateAdditionalProject(item.id, { [key]: e.target.value })} /></Label>)}<div className="space-y-2"><Label>Tempo estimado</Label><DurationPicker value={item.project.durationText} onChange={durationText => updateAdditionalProject(item.id, { durationText })} /></div><Label>Sessões<Input type="number" min={1} max={30} value={item.project.sessions} onChange={e => updateAdditionalProject(item.id, { sessions: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} /></Label></div>
               <PresetPicker title="Descrição da tatuagem" clientName={identity.client.name} value={item.project.concept} options={conceptOptions} onChange={concept => updateAdditionalProject(item.id, { concept })} onSave={name => savePreset("concept", name, item.project.concept)} />
               <MediaCollection {...imageDescriptionProps} images={item.images} busy={Boolean(uploadingSlot)} coverKey={quoteCover(editor)?.key} onCover={key => setEditor(v => ({ ...v, media: { ...v.media, coverKey: key } }))} projects={editor.additionalProjects.map(p => ({ id: p.id, title: p.project.title }))} projectId={item.id} onMoveProject={moveImageProject} onFiles={files => void uploadImages(files, item.id)} onChange={images => setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.map(p => p.id === item.id ? { ...p, images } : p) }))} />
               <Button type="button" variant="ghost" onClick={() => { setEditor(v => ({ ...v, additionalProjects: v.additionalProjects.filter(p => p.id !== item.id) })); setFailedUploads(v => v.filter(f => f.projectId !== item.id)); }}>Remover projeto</Button>
@@ -810,7 +807,7 @@ export default function Quotes() {
                 />
               </div>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editor.pricing.showDeposit} onChange={(e) => setEditor((v) => ({ ...v, pricing: { ...v.pricing, showDeposit: e.target.checked } }))} />Mostrar sinal e saldo</label>
-              <div className="space-y-2"><Label>Parcelamento</Label><select aria-label="Número máximo de parcelas" className="block w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={editor.pricing.installmentText} onChange={e => setEditor(v => ({ ...v, pricing: { ...v.pricing, installmentText: e.target.value } }))}><option value="">Não informar</option><option value="À vista">À vista</option>{editor.pricing.installmentText && !["À vista", ...Array.from({ length: 18 }, (_, i) => `Até ${i + 1}x no cartão de crédito`)].includes(editor.pricing.installmentText) && <option value={editor.pricing.installmentText}>{editor.pricing.installmentText}</option>}{Array.from({ length: 18 }, (_, i) => <option key={i} value={`Até ${i + 1}x no cartão de crédito`}>{i + 1 === 1 ? "1x no cartão de crédito" : `Até ${i + 1}x no cartão de crédito`}</option>)}</select></div>
+              <div className="space-y-2"><Label>Parcelamento</Label><QuickQuoteField label="Parcelamento" value={editor.pricing.installmentText} options={["À vista", ...Array.from({ length: 18 }, (_, i) => i === 0 ? "1x no cartão de crédito" : `Até ${i + 1}x no cartão de crédito`)]} onChange={installmentText => setEditor(v => ({ ...v, pricing: { ...v.pricing, installmentText } }))} /></div>
             </div>
           </section>
 
