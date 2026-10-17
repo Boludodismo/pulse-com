@@ -1,3 +1,4 @@
+import { minorConsentRouter } from "./minorConsent/router";
 import { artistDashboardRouter } from "./artistDashboard";
 import { calendarSyncRouter } from "./calendarSync/router";
 import { agendaMovesRouter } from "./agendaMoves";
@@ -78,6 +79,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  minorConsent: minorConsentRouter,
   commitments: commitmentsRouter,
   agendaMoves: agendaMovesRouter,
   calendarSync: calendarSyncRouter,

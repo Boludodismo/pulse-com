@@ -1,4 +1,5 @@
 import ClientQuoteHistory from "@/components/quotes/ClientQuoteHistory";
+import { MinorConsentHistory } from "@/components/MinorConsentPanel";
 import {ClientConsentButton} from "@/components/WhatsappConsentPanel";
 import ClientColorHistory from "@/components/ClientColorHistory";
 import ClientMaterialHistory from "@/components/ClientMaterialHistory";
@@ -549,7 +550,8 @@ export default function ClientProfile() {
         </Badge>
       </div>
 
-      <div className="flex flex-wrap justify-end gap-2 [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10"><ClientConsentButton clientId={clientId} name={client.name} /><EditClientDialog client={client} /></div>
+      <div className="flex flex-wrap justify-end gap-2 [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10">{can("anamnesis")&&<Button variant="outline" onClick={()=>setSendLinkDialogOpen(true)}><FileText className="w-4 h-4 mr-2"/>Enviar anamnese ou autorização</Button>}<ClientConsentButton clientId={clientId} name={client.name} /><EditClientDialog client={client} /></div>
+      {can("anamnesis")&&<SendAnamneseDialog open={sendLinkDialogOpen} onOpenChange={setSendLinkDialogOpen} clientId={clientId} clientName={client.name} clientEmail={client.email||undefined} clientPhone={client.phone||undefined} clientBirthDate={client.birthDate||undefined}/>}
 
       {/* Client Info */}
       <Card>
@@ -758,6 +760,7 @@ export default function ClientProfile() {
 
         {/* Anamnese Tab */}
         {can("anamnesis") && <TabsContent value="anamnesis">
+          <MinorConsentHistory clientId={clientId} />
           <ImportedClientRecords clientId={clientId} />
           <Card>
             <CardHeader>
@@ -942,14 +945,6 @@ export default function ClientProfile() {
                   </DialogContent>
                 </Dialog>
                 </div>
-                <SendAnamneseDialog
-                  open={sendLinkDialogOpen}
-                  onOpenChange={setSendLinkDialogOpen}
-                  clientId={clientId}
-                  clientName={client.name}
-                  clientEmail={client.email || undefined}
-                  clientPhone={client.phone || undefined}
-                />
               </div>
             </CardHeader>
             <CardContent>

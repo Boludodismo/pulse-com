@@ -199,6 +199,7 @@ export default function PublicAnamnese() {
                 : "Obrigado por preencher sua ficha de anamnese. O estúdio receberá suas informações com segurança."}
             </CardDescription>
           </CardHeader>
+          {/^[a-f0-9]{64}$/.test(new URLSearchParams(window.location.search).get("autorizacao")||"") && <CardContent><Button asChild><a href={`/autorizacao/${new URLSearchParams(window.location.search).get("autorizacao")}`}>Continuar autorização do menor</a></Button></CardContent>}
         </Card>
       </div>
     );

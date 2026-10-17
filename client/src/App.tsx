@@ -33,6 +33,7 @@ import Audit from "./pages/Audit";
 import AuditDashboard from "./pages/AuditDashboard";
 import CalendarPage from "./pages/CalendarPage";
 import PublicAnamnese from "./pages/PublicAnamnese";
+import PublicMinorConsent from "./pages/PublicMinorConsent";
 import AnamneseView from "./pages/AnamneseView";
 import AnamnesePdf from "./pages/AnamnesePdf";
 import RiskAlerts from "./pages/RiskAlerts";
@@ -201,6 +202,7 @@ function Router() {
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/confirmar" component={ConfirmAppointment} />
       <Route path="/anamnese/:token" component={PublicAnamnese} />
+      <Route path="/autorizacao/:token" component={PublicMinorConsent} />
       <Route path="/anamnese/view/:id" component={AnamneseView} />
       <Route path="/anamnese/pdf/:id" component={AnamnesePdf} />
       

@@ -1,3 +1,4 @@
+import { studioNoticePhone } from "../minorConsent/database";
 import { isOutboundMessagingBlocked } from "./outboundSafety";
 import {clients} from '../../drizzle/schema';
 import {hasClientNamePlaceholder,personalizeClientPlaceholders} from '../../shared/messageTemplate';
@@ -84,6 +85,7 @@ export async function getProviderForIntegration(integration: typeof whatsappInte
 }
 
 type MessageDeliveryPayload = {
+  operationalRecipient?: "studio";
   messageQueueId?: number;
   clientId?: number;
   artistId?: number;
@@ -142,6 +144,7 @@ export function getOutboundEventIdempotencyKey(jobIdempotencyKey: string): strin
  * agenda, clientes e demais módulos.
  */
 export async function sendAndLog(params: {
+  operationalRecipient?: "studio";
   studioId?: number | null;
   recipientPhone: string;
   recipientName?: string;
@@ -198,6 +201,7 @@ export async function sendAndLog(params: {
       });
       const queueId = (queued as any).insertId as number | undefined;
       const payload: MessageDeliveryPayload = {
+        operationalRecipient: params.operationalRecipient,
         messageQueueId: queueId,
         clientId: params.clientId,
         artistId: params.artistId,
@@ -313,7 +317,11 @@ export async function processPendingIntegrationJobs(limit = 10) {
           throw new Error("Modo de teste: o destinatário não corresponde ao telefone de homologação.");
         }
       } else if (!inventoryNoticeId) {
-        if (payload.recipientType === "artist") {
+        if (payload.operationalRecipient === "studio") {
+          const phone = await studioNoticePhone(job.studioId, queueItem?.trigger);
+          if (!phone || normalizeBrazilianPhone(phone) !== normalizeBrazilianPhone(payload.recipientPhone))
+            throw new PermanentDeliveryError("Aviso ao estúdio sem vínculo autorizado ou telefone divergente.");
+        } else if (payload.recipientType === "artist") {
           if (!payload.artistId) throw new PermanentDeliveryError("Aviso ao artista sem profissional identificado.");
           const artist = (await db.select({ id: artists.id, phone: artists.phone, active: artists.active }).from(artists).where(and(
             eq(artists.id, payload.artistId),

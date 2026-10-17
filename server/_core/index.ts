@@ -1,3 +1,5 @@
+import { ensureMinorConsentSchema } from "../minorConsent/database";
+import { startMinorConsentWorker } from "../minorConsent/worker";
 import { registerPrivateColorLab } from "../privateColorLab/route";
 import { ensureCalendarSyncSchema } from "../calendarSync/db";
 import { registerGoogleCallback } from "../calendarSync/router";
@@ -68,6 +70,7 @@ async function startServer() {
   await ensureAppointmentKitSchema();
   await ensureContactImportSchema();
   await ensureNativeBotSchema();
+  await ensureMinorConsentSchema();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {
     await checkS3Storage();
@@ -81,6 +84,7 @@ async function startServer() {
   app.use("/api/auth/local", express.json({ limit: "16kb" }));
   const server = createServer(app);
   startNativeBotWorker();
+  startMinorConsentWorker();
   app.use("/api/native-bot/webhook", express.json({ limit: "256kb" }));
   app.use("/api/native-bot/meta/webhook", express.json({
     limit: "256kb",
@@ -122,9 +126,9 @@ async function startServer() {
   // The URL contains an HMAC token, so files remain private without storing expiring URLs in the DB.
   app.get("/api/storage", async (req, res) => {
     try {
-      const key = typeof req.query.key === "string" ? req.query.key : "";
+      const key = typeof req.query.key === "string" ? req.query.key.replace(/^\/+/, "") : "";
       const token = typeof req.query.token === "string" ? req.query.token : "";
-      if (!key || !token || !verifyStorageAccessToken(key, token)) {
+      if (!key || key.startsWith("minor-consents/") || key.startsWith("_backups/minor-consents/") || !token || !verifyStorageAccessToken(key, token)) {
         return res.status(403).json({ error: "Acesso ao arquivo não autorizado." });
       }
 
@@ -139,9 +143,9 @@ async function startServer() {
   // Same-origin storage proxy used for safe canvas pixel sampling on Safari/iOS.
   app.get("/api/storage-inline", async (req, res) => {
     try {
-      const key = typeof req.query.key === "string" ? req.query.key : "";
+      const key = typeof req.query.key === "string" ? req.query.key.replace(/^\/+/, "") : "";
       const token = typeof req.query.token === "string" ? req.query.token : "";
-      if (!key || !token || !verifyStorageAccessToken(key, token)) {
+      if (!key || key.startsWith("minor-consents/") || key.startsWith("_backups/minor-consents/") || !token || !verifyStorageAccessToken(key, token)) {
         return res.status(403).json({ error: "Acesso ao arquivo não autorizado." });
       }
       const { url } = await storageGet(key);
