@@ -31,9 +31,6 @@ export function consentPdf(input: {
     y += 2.5;
   };
   const { template: t, submission: s, procedure: p } = input;
-  if (t.logo) {
-    pdf.addImage(t.logo, "PNG", 169, 14, 23, 18, undefined, "FAST");
-  }
   write(t.studioName, 14, true);
   write(t.address, 9);
   write(
@@ -116,6 +113,10 @@ export function consentPdf(input: {
   const count = pdf.getNumberOfPages();
   for (let n = 1; n <= count; n++) {
     pdf.setPage(n);
+    if (t.logo) {
+      // Repeat the selected artist/studio logo on every printed page.
+      pdf.addImage(t.logo, "PNG", 169, 14, 23, 18, undefined, "FAST");
+    }
     pdf.setFontSize(8);
     pdf.setTextColor(90);
     pdf.text(`Tatuei | Autorizacao ${input.id} | ${n}/${count}`, 18, 287);
