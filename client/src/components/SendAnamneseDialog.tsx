@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { MinorConsentComposer } from "./MinorConsentPanel";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ageAtDate } from "@shared/minorConsent";
+import { ageAtDate, minorConsentInvitationMessage } from "@shared/minorConsent";
 import {
   Dialog,
   DialogContent,
@@ -55,7 +55,9 @@ export default function SendAnamneseDialog({
     }
   }, [open, clientId, clientBirthDate, clientEmail, clientPhone]);
   const invitationText = includeAuthorization
-    ? `Olá ${clientName}! O menor e o responsável legal devem preencher a autorização, assinar e anexar os documentos pelo link: ${generatedLink}${anamneseLink ? `\n\nPreencha também a ficha de anamnese: ${anamneseLink}` : ""}`
+    ? generatedLink && anamneseLink
+      ? minorConsentInvitationMessage(clientName, generatedLink, anamneseLink)
+      : ""
     : `Olá ${clientName}! Por favor, preencha sua ficha de anamnese através deste link: ${generatedLink}`;
 
   const createRequestMutation = trpc.anamnese.createRequest.useMutation({
@@ -80,9 +82,19 @@ export default function SendAnamneseDialog({
     });
   };
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(generatedLink);
-    toast.success("Link copiado!");
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        includeAuthorization ? invitationText : generatedLink
+      );
+      toast.success(
+        includeAuthorization
+          ? "Autorização e anamnese copiadas!"
+          : "Link copiado!"
+      );
+    } catch {
+      toast.error("Não foi possível copiar o link.");
+    }
   };
 
   const handleSendWhatsApp = () => {

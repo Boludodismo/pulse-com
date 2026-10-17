@@ -250,6 +250,36 @@ beforeEach(async () => {
   png = "data:image/png;base64," + bytes.toString("base64");
 });
 describe("authorization data and integrity", () => {
+  it("creates one linked anamnese and protects reusable invitation links in the same transaction", async () => {
+    const input = {
+      clientId: 7,
+      artistId: 9,
+      template,
+      procedure,
+      includeAnamnese: true as const,
+      legalReviewDeclared: true as const,
+    };
+    const result = await caller().create(input);
+    expect(result.anamneseLink).toMatch(
+      /\/anamnese\/[a-f0-9]{64}\?autorizacao=[a-f0-9]{64}$/
+    );
+    expect(
+      mock.queries.filter(([sql]) =>
+        sql.startsWith("INSERT INTO anamnese_requests")
+      )
+    ).toHaveLength(1);
+    const saved = mock.queries.find(([sql]) =>
+      sql.startsWith("INSERT INTO minor_consent_invitations")
+    );
+    expect(saved).toBeTruthy();
+    expect(saved![1][2]).not.toContain(result.link.split("/").pop());
+    expect(mock.commit).toHaveBeenCalledOnce();
+    mock.queries = [];
+    await expect(
+      caller().create({ ...input, includeAnamnese: false as any })
+    ).rejects.toThrow();
+    expect(mock.queries).toHaveLength(0);
+  });
   it("checks CPF digits and exact birthdays, including invalid calendar dates", () => {
     expect(validCpf("52998224725")).toBe(true);
     expect(validCpf("00000000000")).toBe(false);

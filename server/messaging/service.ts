@@ -1,4 +1,5 @@
 import { studioNoticePhone } from "../minorConsent/database";
+import { invitationId, invitationDeliveryError } from "../minorConsent/invitationDelivery";
 import { isOutboundMessagingBlocked } from "./outboundSafety";
 import {clients} from '../../drizzle/schema';
 import {hasClientNamePlaceholder,personalizeClientPlaceholders} from '../../shared/messageTemplate';
@@ -307,6 +308,10 @@ export async function processPendingIntegrationJobs(limit = 10) {
         }
       }
       const quoteId = quoteIdFromTrigger(queueItem?.trigger);
+      if (invitationId(queueItem?.trigger)) {
+        const reason = await invitationDeliveryError(job.studioId, queueItem!.trigger!, payload.clientId, payload.recipientPhone, Boolean(integration.sandboxMode));
+        if (reason) throw new PermanentDeliveryError(reason);
+      }
       if (quoteId) {
         const reason = await quoteDeliveryError(job.studioId, quoteId, payload.clientId, payload.recipientPhone, Boolean(integration.sandboxMode));
         if (reason) throw new PermanentDeliveryError(reason);

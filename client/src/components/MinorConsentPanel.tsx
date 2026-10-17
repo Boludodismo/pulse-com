@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Copy, FilePlus2, MessageCircle, Send } from "lucide-react";
+import { parsePhoneNumberFromString } from "libphonenumber-js";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +19,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { statusLabel, MINOR_CONSENT_TERMS } from "@shared/minorConsent";
@@ -120,7 +123,6 @@ export function MinorConsentComposer({
       timeZone: "America/Sao_Paulo",
     }),
   });
-  const [includeAnamnese, setIncludeAnamnese] = useState(true);
   const [legal, setLegal] = useState(false);
   const [notifyArtist, setNotifyArtist] = useState(true);
   const [notifyStudio, setNotifyStudio] = useState(true);
@@ -361,11 +363,10 @@ export function MinorConsentComposer({
         </div>
       </div>
       <div className="space-y-3">
-        <Toggle
-          label="Incluir ficha de anamnese no mesmo envio"
-          checked={includeAnamnese}
-          onChange={setIncludeAnamnese}
-        />
+        <p className="text-sm text-muted-foreground">
+          A ficha de anamnese será incluída obrigatoriamente junto com esta
+          autorização.
+        </p>
         <Toggle
           label="Notificar o artista pelo WhatsApp cadastrado"
           checked={notifyArtist}
@@ -396,7 +397,7 @@ export function MinorConsentComposer({
             artistId: Number(artistId),
             template,
             procedure,
-            includeAnamnese,
+            includeAnamnese: true,
             legalReviewDeclared: true,
             notifyArtist,
             notifyStudio,
@@ -436,6 +437,79 @@ export function MinorConsentHistory({ clientId }: { clientId: number }) {
     { refetchInterval: 15000 }
   );
   const [id, setId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | undefined>();
+  const [createOpen, setCreateOpen] = useState(false);
+  const utils = trpc.useUtils();
+  const invitation = trpc.minorConsent.invitation.useQuery(
+    { clientId, id: selectedId },
+    { refetchInterval: 15000 }
+  );
+  const send = trpc.minorConsent.sendInvitation.useMutation();
+  const sending = useRef(false);
+  const d = invitation.data;
+  const receivedId = list.data?.find((r: any) => r.submitted_at)?.id;
+  useEffect(() => {
+    if (!d?.anamneseCompleted && !receivedId) return;
+    utils.anamnese.getRequestsByClientId.invalidate({ clientId });
+    utils.anamnesis.getByClientId.invalidate({ clientId });
+  }, [d?.id, d?.anamneseCompleted, receivedId, clientId]);
+  const shared = !!d?.link && !!d?.anamneseLink;
+  const alreadySent =
+    !!d?.lastDelivery && !["erro", "cancelada"].includes(d.lastDelivery.status);
+  const refresh = () => {
+    utils.minorConsent.invitation.invalidate({ clientId });
+    utils.minorConsent.list.invalidate({ clientId });
+    utils.anamnese.getRequestsByClientId.invalidate({ clientId });
+  };
+  const sendDirect = async () => {
+    if (!d || sending.current) return;
+    sending.current = true;
+    try {
+      const result = await send.mutateAsync({ id: d.id });
+      toast.success(
+        result.duplicate
+          ? "Este conjunto de fichas já tem um envio registrado. Confira o status abaixo."
+          : "Os dois links foram adicionados à fila do WhatsApp do sistema."
+      );
+      refresh();
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      sending.current = false;
+    }
+  };
+  const copy = async () => {
+    if (!d) return;
+    try {
+      await navigator.clipboard.writeText(d.message);
+      toast.success(
+        "Mensagem copiada com os links da autorização e da anamnese."
+      );
+    } catch {
+      toast.error(
+        "Não foi possível copiar. Selecione e copie a mensagem abaixo."
+      );
+    }
+  };
+  const openWhatsApp = () => {
+    if (!d) return;
+    const phone = parsePhoneNumberFromString(d.phone, "BR");
+    if (!phone?.isValid() || phone.country !== "BR") {
+      toast.error("Cadastre um WhatsApp válido com DDD para este cliente.");
+      return;
+    }
+    window.open(
+      `https://wa.me/${phone.number.replace(/\D/g, "")}?text=${encodeURIComponent(d.message)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  };
+  const pending = (list.data || []).filter(
+    (r: any) =>
+      r.status === "pending" &&
+      Number(r.expires_at) > Date.now() &&
+      r.has_invitation
+  );
   return (
     <Card className="mb-5">
       <CardHeader>
@@ -444,14 +518,140 @@ export function MinorConsentHistory({ clientId }: { clientId: number }) {
           Termos, documentos, assinaturas, conferência e registro dos materiais.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 [&_button]:h-auto [&_button]:min-h-11 [&_button]:whitespace-normal [&_button]:py-2.5 [&_svg]:shrink-0">
+          <Button onClick={() => setCreateOpen(true)}>
+            <FilePlus2 className="mr-2 h-4 w-4" />
+            Gerar links
+          </Button>
+          <Button variant="outline" disabled={!shared} onClick={copy}>
+            <Copy className="mr-2 h-4 w-4" />
+            Copiar links
+          </Button>
+          <Button variant="outline" disabled={!shared} onClick={openWhatsApp}>
+            <MessageCircle className="mr-2 h-4 w-4" />
+            Enviar pelo WhatsApp
+          </Button>
+          <Button
+            variant="outline"
+            disabled={!shared || !d?.canSend || alreadySent || send.isPending}
+            onClick={sendDirect}
+          >
+            <Send className="mr-2 h-4 w-4" />
+            {send.isPending
+              ? "Enfileirando…"
+              : "Enviar pelo WhatsApp do sistema"}
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          A autorização e a anamnese sempre são compartilhadas juntas. Copiar ou
+          enviar os links existentes preserva as mesmas fichas.
+        </p>
+        {pending.length > 1 && (
+          <div className="space-y-1">
+            <Label htmlFor={`consent-invitation-${clientId}`}>
+              Conjunto de fichas para compartilhar
+            </Label>
+            <select
+              id={`consent-invitation-${clientId}`}
+              className="w-full min-h-11 rounded-md border bg-background p-2 text-sm"
+              value={d?.id || selectedId || ""}
+              onChange={e => setSelectedId(Number(e.target.value))}
+            >
+              <option value="" disabled>
+                Selecione
+              </option>
+              {pending.map((r: any) => (
+                <option key={r.id} value={r.id}>
+                  Autorização #{r.id} e anamnese vinculada
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {invitation.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {invitation.error.message}
+          </p>
+        )}
+        {d && (
+          <div className="space-y-3 rounded-lg border p-3 min-w-0">
+            <p className="text-sm font-medium">
+              Autorização #{d.id} e anamnese vinculada
+            </p>
+            <div>
+              <Label htmlFor={`consent-link-${clientId}`}>
+                Link da autorização
+              </Label>
+              <Input id={`consent-link-${clientId}`} readOnly value={d.link} />
+            </div>
+            <div>
+              <Label htmlFor={`consent-anamnese-${clientId}`}>
+                Link da anamnese
+              </Label>
+              <Input
+                id={`consent-anamnese-${clientId}`}
+                readOnly
+                value={d.anamneseLink}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {d.anamneseCompleted
+                ? "Anamnese recebida no histórico abaixo."
+                : "Aguardando preenchimento da anamnese."}{" "}
+              Links disponíveis até{" "}
+              {new Date(d.expiresAt).toLocaleDateString("pt-BR")}.
+            </p>
+            {d.integration && (
+              <p className="text-sm">
+                Conexão do sistema: {d.integration.name}{" "}
+                {d.integration.phoneNumber && `· ${d.integration.phoneNumber}`}
+                <br />
+                Destinatário: {d.phone || "WhatsApp não cadastrado"}
+              </p>
+            )}
+            {d.reason && (
+              <p role="status" className="text-sm text-muted-foreground">
+                {d.reason}
+              </p>
+            )}
+            {d.lastDelivery && (
+              <p role="status" className="text-sm">
+                Envio pelo sistema:{" "}
+                {(
+                  {
+                    pendente: "na fila de envio",
+                    enviada: "enviado",
+                    respondida: "respondido",
+                    erro: "falha no envio",
+                    cancelada: "cancelado",
+                  } as Record<string, string>
+                )[d.lastDelivery.status] || d.lastDelivery.status}
+                {d.lastDelivery.error ? ` · ${d.lastDelivery.error}` : ""}
+              </p>
+            )}
+            <details>
+              <summary className="cursor-pointer text-sm">
+                Ver mensagem com os dois links
+              </summary>
+              <Textarea
+                aria-label="Mensagem com autorização e anamnese"
+                readOnly
+                rows={9}
+                value={d.message}
+                className="mt-2"
+              />
+            </details>
+          </div>
+        )}
         {list.isLoading ? (
           <p>Carregando…</p>
         ) : list.error ? (
           <p role="alert">{list.error.message}</p>
         ) : !list.data?.length ? (
           <p className="text-sm text-muted-foreground">
-            Use “Enviar link” e selecione a autorização para menor para iniciar.
+            Use “Gerar links” neste bloco para preparar a autorização e a
+            anamnese.
           </p>
         ) : (
           <div className="space-y-3">
@@ -478,6 +678,27 @@ export function MinorConsentHistory({ clientId }: { clientId: number }) {
           </div>
         )}
       </CardContent>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Gerar autorização e anamnese</DialogTitle>
+            <DialogDescription>
+              Confira o modelo e o procedimento. Os dois links serão gerados
+              juntos.
+            </DialogDescription>
+          </DialogHeader>
+          {createOpen && (
+            <MinorConsentComposer
+              clientId={clientId}
+              onCreated={data => {
+                setSelectedId(data.id);
+                setCreateOpen(false);
+                refresh();
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
       <Dialog open={id !== null} onOpenChange={open => !open && setId(null)}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>

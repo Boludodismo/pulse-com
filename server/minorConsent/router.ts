@@ -22,6 +22,13 @@ import {
 import { rows, pool, audit } from "./database";
 import { sha, backupConsent } from "./backup";
 import { consentPdf } from "./pdf";
+import {
+  invitationLinks,
+  invitationDeliveryDetails,
+  queueConsentInvitation,
+  sealInvitationToken,
+} from "./invitations";
+import { minorConsentInvitationMessage } from "../../shared/minorConsent";
 import type { User } from "../../drizzle/schema";
 
 const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -342,7 +349,7 @@ export const minorConsentRouter = router({
         artistId: z.number().int().positive(),
         template: templateSchema,
         procedure: procedureSchema,
-        includeAnamnese: z.boolean(),
+        includeAnamnese: z.literal(true).default(true),
         legalReviewDeclared: z.literal(true),
         notifyStudio: z.boolean().default(true),
         notifyArtist: z.boolean().default(true),
@@ -360,56 +367,144 @@ export const minorConsentRouter = router({
       await normalizeLogo(input.template);
       const token = randomBytes(32).toString("hex"),
         expires = Date.now() + 7 * 86400000;
-      let anamneseId: number | null = null,
-        anamneseLink: string | null = null;
-      if (input.includeAnamnese) {
-        const at = randomBytes(32).toString("hex");
-        anamneseId = await db.createAnamneseRequest({
-          clientId: client.id,
-          token: at,
-          sentVia: "whatsapp",
-          sentTo: client.phone || "link",
-          expiresAt: new Date(expires).toISOString(),
-          statusRequest: "pendente",
-        });
-        anamneseLink = `${baseUrl()}/anamnese/${at}?autorizacao=${token}`;
-      }
-      const [result]: any = await pool().query(
-        `INSERT INTO minor_consent_requests(studio_id,client_id,artist_id,created_by,token_hash,template_json,procedure_json,anamnese_request_id,expires_at,notify_studio,notify_artist,legal_review_declared) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`,
-        [
+      const at = randomBytes(32).toString("hex"),
+        connection = await pool().getConnection();
+      try {
+        await connection.beginTransaction();
+        const [anamnese]: any = await connection.query(
+          "INSERT INTO anamnese_requests(clientId,token,sentVia,sentTo,expiresAt,statusRequest) VALUES(?,?,'whatsapp',?,?,'pendente')",
+          [
+            client.id,
+            at,
+            client.phone || "link",
+            new Date(expires).toISOString().slice(0, 19).replace("T", " "),
+          ]
+        );
+        const anamneseId = anamnese.insertId;
+        const [result]: any = await connection.query(
+          `INSERT INTO minor_consent_requests(studio_id,client_id,artist_id,created_by,token_hash,template_json,procedure_json,anamnese_request_id,expires_at,notify_studio,notify_artist,legal_review_declared) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`,
+          [
+            client.studioId,
+            client.id,
+            artist.id,
+            ctx.user.id,
+            sha(token),
+            JSON.stringify({
+              ...input.template,
+              modelVersion: MINOR_CONSENT_VERSION,
+            }),
+            JSON.stringify(input.procedure),
+            anamneseId,
+            expires,
+            input.notifyStudio ? 1 : 0,
+            input.notifyArtist ? 1 : 0,
+          ]
+        );
+        await connection.query(
+          "INSERT INTO minor_consent_invitations(request_id,studio_id,encrypted_token) VALUES(?,?,?)",
+          [
+            result.insertId,
+            client.studioId,
+            sealInvitationToken(token, client.studioId, result.insertId),
+          ]
+        );
+        await audit(
+          result.insertId,
           client.studioId,
-          client.id,
-          artist.id,
           ctx.user.id,
-          sha(token),
-          JSON.stringify({
-            ...input.template,
-            modelVersion: MINOR_CONSENT_VERSION,
-          }),
-          JSON.stringify(input.procedure),
-          anamneseId,
-          expires,
-          input.notifyStudio ? 1 : 0,
-          input.notifyArtist ? 1 : 0,
-        ]
-      );
-      await audit(result.insertId, client.studioId, ctx.user.id, "created", {
-        legalReviewDeclared: true,
-        templateVersion: MINOR_CONSENT_VERSION,
-      });
+          "created",
+          {
+            legalReviewDeclared: true,
+            templateVersion: MINOR_CONSENT_VERSION,
+          },
+          connection
+        );
+        await connection.commit();
+        return {
+          id: result.insertId as number,
+          link: `${baseUrl()}/autorizacao/${token}`,
+          anamneseLink: `${baseUrl()}/anamnese/${at}?autorizacao=${token}`,
+          expiresAt: expires,
+        };
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
+    }),
+  invitation: protectedProcedure
+    .input(
+      z.object({
+        clientId: z.number().int().positive(),
+        id: z.number().int().positive().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const client = await assertAnamneseClient(ctx.user, input.clientId);
+      const [latest] = input.id
+        ? [{ id: input.id }]
+        : await rows(
+            `SELECT r.id FROM minor_consent_requests r INNER JOIN minor_consent_invitations i ON i.request_id=r.id AND i.studio_id=r.studio_id WHERE r.client_id=? AND r.studio_id=? AND r.status='pending' AND r.expires_at>? ${ctx.user.role === "collaborator" ? "AND r.artist_id=?" : ""} ORDER BY r.id DESC LIMIT 1`,
+            ctx.user.role === "collaborator"
+              ? [client.id, client.studioId, Date.now(), ctx.user.artistId]
+              : [client.id, client.studioId, Date.now()]
+          );
+      if (!latest) return null;
+      const r = await scopedRequest(ctx.user, latest.id);
+      if (r.client_id !== client.id) throw new TRPCError({ code: "FORBIDDEN" });
+      if (r.status !== "pending" || Number(r.expires_at) <= Date.now())
+        return null;
+      const links = await invitationLinks(r);
+      let delivery;
+      try {
+        delivery = await invitationDeliveryDetails(ctx.user, r);
+      } catch (error) {
+        if (!(error instanceof TRPCError) || error.code !== "FORBIDDEN")
+          throw error;
+        delivery = {
+          reason: error.message,
+          integration: null,
+          lastDelivery: null,
+        };
+      }
       return {
-        id: result.insertId as number,
-        link: `${baseUrl()}/autorizacao/${token}`,
-        anamneseLink,
-        expiresAt: expires,
+        id: r.id,
+        ...links,
+        expiresAt: Number(r.expires_at),
+        message: minorConsentInvitationMessage(
+          client.name,
+          links.link,
+          links.anamneseLink
+        ),
+        phone: client.phone || "",
+        canSend: !delivery.reason,
+        reason: delivery.reason,
+        lastDelivery: delivery.lastDelivery,
+        integration: delivery.integration
+          ? {
+              id: delivery.integration.id,
+              name: delivery.integration.name,
+              phoneNumber: delivery.integration.phoneNumber,
+            }
+          : null,
       };
+    }),
+  sendInvitation: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const r = await scopedRequest(ctx.user, input.id);
+      const result = await queueConsentInvitation(ctx.user, r);
+      if (!result.duplicate)
+        await audit(r.id, r.studio_id, ctx.user.id, "invitation_queued");
+      return result;
     }),
   list: protectedProcedure
     .input(z.object({ clientId: z.number() }))
     .query(async ({ ctx, input }) => {
       await assertAnamneseClient(ctx.user, input.clientId);
       return rows(
-        `SELECT id,artist_id,status,created_at,submitted_at,expires_at,revision,backup_revision,backup_error,review_json FROM minor_consent_requests WHERE client_id=? ${ctx.user.role === "collaborator" ? "AND artist_id=?" : ""} ORDER BY id DESC`,
+        `SELECT id,artist_id,status,created_at,submitted_at,expires_at,revision,backup_revision,backup_error,review_json,EXISTS(SELECT 1 FROM minor_consent_invitations i WHERE i.request_id=minor_consent_requests.id) AS has_invitation FROM minor_consent_requests WHERE client_id=? ${ctx.user.role === "collaborator" ? "AND artist_id=?" : ""} ORDER BY id DESC`,
         ctx.user.role === "collaborator"
           ? [input.clientId, ctx.user.artistId]
           : [input.clientId]

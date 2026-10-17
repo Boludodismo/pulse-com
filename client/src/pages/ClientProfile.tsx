@@ -760,7 +760,7 @@ export default function ClientProfile() {
 
         {/* Anamnese Tab */}
         {can("anamnesis") && <TabsContent value="anamnesis">
-          <MinorConsentHistory clientId={clientId} />
+          <MinorConsentHistory key={clientId} clientId={clientId} />
           <ImportedClientRecords clientId={clientId} />
           <Card>
             <CardHeader>

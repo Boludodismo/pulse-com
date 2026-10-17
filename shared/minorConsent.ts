@@ -1,6 +1,16 @@
 import { z } from "zod";
 
 export const MINOR_CONSENT_VERSION = "2026-10-17.1";
+export function minorConsentInvitationMessage(
+  name: string,
+  link: string,
+  anamneseLink: string
+) {
+  if (!link || !anamneseLink)
+    throw new Error("A autorização deve acompanhar o link da anamnese.");
+  const first = name.trim().split(/\s+/)[0] || "cliente";
+  return `Olá, ${first}! Seguem as fichas para o atendimento.\n\nAutorização para menor de idade:\n${link}\n\nFicha de anamnese:\n${anamneseLink}\n\nO menor e o responsável legal devem conferir os dados, assinar a autorização e anexar os documentos solicitados. Preencha também a anamnese antes de concluir o envio.`;
+}
 export const MINOR_CONSENT_TERMS = `A tatuagem introduz pigmentos na pele por agulhas e é permanente. A remoção pode ser incompleta, onerosa e deixar marcas. Existem riscos de dor, sangramento, inchaço, alergias imediatas ou tardias, infecção, cicatrizes, queloides e alterações da pigmentação. Falhas de biossegurança podem transmitir doenças. A pele, a cicatrização e o tempo podem alterar tons e detalhes.
 
 O responsável autoriza exclusivamente o procedimento descrito neste documento, no exercício legítimo de sua responsabilidade parental ou representação legal. A identidade, a idade e a filiação ou representação devem ser conferidas pelo profissional. A autorização não dispensa restrições de idade, normas estaduais ou municipais, nem substitui eventual autorização adicional exigível. O profissional deve conferir a admissibilidade do procedimento no local do atendimento.

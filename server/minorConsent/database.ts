@@ -20,6 +20,7 @@ export async function ensureMinorConsentSchema() {
     `CREATE TABLE IF NOT EXISTS minor_consent_files (id CHAR(36) PRIMARY KEY,request_id INT NOT NULL,studio_id INT NOT NULL,kind VARCHAR(30) NOT NULL,name VARCHAR(180) NOT NULL,mime VARCHAR(60) NOT NULL,bytes INT NOT NULL,sha256 CHAR(64) NOT NULL,storage_key VARCHAR(255) NOT NULL,document_hash CHAR(64) NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY consent_file_request(request_id,kind)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS minor_consent_events (id INT AUTO_INCREMENT PRIMARY KEY,request_id INT NOT NULL,studio_id INT NOT NULL,user_id INT NULL,action VARCHAR(40) NOT NULL,details_json TEXT NOT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,KEY consent_event_request(request_id,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS minor_consent_notices (request_id INT NOT NULL,recipient VARCHAR(10) NOT NULL,status VARCHAR(20) NOT NULL DEFAULT 'pending',queue_id INT NULL,error_text VARCHAR(400) NULL,attempts INT NOT NULL DEFAULT 0,next_attempt BIGINT NOT NULL DEFAULT 0,PRIMARY KEY(request_id,recipient)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS minor_consent_invitations (request_id INT PRIMARY KEY,studio_id INT NOT NULL,encrypted_token TEXT NOT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   ];
   for (const statement of sql) await pool().query(statement);
 }
