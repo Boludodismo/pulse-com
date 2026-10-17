@@ -417,17 +417,17 @@ export default function PublicMinorConsent() {
     </label>
   );
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 p-4 sm:py-9">
-      <div className="max-w-3xl mx-auto space-y-5">
-        <header className="flex items-center gap-4">
+    <main className="min-h-screen min-w-0 overflow-x-hidden bg-slate-50 text-slate-900 px-3 py-4 sm:px-4 sm:py-9">
+      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-5">
+        <header className="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
           {t.logo && (
             <img
               src={t.logo}
-              className="w-16 h-16 object-contain"
+              className="h-14 w-14 shrink-0 object-contain sm:h-16 sm:w-16"
               alt={`Logo ${t.studioName}`}
             />
           )}
-          <div>
+          <div className="min-w-0 w-full [overflow-wrap:anywhere]">
             <p className="text-sm font-medium">{t.studioName}</p>
             <h1 className="text-xl sm:text-2xl font-bold">
               Autorização para menor de idade
@@ -437,7 +437,7 @@ export default function PublicMinorConsent() {
             </p>
           </div>
         </header>
-        <div className="grid grid-cols-4 gap-1 text-xs" aria-label="Etapas">
+        <nav className="grid min-w-0 grid-cols-2 gap-2 text-xs sm:grid-cols-4" aria-label="Etapas da autorização">
           {[
             "Identificação",
             "Documentos",
@@ -446,16 +446,16 @@ export default function PublicMinorConsent() {
           ].map((label, i) => (
             <div
               key={label}
-              className={`rounded-md p-2 ${i === step ? "bg-slate-900 text-white" : "bg-slate-200"}`}
+              className={`min-w-0 rounded-md px-2 py-2.5 text-center leading-snug [overflow-wrap:anywhere] sm:px-3 ${i === step ? "bg-slate-900 text-white" : "bg-slate-200"}`}
               aria-current={i === step ? "step" : undefined}
             >
               {i + 1}. {label}
             </div>
           ))}
-        </div>
-        <Card className="bg-white text-slate-900">
-          <CardHeader>
-            <CardTitle>
+        </nav>
+        <Card className="min-w-0 bg-white text-slate-900">
+          <CardHeader className="min-w-0">
+            <CardTitle className="break-words text-lg sm:text-xl">
               {
                 [
                   "Dados do menor e do responsável",
