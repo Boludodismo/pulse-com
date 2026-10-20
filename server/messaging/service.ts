@@ -20,6 +20,7 @@ import { normalizeBrazilianPhone } from "./phone";
 import { formatAppointmentActionLinks, type AppointmentActionLinks } from "../appointmentActions";
 import { firstName, useClientFirstName, removeLegacyNumericReplyInstruction } from "./messagePresentation";
 import { quoteIdFromTrigger, quoteDeliveryError, recordDeliveredQuote, reconcileDeliveredQuotes } from "../quoteDelivery";
+import { artistNotificationRoute, artistNoticeContextError, isCoreArtistNotice } from "./artistNotifications";
 
 /** Instancia o provedor correto com base na configuração salva */
 export function getProvider(config: ProviderConfig): WhatsAppProvider {
@@ -339,10 +340,20 @@ export async function processPendingIntegrationJobs(limit = 10) {
             eq(artistNotificationSettings.studioId, job.studioId),
             eq(artistNotificationSettings.artistId, payload.artistId),
           )).limit(1))[0];
-          if (!artist || artist.active !== 1 || !artist.phone || preference?.enabled !== 1) {
+          const coreNotice = isCoreArtistNotice(queueItem?.trigger);
+          const route = coreNotice ? await artistNotificationRoute(job.studioId, payload.artistId, queueItem!.trigger!) : null;
+          if (coreNotice && (!route || route.integrationId !== integration.id)) {
+            throw new PermanentDeliveryError("O canal autorizado para avisar este artista mudou ou está indisponível.");
+          }
+          if (coreNotice) {
+            const reason = await artistNoticeContextError({ studioId: job.studioId, artistId: payload.artistId,
+              clientId: payload.clientId, appointmentId: queueItem?.appointmentId, trigger: queueItem!.trigger! });
+            if (reason) throw new PermanentDeliveryError(reason);
+          }
+          if (!artist || artist.active !== 1 || !artist.phone || (!coreNotice && preference?.enabled !== 1)) {
             throw new PermanentDeliveryError("O artista não autorizou avisos operacionais por WhatsApp.");
           }
-          if (queueItem?.trigger?.startsWith("quote_artist_action:") && preference.notifyClientActionsEnabled !== 1) {
+          if (!coreNotice && queueItem?.trigger?.startsWith("quote_artist_action:") && preference?.notifyClientActionsEnabled !== 1) {
             throw new PermanentDeliveryError("O artista desativou os avisos de ações dos clientes.");
           }
           if (normalizeBrazilianPhone(artist.phone) !== normalizeBrazilianPhone(payload.recipientPhone)) {

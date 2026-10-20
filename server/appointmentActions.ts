@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
-import { anamneseRequests, anamneseSubmissions, anamnesisRecords, appointmentActionAlerts, appointmentActionLinks, appointments, artists, artistNotificationSettings, clients } from "../drizzle/schema";
+import { anamneseRequests, anamneseSubmissions, anamnesisRecords, appointmentActionAlerts, appointmentActionLinks, appointments, artists, clients } from "../drizzle/schema";
 import { getDb } from "./db";
 import { firstName } from "./messaging/messagePresentation";
 import { anamneseExpiryForDatabase } from "./anamneseTime";
@@ -216,17 +216,6 @@ export async function queueArtistActionNotification(input: {
     });
     return false;
   }
-  const preference = (await db.select({
-    whatsappOperationalEnabled: artistNotificationSettings.whatsappOperationalEnabled,
-    notifyClientActionsEnabled: artistNotificationSettings.notifyClientActionsEnabled,
-  }).from(artistNotificationSettings).where(and(
-    eq(artistNotificationSettings.studioId, input.studioId),
-    eq(artistNotificationSettings.artistId, artist.id),
-  )).limit(1))[0];
-  if (preference?.whatsappOperationalEnabled !== 1 || preference.notifyClientActionsEnabled !== 1) {
-    return false;
-  }
-
   const actionText: Record<AppointmentAction, string> = {
     confirmed: "confirmou presença",
     early: "informou que chegará adiantado",
@@ -242,12 +231,9 @@ export async function queueArtistActionNotification(input: {
   const when = saoPauloDateTime(String(appointment.date)).toLocaleString("pt-BR", {
     timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short",
   });
-  const { sendAndLog } = await import("./messaging/service");
-  const delivery = await sendAndLog({
+  const { queueArtistOperationalNotice } = await import("./messaging/artistNotifications");
+  return queueArtistOperationalNotice({
     studioId: input.studioId,
-    recipientPhone: artist.phone,
-    recipientName: firstName(artist.name),
-    recipientType: "artist",
     artistId: artist.id,
     clientId: appointment.clientId,
     appointmentId: appointment.id,
@@ -255,7 +241,6 @@ export async function queueArtistActionNotification(input: {
     message: `Olá, ${firstName(artist.name)}!\n\nO cliente ${client.name} ${actionText[input.action]} no agendamento de ${when}.\n\nOpção escolhida: ${selectedOption[input.action]}\nServiço: ${appointment.service}.`,
     idempotencyKey: `appointment-action-artist:${input.actionEventKey}`,
   });
-  return delivery.success && (delivery.queued || delivery.duplicate);
 }
 
 function comparableArtistName(value: string) {

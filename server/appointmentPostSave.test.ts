@@ -1,3 +1,4 @@
+vi.mock("./messaging/artistNotifications", () => ({ queueArtistAppointmentNotice: vi.fn().mockResolvedValue(true) }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mock = vi.hoisted(() => ({
   getDb: vi.fn(), getClientById: vi.fn(), getArtistById: vi.fn(), getStudioSettings: vi.fn(),

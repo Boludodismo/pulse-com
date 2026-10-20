@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "../ui/button";
 import { toast } from "sonner";
 import type { ArtistEditorialCardProps } from "./ArtistEditorialCard";
+import ArtistProfileSharing from "./ArtistProfileSharing";
 import {
   downloadArtistContact,
   downloadArtistQr,
@@ -53,6 +54,16 @@ export default function ArtistCardSharing({
         Estas opções usam o conteúdo já salvo. Ao pausar, o link deixa de exibir
         o cartão. Arquivos já baixados continuam com quem os recebeu.
       </p>
+      <p className="text-sm text-muted-foreground">
+        Compartilhamento no cartão do cliente:{" "}
+        <strong>
+          {card.presentation?.sharingEnabled === true
+            ? "autorizado"
+            : "não autorizado"}
+        </strong>
+        . Você pode alterar essa preferência no final desta tela e salvar o
+        cartão.
+      </p>
       <Button
         type="button"
         variant="outline"
@@ -61,37 +72,15 @@ export default function ArtistCardSharing({
       >
         {published ? "Pausar publicação" : "Publicar cartão"}
       </Button>
+      {published ? (
+        <ArtistProfileSharing name={card.name} profileUrl={url} />
+      ) : (
+        <p className="break-all text-sm text-muted-foreground">
+          Link permanente gerado: {url}. Publique o cartão para permitir o
+          acesso.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled || !published}
-          onClick={() =>
-            run(async () => {
-              await navigator.clipboard.writeText(url);
-              toast.success("Link copiado.");
-            })
-          }
-        >
-          Copiar link
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled || !published}
-          onClick={() =>
-            run(async () => {
-              if (navigator.share)
-                await navigator.share({ title: card.name, url });
-              else {
-                await navigator.clipboard.writeText(url);
-                toast.success("Link copiado para compartilhar.");
-              }
-            })
-          }
-        >
-          Compartilhar cartão
-        </Button>
         <Button
           type="button"
           variant="outline"

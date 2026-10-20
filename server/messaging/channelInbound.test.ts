@@ -6,6 +6,7 @@ const db = vi.hoisted(() => ({
   reply: vi.fn(),
   persist: vi.fn(),
   inbox: vi.fn(),
+  artistNotice: vi.fn(),
 }));
 vi.mock("../nativeBot/database", () => ({
   rows: db.rows,
@@ -14,6 +15,7 @@ vi.mock("../nativeBot/database", () => ({
 }));
 vi.mock("../nativeBot/webhook", () => ({ persistBotInbound: db.persist }));
 vi.mock("./webhook", () => ({ handleWebhookReply: db.reply }));
+vi.mock("./artistNotifications", () => ({ queueArtistCustomerReply: db.artistNotice }));
 vi.mock("../intelligentInbox/service", () => ({
   ingestReadonlyMessage: db.inbox,
 }));
@@ -64,6 +66,12 @@ describe("roteamento do canal único", () => {
     );
     await dispatchChannelInbound(s, event, event.phone);
     expect(db.reply).not.toHaveBeenCalled();
+    expect(db.persist).toHaveBeenCalledTimes(1);
+  });
+  it.each([['audio', 'áudio'], ['image', 'imagem']])("avisa o artista sobre %s sem inventar transcrição e preserva o Bot", async (kind, label) => {
+    await dispatchChannelInbound(s, { ...event, text: undefined, [kind]: {} }, event.phone);
+    expect(db.reply).not.toHaveBeenCalled();
+    expect(db.artistNotice).toHaveBeenCalledWith(expect.objectContaining({ studioId: 7, text: expect.stringContaining(label) }));
     expect(db.persist).toHaveBeenCalledTimes(1);
   });
   it("não repete efeito externo após falha incerta", async () => {

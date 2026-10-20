@@ -787,6 +787,11 @@ export const appRouter = router({
           }
         } catch (_msgErr) { /* não bloquear fluxo se mensagem falhar */ }
 
+        // Internal notices are isolated from the committed appointment and client delivery.
+        await (await import("./messaging/artistNotifications")).queueArtistAppointmentNotice({
+          studioId, appointmentId: result.id, change: "created",
+        });
+
         // Sincronizar com Google Sheets
         syncAppointmentToSheets({
           id: result.id,
@@ -931,6 +936,12 @@ export const appRouter = router({
           ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
           userAgent: ctx.req.headers?.["user-agent"],
         });
+
+        if (appointmentAfter) {
+          await (await import("./messaging/artistNotifications")).queueArtistAppointmentNotice({
+            studioId: appointmentBefore.studioId, appointmentId: input.id, change: "updated",
+          });
+        }
 
         // Sincronizar com Google Sheets
         if (appointmentAfter) {

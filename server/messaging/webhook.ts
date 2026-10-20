@@ -1,132 +1,111 @@
 import { recordCareWhatsappReply } from "./customerCare";
 import { getDb } from "../db";
 import { messageQueue, appointments } from "../../drizzle/schema";
-import { and, eq, desc } from "drizzle-orm";
-import { dispatchTemplateMessage } from "./service";
+import { and, eq, desc, or } from "drizzle-orm";
+import { normalizeBrazilianPhone } from "./phone";
+import { queueArtistCustomerReply } from "./artistNotifications";
+import { queueArtistActionNotification } from "../appointmentActions";
 
-/**
- * Processa respostas recebidas via webhook.
- * - "1" → confirma agendamento
- * - "2" → solicita remarcação
- */
-export async function handleWebhookReply(phone: string, message: string, studioId?: number, eventKey?: string) {
+/** Preserve legacy numeric confirmation while notifying the assigned artist on ordinary replies too. */
+export async function handleWebhookReply(
+  phone: string,
+  message: string,
+  studioId?: number,
+  eventKey?: string,
+  integrationId?: number
+) {
   if (!studioId) throw new Error("Empresa obrigatória para receber mensagens.");
-  if (await recordCareWhatsappReply(studioId,phone,message,eventKey)) return true;
+  const notifyReply = (appointmentId?: number) =>
+    queueArtistCustomerReply({
+      studioId,
+      phone,
+      text: message,
+      eventKey,
+      appointmentId,
+    });
+  if (await recordCareWhatsappReply(studioId, phone, message, eventKey)) {
+    await notifyReply();
+    return true;
+  }
   const db = await getDb();
   if (!db) return;
-
-  // Normaliza número
-  const normalizedPhone = phone.replace(/[\s\-\+\(\)]/g, "");
+  let normalizedPhone: string;
+  try {
+    normalizedPhone = normalizeBrazilianPhone(phone);
+  } catch {
+    return;
+  }
   const reply = message.trim();
-
-  // Busca a última mensagem enviada para este número (para saber qual agendamento)
   const recentMessages = await db
     .select()
     .from(messageQueue)
-    .where(studioId != null
-      ? and(eq(messageQueue.recipientPhone, normalizedPhone), eq(messageQueue.studioId, studioId))
-      : eq(messageQueue.recipientPhone, normalizedPhone))
+    .where(
+      and(
+        eq(messageQueue.studioId, studioId),
+        eq(messageQueue.recipientType, "client"),
+        or(
+          eq(messageQueue.recipientPhone, normalizedPhone),
+          eq(messageQueue.recipientPhone, normalizedPhone.slice(1)),
+          eq(messageQueue.recipientPhone, phone)
+        ),
+        ...(integrationId
+          ? [eq(messageQueue.integrationId, integrationId)]
+          : [])
+      )
+    )
     .orderBy(desc(messageQueue.createdAt))
     .limit(5);
-
-  const lastMsg = recentMessages.find((m) => m.appointmentId && m.recipientType === "client");
+  const lastMsg = recentMessages.find(
+    m => m.appointmentId && ["enviada", "respondida"].includes(m.status)
+  );
   if (!lastMsg?.appointmentId) {
-    console.log(`[Webhook] Nenhum agendamento encontrado para ${normalizedPhone}`);
+    await notifyReply();
     return;
   }
-
-  const appointmentId = lastMsg.appointmentId;
-  const clientId = lastMsg.clientId;
-
-  // Busca o agendamento para obter dados do tatuador
-  const aptRows = await db
+  const [apt] = await db
     .select()
     .from(appointments)
-    .where(eq(appointments.id, appointmentId))
+    .where(
+      and(
+        eq(appointments.id, lastMsg.appointmentId),
+        eq(appointments.studioId, studioId)
+      )
+    )
     .limit(1);
-
-  const apt = aptRows[0];
-  if (!apt || apt.studioId !== studioId) return;
-
-  const aptDate = new Date(apt.date.replace(" ", "T"));
-  const dataFormatada = aptDate.toLocaleDateString("pt-BR");
-  const horaFormatada = aptDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-
-  if (reply === "1") {
-    // Cliente confirmou
-    await db.update(appointments)
-      .set({ confirmationStatus: "confirmado" })
-      .where(eq(appointments.id, appointmentId));
-
-    // Marca mensagem como respondida
-    await db.update(messageQueue)
-      .set({ status: "respondida" })
-      .where(eq(messageQueue.id, lastMsg.id));
-
-    // Notifica o tatuador (busca o número do artista se disponível)
-    // Por ora, dispara template para o artista responsável
-    console.log(`[Webhook] Cliente ${normalizedPhone} CONFIRMOU agendamento #${appointmentId}`);
-
-    // Tenta notificar o tatuador se tiver número cadastrado
-    await notifyArtistAboutReply(apt, "appointment_confirmed", {
-      nome_tatuador: apt.artist,
-      nome_cliente: (apt as any).clientName ?? "Cliente",
-      data: dataFormatada,
-      hora: horaFormatada,
-    });
-
-  } else if (reply === "2") {
-    // Cliente solicitou remarcação
-    await db.update(appointments)
-      .set({ status: "reagendado", confirmationStatus: "nao_confirmado" })
-      .where(eq(appointments.id, appointmentId));
-
-    await db.update(messageQueue)
-      .set({ status: "respondida" })
-      .where(eq(messageQueue.id, lastMsg.id));
-
-    console.log(`[Webhook] Cliente ${normalizedPhone} SOLICITOU REMARCAÇÃO do agendamento #${appointmentId}`);
-
-    await notifyArtistAboutReply(apt, "appointment_rescheduled", {
-      nome_tatuador: apt.artist,
-      nome_cliente: (apt as any).clientName ?? "Cliente",
-      data: dataFormatada,
-      hora: horaFormatada,
-    });
-    return true;
+  if (!apt || apt.clientId !== lastMsg.clientId) return;
+  if (reply !== "1" && reply !== "2") {
+    await notifyReply(apt.id);
+    return false;
   }
-  return reply === "1";
-}
-
-async function notifyArtistAboutReply(
-  apt: any,
-  trigger: string,
-  vars: Record<string, string>
-) {
-  // Busca o número do artista na tabela artists
+  await db
+    .update(appointments)
+    .set(
+      reply === "1"
+        ? { confirmationStatus: "confirmado" }
+        : { status: "reagendado", confirmationStatus: "nao_confirmado" }
+    )
+    .where(
+      and(eq(appointments.id, apt.id), eq(appointments.studioId, studioId))
+    );
+  await db
+    .update(messageQueue)
+    .set({ status: "respondida" })
+    .where(
+      and(eq(messageQueue.id, lastMsg.id), eq(messageQueue.studioId, studioId))
+    );
   try {
-    const db = await getDb();
-    if (!db || !apt.artistId) return;
-
-    const { artists } = await import("../../drizzle/schema");
-    const artistRows = await db
-      .select()
-      .from(artists)
-      .where(eq(artists.id, apt.artistId))
-      .limit(1);
-
-    const artist = artistRows[0];
-    if (!artist?.phone) return;
-
-    await dispatchTemplateMessage({
-      trigger,
-      recipientType: "artist",
-      recipientPhone: artist.phone,
-      recipientName: artist.name,
+    await queueArtistActionNotification({
+      studioId,
       appointmentId: apt.id,
-      vars,
+      action: reply === "1" ? "confirmed" : "reschedule_requested",
+      actionEventKey: `webhook:${eventKey ?? `${lastMsg.id}:${reply}`}`,
     });
-  } catch (err) {
-    console.error("[Webhook] Erro ao notificar artista:", err);
+  } catch {
+    // A failed internal notification never undoes the customer's recorded decision.
+    console.warn("[Webhook] Aviso ao artista indisponível.", {
+      studioId,
+      appointmentId: apt.id,
+    });
   }
+  return true;
 }

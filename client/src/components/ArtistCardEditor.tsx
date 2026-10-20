@@ -27,7 +27,9 @@ import {
 
 type Slot = "cover" | "about" | "process";
 type Mime = "image/jpeg" | "image/png" | "image/webp";
-type Texts = Required<Omit<ArtistCardPresentationPatch, "contact">>;
+type Texts = Required<
+  Omit<ArtistCardPresentationPatch, "contact" | "sharingEnabled">
+>;
 const emptyTexts = (): Texts => ({
   quote: "",
   tagline: "",
@@ -184,6 +186,8 @@ export default function ArtistCardEditor({
     links: [] as { label: string; url: string }[],
     presentation: emptyTexts(),
   });
+  const [sharingEnabled, setSharingEnabled] = useState(false);
+  const formId = `artist-card-form-${artistId}`;
   const emptyContact = {
     phone: "",
     email: "",
@@ -223,6 +227,7 @@ export default function ArtistCardEditor({
     if (query.isLoading || query.error || initialized.current) return;
     initialized.current = true;
     const card = query.data;
+    setSharingEnabled(card?.presentation?.sharingEnabled === true);
     setContact({ ...emptyContact, ...card?.presentation?.contact });
     const presentation = emptyTexts();
     for (const [key] of fields)
@@ -389,6 +394,7 @@ export default function ArtistCardEditor({
     version: 1,
     ...form.presentation,
     contact,
+    sharingEnabled,
   });
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -399,7 +405,7 @@ export default function ArtistCardEditor({
         artistId,
         ...form,
         links,
-        presentation: { ...form.presentation, contact },
+        presentation: { ...form.presentation, contact, sharingEnabled },
       });
     } catch (error) {
       toast.error((error as Error).message);
@@ -446,7 +452,7 @@ export default function ArtistCardEditor({
             <p role="status">Carregando…</p>
           ) : (
             <>
-              <form onSubmit={handleSave} className="space-y-5">
+              <form id={formId} onSubmit={handleSave} className="space-y-5">
                 <fieldset disabled={busy} className="space-y-4">
                   <legend className="mb-3 text-lg font-semibold">
                     Apresentação e biografia
@@ -721,29 +727,6 @@ export default function ArtistCardEditor({
                   />
                   Publicar cartão para disponibilizá-lo nos agendamentos
                 </label>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button type="submit" disabled={busy}>
-                    {save.isPending ? "Salvando…" : "Salvar cartão"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => setPreviewOpen(true)}
-                  >
-                    Ver prévia
-                  </Button>
-                  {query.data?.published === 1 && (
-                    <a
-                      className="break-all text-sm underline"
-                      href={`/artista/${query.data.token}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Abrir cartão público
-                    </a>
-                  )}
-                </div>
               </form>
               {query.data && (
                 <ArtistCardSharing
@@ -935,6 +918,64 @@ export default function ArtistCardEditor({
                   ))}
                 </div>
               </section>
+              <fieldset
+                form={formId}
+                disabled={busy}
+                className="space-y-3 rounded-lg border p-4"
+              >
+                <legend className="px-1 font-semibold">
+                  Recursos no cartão recebido pelo cliente
+                </legend>
+                <label className="flex items-start gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    form={formId}
+                    checked={sharingEnabled}
+                    onChange={e => setSharingEnabled(e.target.checked)}
+                    className="mt-1"
+                  />
+                  <span>
+                    Autorizar compartilhamento do link e exibição do QR Code no
+                    cartão público
+                  </span>
+                </label>
+                <p className="text-sm text-muted-foreground">
+                  Ao marcar e salvar, os clientes verão os botões de
+                  compartilhar e o QR Code no final do cartão, junto à opção de
+                  salvar o contato na agenda. A escolha vale para todos os
+                  cartões enviados e pode ser alterada aqui a qualquer momento,
+                  mantendo o mesmo link.
+                </p>
+              </fieldset>
+              <div className="border-t pt-5">
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Salve para aplicar os textos, contatos e a autorização de
+                  compartilhamento.
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button type="submit" form={formId} disabled={busy}>
+                    {save.isPending ? "Salvando…" : "Salvar cartão"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => setPreviewOpen(true)}
+                  >
+                    Ver prévia
+                  </Button>
+                  {query.data?.published === 1 && (
+                    <a
+                      className="break-all text-sm underline"
+                      href={`/artista/${query.data.token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir cartão público
+                    </a>
+                  )}
+                </div>
+              </div>
             </>
           )}
         </DialogContent>

@@ -400,15 +400,15 @@ export default function Artists() {
                 <div>
                   <p className="font-medium text-sm">Assistente do Artista no WhatsApp</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    O WhatsApp oficial do estúdio pode avisar este artista sobre atendimentos e decisões dos clientes. O WhatsApp pessoal do artista não precisa ser Business.
+                    Sem uma integração Business própria, o WhatsApp do estúdio envia automaticamente os avisos de agendamento e respostas dos clientes ao telefone cadastrado deste artista. Esse telefone pode ser um WhatsApp pessoal.
                   </p>
                 </div>
 
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
-                    <Label htmlFor="whatsapp-operational">Receber avisos operacionais no WhatsApp</Label>
+                    <Label htmlFor="whatsapp-operational">Autorizar lembretes adicionais no WhatsApp</Label>
                     <p className="text-xs text-muted-foreground">
-                      Ao ativar, o artista autoriza o estúdio a enviar lembretes relacionados aos próprios atendimentos para o número cadastrado acima.
+                      Ative para receber também os lembretes opcionais dos próprios atendimentos. Os avisos automáticos pelo estúdio continuam disponíveis quando não houver integração própria.
                     </p>
                   </div>
                   <Switch
@@ -439,9 +439,9 @@ export default function Artists() {
 
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
-                    <Label htmlFor="notify-client-actions">Avisar quando o cliente responder</Label>
+                    <Label htmlFor="notify-client-actions">Receber respostas pela integração própria</Label>
                     <p className="text-xs text-muted-foreground">
-                      Confirmação, atraso, adiantamento e pedido de remarcação voltam para o Tatuei e geram uma atualização para o artista.
+                      Controla os avisos de respostas quando houver integração própria. Sem ela, o estúdio avisa automaticamente sobre confirmação, atraso, adiantamento e remarcação.
                     </p>
                   </div>
                   <Switch

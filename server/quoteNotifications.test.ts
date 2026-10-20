@@ -10,13 +10,21 @@ import { publicQuotePayload } from "./quoteArtworkProtection";
 
 const payload = () => quoteStoredPayloadSchema.parse({ version: 1, editor: buildEmptyQuoteEditorData(), client: { id: 3, name: "Ágatha Cunha", phone: null, email: null }, artist: { id: 2, name: "Artista", phone: "5538999999999", email: "private@example.test", instagram: "private", photoUrl: null, bio: null, specialty: null }, studio: { name: "Estúdio", phone: "5538999990000", email: null, instagram: null, logoUrl: null }, branding: { personalLogoKey: null, personalLogoUrl: null } });
 const row = () => ({ id: 5, studioId: 1, artistId: 2, clientId: 3, quoteNumber: "ORC-5", payload: JSON.stringify(payload()) }) as any;
-let artist: any; let preference: any; let filters: any[];
+let artist: any; let preference: any; let filters: any[]; let channels: any[];
 beforeEach(() => {
   vi.clearAllMocks(); filters = [];
   artist = { id: 2, studioId: 1, active: 1, name: "Artista", phone: "5538999998888" };
   preference = { whatsappOperationalEnabled: 1, notifyClientActionsEnabled: 1 };
+  channels = [{ id: 19, ownerRole: "collaborator", ownerArtistId: 2 }];
   const dialect = new MySqlDialect();
-  mocks.db.mockResolvedValue({ select: () => { let table = ""; const q: any = { from: (t: any) => { table = getTableName(t); return q; }, where: (condition: any) => { filters.push(dialect.sqlToQuery(condition).params); return q; }, limit: async () => table === "artists" ? (artist ? [artist] : []) : (preference ? [preference] : []) }; return q; } });
+  mocks.db.mockResolvedValue({ select: () => {
+    let table = "";
+    const result = () => table === "artists" ? (artist ? [artist] : []) : table === "whatsapp_integrations" ? channels : (preference ? [preference] : []);
+    const q: any = { from: (t: any) => { table = getTableName(t); return q; }, leftJoin: () => q,
+      where: (condition: any) => { filters.push(dialect.sqlToQuery(condition).params); return q; },
+      orderBy: () => q, limit: async () => result(), then: (resolve: any) => Promise.resolve(result()).then(resolve) };
+    return q;
+  } });
   mocks.send.mockResolvedValue({ success: true, queued: true });
 });
 describe("private artist quote notifications", () => {
@@ -29,9 +37,16 @@ describe("private artist quote notifications", () => {
   });
   it("routes the full question to the current assigned artist, even with studio public contact", async () => {
     expect(await queueQuoteArtistNotification(row(), "question", "Posso mudar o tamanho?\nPara 20 cm.")).toBe(true);
-    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ studioId: 1, artistId: 2, recipientType: "artist", recipientPhone: artist.phone, trigger: "quote_artist_action:5:question", message: expect.stringContaining("Posso mudar o tamanho?\nPara 20 cm.") }));
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ studioId: 1, artistId: 2, recipientType: "artist", recipientPhone: `+${artist.phone}`, trigger: "quote_artist_action:5:question", message: expect.stringContaining("Posso mudar o tamanho?\nPara 20 cm.") }));
     expect(mocks.send.mock.calls[0][0].message).toContain("Ágatha"); expect(mocks.send.mock.calls[0][0].message).toContain("ORC-5");
-    expect(filters).toEqual([[2, 1], [2, 1]]);
+    expect(filters[0]).toEqual([2, 1]);
+    expect(filters.every(params => params.includes(1))).toBe(true);
+  });
+  it("automatically uses the studio channel without personal Business or optional preferences", async () => {
+    channels = [{ id: 20, ownerRole: "admin", ownerArtistId: null }];
+    preference = null;
+    expect(await queueQuoteArtistNotification(row(), "question", "Minha dúvida")).toBe(true);
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ integrationId: 20, artistId: 2, recipientPhone: `+${artist.phone}` }));
   });
   it("uses stable deduplication keys and distinguishes different questions and acceptance", async () => {
     await queueQuoteArtistNotification(row(), "question", "Pergunta A"); await queueQuoteArtistNotification(row(), "question", "Pergunta A"); await queueQuoteArtistNotification(row(), "question", "Pergunta B"); await queueQuoteArtistNotification(row(), "accepted");

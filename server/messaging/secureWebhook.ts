@@ -74,7 +74,7 @@ export async function receiveBotConversaWebhook(input: {
   }
 
   try {
-    await handleWebhookReply(inbound.phone, inbound.text, integration.studioId, idempotencyKey);
+    await handleWebhookReply(inbound.phone, inbound.text, integration.studioId, idempotencyKey, integration.id);
     try {
       await ingestReadonlyMessage({ studioId: integration.studioId, integrationId: integration.id, eventId: inbound.eventId ?? payloadHash, phone: inbound.phone, text: inbound.text, clientName: inbound.clientName, messageAt: inbound.messageAt });
     } catch (inboxError) {

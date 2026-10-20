@@ -635,3 +635,58 @@ describe("download nativo do contato público", () => {
     }
   });
 });
+
+describe("autorização permanente de compartilhamento por cartão", () => {
+  it.each([true, false])(
+    "salva e publica a escolha %s sem modificar o link nem os demais dados",
+    async sharingEnabled => {
+      const current = { ...row, token: "a".repeat(48) };
+      const writes = database([[{ id: 6, studioId: 10 }], [current]]);
+      await cardRouter
+        .createCaller(ctx)
+        .saveCard({
+          artistId: 6,
+          headline: current.headline,
+          description: current.description,
+          links: [],
+          published: true,
+          presentation: { sharingEnabled },
+        });
+      expect(writes).toHaveLength(1);
+      const saved = parsePresentation(writes[0].presentation);
+      expect(saved).toMatchObject({ ...presentation, sharingEnabled });
+      expect(writes[0]).not.toHaveProperty("token");
+      expect(toPublicPresentation(saved)?.sharingEnabled).toBe(sharingEnabled);
+      expect(current.token).toBe("a".repeat(48));
+    }
+  );
+  it("preserva a escolha ao salvar outras edições com clientes anteriores", async () => {
+    const current = {
+      ...row,
+      presentation: JSON.stringify({ ...presentation, sharingEnabled: true }),
+    };
+    const writes = database([[{ id: 6, studioId: 10 }], [current]]);
+    await cardRouter
+      .createCaller(ctx)
+      .saveCard({
+        artistId: 6,
+        headline: "Novo título",
+        description: row.description,
+        links: [],
+        published: true,
+        presentation: { tagline: "Nova frase" },
+      });
+    expect(parsePresentation(writes[0].presentation)).toMatchObject({
+      sharingEnabled: true,
+      tagline: "Nova frase",
+      contact: presentation.contact,
+      cover: media,
+    });
+  });
+  it("cartões antigos sem autorização continuam válidos e não ativam compartilhamento", () => {
+    expect(parsePresentation(row.presentation)).not.toBeNull();
+    expect(
+      toPublicPresentation(parsePresentation(row.presentation))?.sharingEnabled
+    ).not.toBe(true);
+  });
+});

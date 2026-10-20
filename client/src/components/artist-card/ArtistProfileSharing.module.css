@@ -1,0 +1,109 @@
+.panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  align-items: center;
+  padding: clamp(1.25rem, 4vw, 2.5rem);
+  border: 1px solid #3f3f46;
+  border-radius: 1rem;
+  background: #18181b;
+  color: #fafafa;
+  text-align: left;
+  font-family: inherit;
+}
+.content {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+.content h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0 0 0.75rem;
+}
+.content p {
+  color: #d4d4d8;
+  line-height: 1.65;
+  font-size: 0.95rem;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin: 1.25rem 0;
+}
+.actions a,
+.actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.65rem 1rem;
+  border: 1px solid #71717a;
+  border-radius: 0.5rem;
+  color: #fafafa;
+  background: transparent;
+  font: inherit;
+  font-size: 0.875rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+.actions .whatsapp {
+  background: #166534;
+  border-color: #22c55e;
+}
+.actions a:focus-visible,
+.actions button:focus-visible,
+.link input:focus-visible {
+  outline: 2px solid #fb923c;
+  outline-offset: 3px;
+}
+.link {
+  display: block;
+  color: #d4d4d8;
+  font-size: 0.8rem;
+}
+.link input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  margin-top: 0.35rem;
+  border: 1px solid #52525b;
+  border-radius: 0.5rem;
+  padding: 0.7rem;
+  color: #fafafa;
+  background: #09090b;
+  font: inherit;
+}
+.content .feedback {
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+}
+.qr {
+  flex: 0 1 12rem;
+  max-width: 100%;
+  margin: 0 auto;
+  text-align: center;
+}
+.qr img {
+  display: block;
+  width: 192px;
+  height: auto;
+  max-width: 100%;
+  background: #fff;
+  border-radius: 0.5rem;
+}
+.qr figcaption,
+.qr p {
+  color: #d4d4d8;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin-top: 0.65rem;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 420px) {
+  .actions {
+    flex-direction: column;
+  }
+}

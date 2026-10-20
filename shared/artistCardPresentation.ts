@@ -62,6 +62,7 @@ export const artistCardPresentationStorageSchema = z
   .object({
     version: z.literal(1),
     contact: cardContactSchema.optional(),
+    sharingEnabled: z.boolean().optional(),
     quote: z.string().max(180).nullish(),
     tagline: z.string().max(180).nullish(),
     specialties: z.string().max(500).nullish(),
@@ -81,6 +82,7 @@ export type ArtistCardPresentationStorage = z.infer<
 export const artistCardPresentationPatchSchema = z
   .object({
     contact: cardContactSchema.optional(),
+    sharingEnabled: z.boolean().optional(),
     quote: z.string().trim().max(180).optional(),
     tagline: z.string().trim().max(180).optional(),
     specialties: z.string().trim().max(500).optional(),
@@ -135,6 +137,9 @@ export function toPublicPresentation(
   return {
     version: stored.version,
     ...(stored.contact ? { contact: stored.contact } : {}),
+    ...(stored.sharingEnabled !== undefined
+      ? { sharingEnabled: stored.sharingEnabled }
+      : {}),
     quote: stored.quote,
     tagline: stored.tagline,
     specialties: stored.specialties,

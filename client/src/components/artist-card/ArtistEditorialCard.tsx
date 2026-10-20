@@ -16,6 +16,7 @@ import type {
 } from "../../../../shared/artistCardPresentation";
 import styles from "./ArtistEditorialCard.module.css";
 import { downloadArtistContact } from "../../lib/artistCardExport";
+import ArtistProfileSharing from "./ArtistProfileSharing";
 
 export interface ArtistEditorialCardProps {
   name: string;
@@ -470,6 +471,11 @@ export default function ArtistEditorialCard({
             na agenda.
           </p>
         </section>
+      )}
+      {profileUrl && p?.sharingEnabled === true && (
+        <div className={styles.wrap}>
+          <ArtistProfileSharing name={name} profileUrl={profileUrl} />
+        </div>
       )}
       <footer className={`${styles.footer} ${styles.wrap}`}>
         <div>

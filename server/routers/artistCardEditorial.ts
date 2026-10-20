@@ -332,6 +332,8 @@ export const artistCardEditorialProcedures = {
           }
           if (input.presentation.contact !== undefined)
             p.contact = input.presentation.contact;
+          if (input.presentation.sharingEnabled !== undefined)
+            p.sharingEnabled = input.presentation.sharingEnabled;
           data.presentation = JSON.stringify(p);
         }
         await tx

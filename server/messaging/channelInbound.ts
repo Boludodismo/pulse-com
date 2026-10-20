@@ -5,6 +5,7 @@ import type { z } from "zod";
 import { hashIntegrationPayload } from "./crypto";
 import { handleWebhookReply } from "./webhook";
 import { ingestReadonlyMessage } from "../intelligentInbox/service";
+import { queueArtistCustomerReply } from "./artistNotifications";
 
 /** One authenticated provider event, one CRM dispatch; the Bot only answers unhandled messages. */
 export async function dispatchChannelInbound(
@@ -50,7 +51,8 @@ export async function dispatchChannelInbound(
               phone,
               event.text.message,
               s.studio_id,
-              key
+              key,
+              id
             ));
           try {
             await ingestReadonlyMessage({
@@ -67,6 +69,19 @@ export async function dispatchChannelInbound(
               "[Canais] Registro na Central Inteligente indisponível."
             );
           }
+        }
+        if (!event.fromMe && !event.text?.message && (event.audio || event.image || event.video || event.document)) {
+          const [active] = await rows(
+            "SELECT id FROM whatsapp_integrations WHERE id=? AND studio_id=? AND is_enabled=1 AND status='ativo'",
+            [id, s.studio_id], c
+          );
+          if (active) await queueArtistCustomerReply({
+            studioId: s.studio_id, phone, eventKey: key,
+            text: event.audio ? "[O cliente enviou um áudio. Consulte o atendimento para ouvir.]"
+              : event.image ? "[O cliente enviou uma imagem. Consulte o atendimento para visualizar.]"
+              : event.video ? "[O cliente enviou um vídeo. Consulte o atendimento para visualizar.]"
+              : "[O cliente enviou um documento. Consulte o atendimento para visualizar.]",
+          });
         }
         const [current] = await rows(
           "SELECT wa_integration_id FROM tatuei_bot_settings WHERE studio_id=?",
