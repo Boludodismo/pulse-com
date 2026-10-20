@@ -17,6 +17,7 @@ import { useSyncToast } from "../hooks/useSyncToast";
 import { shouldShowClientLoadError } from "../lib/appointmentClients";
 import { Bell, Plus, Trash2, Send, Clock, CheckCircle, XCircle, MessageSquare, ExternalLink, Loader2, Share2, Copy, CheckCheck, CalendarPlus, Download, Boxes } from "lucide-react";
 import { buildWhatsAppLink } from "../../../shared/const";
+import {appointmentHasHistory,appointmentContinuationUrl} from '@shared/appointmentHistory';
 
 interface EventModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ interface EventModalProps {
   initialEndTime?: string;
   initialClientId?: number | null;
   initialArtistId?: number | null;
+  initialContinuation?: {id:number;date:string;clientId:number;artistId:number|null;artist:string;service:string;duration:number;calendarId:number|null;bodyRegion?:string|null;bodySide?:'direito'|'esquerdo'|'ambos'|null;attendanceEnabled?:number;attendanceRecipient?:string}|null;
   initialQuote?: {id:number;artistId:number;artistName:string;title:string;totalAmount:number};
   onSuccess?: () => void;
 }
@@ -34,15 +36,18 @@ interface EventModalProps {
 export function EventModal({
   isOpen,
   onClose,
-  eventId,
+  eventId:providedEventId,
   initialDate,
   initialStartTime,
   initialEndTime,
   initialClientId,
   initialArtistId,
+  initialContinuation,
   initialQuote,
   onSuccess,
 }: EventModalProps) {
+  // A continuation always creates another row, even if an old event ID remains in the caller.
+  const eventId=initialContinuation?null:providedEventId;
   const { notifySync } = useSyncToast();
   const { data: currentUser } = trpc.auth.me.useQuery();
   const {can:canAccess}=useArtistAccess();
@@ -175,6 +180,7 @@ export function EventModal({
     staleTime: Infinity, // não refetch aqui; o pai já gerencia o cache
   });
   const existingEvent = eventId ? allAppointmentsCache.find(apt => apt.id === eventId) : null;
+  const historyLocked=appointmentHasHistory(existingEvent);
 
   // Buscar lembretes do agendamento (só quando editando)
   const { data: reminders = [], refetch: refetchReminders } = trpc.appointments.reminders.list.useQuery(
@@ -328,7 +334,7 @@ export function EventModal({
       } else if (result?.automaticReminder?.reason === "client_without_phone") {
         toast.warning("Agendamento criado, mas o lembrete automático não foi programado porque o cliente não possui telefone.");
       } else {
-        toast.success("Evento criado com sucesso!");
+        toast.success(initialContinuation?`Nova sessão criada. O atendimento #${initialContinuation.id} foi mantido no histórico.`:"Evento criado com sucesso!");
       }
       // Invalidar cache para sincronização imediata
       utils.appointments.list.invalidate();
@@ -370,7 +376,7 @@ export function EventModal({
   // Initialize once per opening; background refetches must not erase edits.
   useEffect(() => {
     if (!isOpen) { initializedForm.current = null; return; }
-    const key = eventId ? `edit:${eventId}` : "new";
+    const key = eventId ? `edit:${eventId}` : initialContinuation?`continuation:${initialContinuation.id}`:"new";
     if (initializedForm.current === key || (eventId && !existingEvent)) return;
     initializedForm.current = key;
     if (existingEvent) {
@@ -413,7 +419,7 @@ export function EventModal({
       setPaymentMethod((existingEvent as any).paymentMethod || "");
       setProcedureType((existingEvent as any).procedureType || "");
       setProcedureTypeOther((existingEvent as any).procedureTypeOther || "");
-    } else if (initialDate || initialClientId || initialQuote) {
+    } else if (initialDate || initialClientId || initialQuote || initialContinuation) {
       setQuoteId(initialQuote ? String(initialQuote.id) : "");
       if (initialQuote) {
         setArtistId(String(initialQuote.artistId));
@@ -436,8 +442,26 @@ export function EventModal({
         setClientId(initialClientId.toString());
       }
       if(initialArtistId){setArtistId(String(initialArtistId));setArtist(artists.find(a=>a.id===initialArtistId)?.name||'');}
+      if(initialContinuation){
+        resetForm();
+        setClientId(String(initialContinuation.clientId));
+        setArtistId(String(initialContinuation.artistId??artists.find(a=>a.name===initialContinuation.artist)?.id??''));
+        setArtist(initialContinuation.artist);setService(initialContinuation.service);
+        setCalendarId(initialContinuation.calendarId?String(initialContinuation.calendarId):'');
+        setDate('');setSessionDuration(initialContinuation.duration);
+        setStartTime('09:00');const end=9*60+initialContinuation.duration;setEndTime(`${String(Math.floor(end/60)%24).padStart(2,'0')}:${String(end%60).padStart(2,'0')}`);
+        setBodyRegion(initialContinuation.bodyRegion||'');setBodySide(initialContinuation.bodySide||'');
+        setAttendanceEnabled(initialContinuation.attendanceEnabled!==0);setAttendanceRecipient(initialContinuation.attendanceRecipient==='studio'?'studio':'artist');
+        setDepositPaid(false);setDepositAmount('');setTotalAmount('');setSignalStatus('aguardando_sinal');setPaymentStatus('pendente');setPaymentMethod('');
+      }
     }
-  }, [isOpen, eventId, existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, initialArtistId, initialQuote, artists]);
+  }, [isOpen, eventId, existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, initialArtistId, initialQuote, initialContinuation, artists]);
+
+  useEffect(()=>{
+    if(!historyLocked||!existingEvent)return;
+    const [day,time]=existingEvent.date.split(/[ T]/);const start=time.slice(0,5);const [h,m]=start.split(':').map(Number);const end=h*60+m+existingEvent.duration;
+    setDate(day);setStartTime(start);setSessionDuration(existingEvent.duration);setEndTime(`${String(Math.floor(end/60)%24).padStart(2,'0')}:${String(end%60).padStart(2,'0')}`);setCalendarId(existingEvent.calendarId?String(existingEvent.calendarId):'');
+  },[historyLocked,existingEvent?.date,existingEvent?.duration,existingEvent?.calendarId]);
 
   const resetForm = () => {
     setSaveError(null);
@@ -650,6 +674,7 @@ export function EventModal({
     }
 
     const eventData: any = {
+      continuationOfAppointmentId:initialContinuation?.id,
       clientId: parseInt(clientId),
       quoteId: quoteId && canAccess("quotes",true) ? Number(quoteId) : undefined,
       studioId: requiresStudioSelection ? Number(selectedStudioId) : undefined,
@@ -748,7 +773,7 @@ export function EventModal({
       <DialogContent className="w-[calc(100vw-1rem)] sm:w-full max-w-lg max-h-[92dvh] sm:max-h-[90vh] flex flex-col p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {eventId ? "Editar Agendamento" : "Novo Agendamento"}
+            {eventId ? "Editar Agendamento" : initialContinuation?'Agendar nova sessão':"Novo Agendamento"}
             {eventId && reminders.length > 0 && (
               <Badge variant="secondary" className="text-xs">
                 <Bell className="mr-1 h-3 w-3" />
@@ -778,6 +803,8 @@ export function EventModal({
           {/* ABA: INFORMAÇÕES */}
           <TabsContent value="info" className="flex-1 overflow-y-auto">
         <div className="space-y-4 pr-2">
+          {initialContinuation&&<p className="rounded border border-orange-500/30 p-3 text-sm">Nova sessão vinculada ao atendimento #{initialContinuation.id}, de {initialContinuation.date.slice(0,10).split('-').reverse().join('/')} às {initialContinuation.date.slice(11,16)}. O atendimento anterior permanece na agenda e no calendário. Escolha abaixo a nova data e horário.</p>}
+          {historyLocked&&eventId&&<div className="rounded border p-3 text-sm space-y-2"><p>A data, o horário e o calendário deste atendimento ficam preservados no histórico. Para continuar o projeto, crie outra sessão.</p><a className="block text-orange-400 underline" href={appointmentContinuationUrl(eventId)}>Agendar outra sessão</a></div>}
           {eventId&&<AttendancePanel appointmentId={eventId}/>}
           <section className="rounded-lg border p-3 space-y-3"><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={attendanceEnabled} onChange={e=>setAttendanceEnabled(e.target.checked)}/><span>Acompanhar presença e sessão pelo WhatsApp</span></label>{attendanceEnabled&&<label className="block text-sm">Quem recebe os avisos de início e término?<select className="mt-1 w-full rounded border bg-background p-2" value={attendanceRecipient} onChange={e=>setAttendanceRecipient(e.target.value as 'artist'|'studio')}><option value="artist">Artista responsável</option><option value="studio">WhatsApp do estúdio</option></select><span className="mt-1 block text-xs text-muted-foreground">O artista recebe no telefone cadastrado. O canal do estúdio é usado quando ele não tem conexão própria. Para avisar o estúdio, cadastre o telefone nas configurações.</span></label>}</section>
           {/* Cliente */}
@@ -810,6 +837,7 @@ export function EventModal({
                 variant="ghost"
                 size="sm"
                 className="h-6 px-2 text-xs text-primary hover:text-primary gap-1"
+                disabled={historyLocked||!!initialContinuation}
                 onClick={() => {
                   setShowQuickClient((v) => !v);
                   if (!showQuickClient) {
@@ -875,7 +903,7 @@ export function EventModal({
               </div>
             )}
 
-            <Select value={clientId} onValueChange={value => { setClientId(value); setQuoteId(""); }}>
+            <Select value={clientId} disabled={historyLocked||!!initialContinuation} onValueChange={value => { setClientId(value); setQuoteId(""); }}>
               <SelectTrigger>
                 <SelectValue placeholder="Selecione o cliente" />
               </SelectTrigger>
@@ -975,7 +1003,7 @@ export function EventModal({
           {/* Calendário */}
           <div>
             <Label htmlFor="calendar">Calendário</Label>
-            <Select value={calendarId} onValueChange={setCalendarId}>
+            <Select value={calendarId} onValueChange={setCalendarId} disabled={historyLocked}>
               <SelectTrigger>
                 <SelectValue placeholder="Selecione o calendário" />
               </SelectTrigger>
@@ -1000,6 +1028,7 @@ export function EventModal({
             <Label htmlFor="date">Data *</Label>
             <Input
               id="date"
+              disabled={historyLocked}
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
@@ -1012,6 +1041,7 @@ export function EventModal({
               <Label htmlFor="startTime" className="text-xs sm:text-sm">Hora Inicial *</Label>
               <Input
                 id="startTime"
+                disabled={historyLocked}
                 type="time"
                 value={startTime}
                 className="text-xs sm:text-sm"
@@ -1032,6 +1062,7 @@ export function EventModal({
               <Label htmlFor="sessionDuration" className="text-xs sm:text-sm">Duração *</Label>
               <Select
                 value={String(sessionDuration)}
+                disabled={historyLocked}
                 onValueChange={(v) => {
                   const mins = Number(v);
                   setSessionDuration(mins);
@@ -1122,7 +1153,7 @@ export function EventModal({
             <Label htmlFor="artist">Artista *</Label>
             {artists.length > 0 ? (
               <>
-                <Select value={artistId} onValueChange={(value) => {
+                <Select value={artistId} disabled={historyLocked||!!initialContinuation} onValueChange={(value) => {
                   const selected = artists.find((item) => String(item.id) === value);
                   setArtistId(value);
                   setQuoteId("");
@@ -1177,6 +1208,7 @@ export function EventModal({
             ) : (
               <Input
                 id="artist"
+                disabled={historyLocked||!!initialContinuation}
                 value={artist}
                 onChange={(e) => { setArtist(e.target.value); setArtistId(""); setQuoteId(""); setIncludeArtistCard(false); }}
                 placeholder="Nome do artista"
@@ -1508,7 +1540,7 @@ export function EventModal({
                   ? "Salvando..."
                   : eventId
                   ? "Atualizar"
-                  : "Criar"}
+                  : initialContinuation?'Criar nova sessão':"Criar"}
               </Button>
             </div>
           </div>

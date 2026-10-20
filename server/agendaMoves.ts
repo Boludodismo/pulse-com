@@ -1,4 +1,5 @@
 import { syncAppointmentToSheets } from "./googleSheetsSync";
+import {APPOINTMENT_HISTORY_MESSAGE} from '../shared/appointmentHistory';
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, tenantProcedure } from "./_core/trpc";
@@ -80,7 +81,7 @@ export async function moveAppointment(
   try {
     await c.beginTransaction();
     const [rows]: any = await c.query(
-      "SELECT date FROM appointments WHERE id=? AND studioId=? FOR UPDATE",
+      "SELECT date,status FROM appointments WHERE id=? AND studioId=? FOR UPDATE",
       [input.id, studioId]
     );
     if (rows[0]?.date !== input.expectedDate)
@@ -88,6 +89,8 @@ export async function moveAppointment(
         code: "CONFLICT",
         message: "O agendamento mudou. Recarregue a agenda.",
       });
+    const [history]:any=await c.query('SELECT appointment_id FROM appointment_attendance WHERE appointment_id=? AND studio_id=? LIMIT 1',[input.id,studioId]);
+    if(history.length||rows[0]?.status==='concluido')throw new TRPCError({code:'BAD_REQUEST',message:APPOINTMENT_HISTORY_MESSAGE});
     await c.query(
       "UPDATE appointments SET date=?,duration=? WHERE id=? AND studioId=?",
       [input.date, duration, input.id, studioId]

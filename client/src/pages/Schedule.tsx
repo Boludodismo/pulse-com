@@ -190,8 +190,8 @@ export default function Schedule() {
   const [continuationId]=useState(()=>Number(new URLSearchParams(window.location.search).get('continuar'))||0);
   const continuation=trpc.appointments.getById.useQuery({id:continuationId},{enabled:continuationId>0,retry:false});
   const [continuationLoaded,setContinuationLoaded]=useState(false);
-  const [continuationClient,setContinuationClient]=useState<{clientId:number;artistId:number|null}|null>(null);
-  useEffect(()=>{if(continuation.data&&!continuationLoaded){setContinuationClient({clientId:continuation.data.clientId,artistId:continuation.data.artistId});setEventModalId(null);setEventModalOpen(true);setContinuationLoaded(true);}},[continuation.data,continuationLoaded]);
+  const [continuationClient,setContinuationClient]=useState<NonNullable<typeof continuation.data>|null>(null);
+  useEffect(()=>{if(continuation.data&&!continuationLoaded){setContinuationClient(continuation.data);setCurrentDate(new Date(continuation.data.date.replace(' ','T')));setEventModalId(null);setEventModalOpen(true);setContinuationLoaded(true);}},[continuation.data,continuationLoaded]);
   const [, navigate] = useLocation();
 
   // Ref para scroll da grade de horários
@@ -1270,6 +1270,7 @@ export default function Schedule() {
         isOpen={eventModalOpen}
         onClose={() => { setEventModalOpen(false); setEventModalId(null);setContinuationClient(null); }}
         eventId={eventModalId}
+        initialContinuation={!eventModalId?continuationClient:undefined}
         initialClientId={!eventModalId?continuationClient?.clientId:undefined}
         initialArtistId={!eventModalId?continuationClient?.artistId:undefined}
         initialDate={eventModalDate}

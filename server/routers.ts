@@ -58,7 +58,7 @@ import { buildAutomaticAppointmentReminderMessage, scheduleAutomaticAppointmentR
 import { firstName, formatStudioAddress } from "./messaging/messagePresentation";
 import { buildLegacyAnamneseReviewPayload } from "./anamneseReview";
 import { saveWhatsappConsent } from "./messaging/consent";
-import { formatAppointmentConflictMessage } from "../shared/appointmentTime";
+import { formatAppointmentConflictMessage,appointmentInstant } from "../shared/appointmentTime";
 
 async function recordAppointmentWhatsappConsent(input: { studioId: number; clientId: number; source?: string }) {
   const connection = await db.getDb();
@@ -569,6 +569,7 @@ export const appRouter = router({
     create: protectedProcedure
       .input(z.object({
         clientId: z.number(),
+        continuationOfAppointmentId: z.number().int().positive().optional(),
         quoteId: z.number().int().positive().optional(),
         studioId: z.number().int().positive().optional(),
         calendarId: z.number().optional(),
@@ -682,13 +683,20 @@ export const appRouter = router({
           await validateAppointmentQuote({ quoteId: input.quoteId, studioId, clientId: input.clientId, artistId: resolvedArtistId, userArtistId: ctx.user.role === "collaborator" ? ctx.user.artistId : null });
         }
 
+        if(input.continuationOfAppointmentId){
+          const previous=await db.getAppointmentById(input.continuationOfAppointmentId);
+          if(!previous||previous.studioId!==studioId||previous.clientId!==input.clientId||(previous.artistId!=null&&previous.artistId!==resolvedArtistId)||previous.artist!==input.artist||(ctx.user.role==='collaborator'&&previous.artistId!==ctx.user.artistId))
+            throw new TRPCError({code:'FORBIDDEN',message:'A nova sessão precisa manter o cliente, o artista e o estúdio do atendimento de origem.'});
+          if(appointmentInstant(input.date).getTime()<=appointmentInstant(previous.date).getTime())throw new TRPCError({code:'BAD_REQUEST',message:'Escolha uma data e horário posteriores ao atendimento de origem.'});
+        }
+
         const { autoReminder, recordWhatsAppConsent, ...appointmentInput } = input;
         const appointmentData = {
           ...appointmentInput,
           artistId: resolvedArtistId,
           includeArtistCard: input.includeArtistCard ? 1 : 0,
           studioId: studioId,
-          status: input.status || "agendado" as const,
+          status: input.continuationOfAppointmentId?'agendado' as const:input.status || "agendado" as const,
           notes: input.notes || null,
           depositPaid: input.depositPaid ? 1 : 0,
           depositAmount: input.depositAmount ?? null,

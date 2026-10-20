@@ -31,6 +31,12 @@ describe('Transactional operational recording',()=>{
   it('presence anchors post-care immediately without recording material consumption',async()=>{await act('present');expect(record.attendance).toBe('present');expect(record.session).toBe('not_started');expect(care).toHaveLength(1);expect(care[0].slice(0,5)).toEqual([2,3,7,14,'appointment:14']);expect(sqlCalls.join('\n')).not.toMatch(/inventory|consumptions|stock_movements/);expect(connection.commit).toHaveBeenCalledOnce();});
   it('later completion and repeated clicks keep one post-care anchor',async()=>{await act('present');const anchor=care[0][5];await act('start',1);await act('finish',2);expect(await act('finish',2)).toEqual({ok:true,duplicate:true});expect(care).toHaveLength(1);expect(care[0][5]).toBe(anchor);expect(events).toHaveLength(3);expect(sqlCalls.join('\n')).toContain("status='concluido'");});
   it('a repeated no-show creates one occurrence and no post-care anchor',async()=>{await act('no_show');expect(await act('no_show')).toEqual({ok:true,duplicate:true});expect(events).toHaveLength(1);expect(care).toHaveLength(0);expect(sqlCalls.join('\n')).toContain('INSERT INTO care_tags');});
+  it('requesting more sessions preserves the original date, completion and post-care anchor',async()=>{
+    const originalDate=a.date;await act('finish');const finishedAt=record.finished_at,anchor=care[0][5];
+    await act('needs_more',1);
+    expect(record.session).toBe('completed');expect(record.needs_more).toBe(1);expect(record.finished_at).toBe(finishedAt);expect(a.date).toBe(originalDate);expect(care[0][5]).toBe(anchor);expect(care).toHaveLength(1);
+    expect(sqlCalls.filter(sql=>sql.startsWith('UPDATE appointments')).every(sql=>!sql.includes('date=')&&!sql.includes('duration='))).toBe(true);
+  });
   it('correcting a no-show checks in the customer and repairs the automatic tag',async()=>{await act('no_show');await act('present',1);expect(record.attendance).toBe('present');expect(care).toHaveLength(1);expect(sqlCalls.join('\n')).toContain('DELETE FROM care_tags');});
   it('rejects a stale update instead of overwriting another action',async()=>{await act('late');await expect(act('no_show')).rejects.toMatchObject({code:'CONFLICT'});expect(events).toHaveLength(1);expect(connection.rollback).toHaveBeenCalledOnce();});
   it('rejects a changed recipient, cancellation, future-day check-in or reassignment',async()=>{

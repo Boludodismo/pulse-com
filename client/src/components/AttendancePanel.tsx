@@ -4,6 +4,7 @@ import {Button} from './ui/button';
 import {attendanceLabels,transitionAttendance,type AttendanceAction,type AttendanceState} from '@shared/attendance';
 import {toast} from 'sonner';
 import {useArtistAccess} from '@/hooks/useArtistAccess';
+import {appointmentContinuationUrl} from '@shared/appointmentHistory';
 
 export function AttendanceActions({state,name,pending,onAction}:{state:AttendanceState;name:string;pending:boolean;onAction:(action:AttendanceAction)=>void}) {
   const [confirmAbsence,setConfirmAbsence]=useState(false);
@@ -12,17 +13,17 @@ export function AttendanceActions({state,name,pending,onAction}:{state:Attendanc
     <div className="grid gap-2 sm:grid-cols-2">{(Object.keys(attendanceLabels) as AttendanceAction[]).map(action=>{
       let enabled=true;try{enabled=JSON.stringify(transitionAttendance(state,action))!==JSON.stringify(state);}catch{enabled=false;}
       if(!enabled)return null;
-      return <Button key={action} type="button" variant={action==='no_show'?'destructive':'outline'} disabled={pending} className="h-auto min-h-11 whitespace-normal text-left" onClick={()=>{if(action==='no_show')setConfirmAbsence(true);else{setConfirmAbsence(false);onAction(action);}}}>{action==='present'?`${state.attendance==='no_show'?'Corrigir falta · confirmar presença de':'Confirmar presença de'} ${name}`:attendanceLabels[action]}</Button>;
+      return <Button key={action} type="button" variant={action==='no_show'?'destructive':'outline'} disabled={pending} className="h-auto min-h-11 whitespace-normal text-left" onClick={()=>{if(action==='no_show')setConfirmAbsence(true);else{setConfirmAbsence(false);onAction(action);}}}>{action==='present'?`${state.attendance==='no_show'?'Corrigir falta · confirmar presença de':'Confirmar presença de'} ${name}`:action==='needs_more'&&state.session==='completed'?'Precisa de outras sessões · agendar próxima':attendanceLabels[action]}</Button>;
     })}</div>
     {confirmAbsence&&<div className="rounded-lg border border-red-500/40 p-3 space-y-2" role="alert"><p>Registrar que {name} não compareceu? Esta falta ficará no histórico deste agendamento.</p><div className="flex gap-2"><Button type="button" variant="destructive" disabled={pending} onClick={()=>{setConfirmAbsence(false);onAction('no_show');}}>Registrar falta</Button><Button type="button" variant="outline" onClick={()=>setConfirmAbsence(false)}>Voltar</Button></div></div>}
-    <p className="text-xs text-muted-foreground">A presença vincula o atendimento ao pós-venda. Você pode conferir os materiais depois. “Finalizar sessão · precisa de outras sessões” encerra esta sessão e mantém a indicação de continuidade.</p>
+    <p className="text-xs text-muted-foreground">A presença vincula o atendimento ao pós-venda. Você pode conferir os materiais depois. “Finalizar sessão · precisa de outras sessões” mantém este atendimento no histórico e abre um novo agendamento para você escolher outra data e horário.</p>
   </div>;
 }
 export function AttendancePanel({appointmentId}:{appointmentId:number}) {
   const {can}=useArtistAccess();
   const utils=trpc.useUtils();
   const query=trpc.attendance.view.useQuery({appointmentId},{refetchInterval:30000});
-  const action=trpc.attendance.act.useMutation({onSuccess:()=>{void query.refetch();void utils.appointments.invalidate();void utils.attendance.history.invalidate();void utils.customerCare.invalidate();toast.success('Atendimento registrado.');},onError:error=>{toast.error(error.message);void query.refetch();}});
+  const action=trpc.attendance.act.useMutation({onSuccess:(_result,input)=>{void query.refetch();void utils.appointments.invalidate();void utils.attendance.history.invalidate();void utils.customerCare.invalidate();if(input.action==='needs_more'){toast.success('Atendimento preservado. Escolha a data e o horário da nova sessão.');window.location.assign(appointmentContinuationUrl(appointmentId));}else toast.success('Atendimento registrado.');},onError:error=>{toast.error(error.message);void query.refetch();}});
   return <section className="my-4 rounded-lg border border-orange-500/30 p-3 space-y-3"><h3 className="font-semibold">Acompanhamento do atendimento</h3>{query.isLoading?<p>Carregando atendimento…</p>:query.error?<p role="alert">{query.error.message}</p>:query.data&&<><AttendanceActions state={query.data.state} name={query.data.clientName} pending={action.isPending||!can('appointments',true)} onAction={value=>action.mutate({appointmentId,revision:query.data!.revision,action:value})}/>{can('appointments',true)&&<details><summary className="cursor-pointer py-2">Próximos agendamentos</summary><a className="block py-2 text-orange-400 underline" href={`/schedule?continuar=${appointmentId}`}>Agendar outra sessão para {query.data.clientName}</a></details>}</>}</section>;
 }
 export function ClientAttendanceHistory({clientId,compact=false}:{clientId:number;compact?:boolean}) {

@@ -19,7 +19,8 @@ export const emptyAttendance: AttendanceState = { attendance: 'pending', session
 /** Presence is an operational check-in, independent of the customer's earlier RSVP. */
 export function transitionAttendance(state: AttendanceState, action: AttendanceAction): AttendanceState {
   if (state.session === 'completed') {
-    if ((action === 'finish' && !state.needsMore) || (action === 'needs_more' && state.needsMore)) return state;
+    if(action==='needs_more')return state.needsMore?state:{...state,needsMore:true};
+    if (action === 'finish' && !state.needsMore) return state;
     throw new Error('Esta sessão já foi finalizada. Atualize a página para consultar o registro.');
   }
   if (action === 'no_show' && (state.attendance === 'present' || state.session === 'in_progress'))

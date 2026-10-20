@@ -76,7 +76,7 @@ beforeEach(() => {
   m.query.mockImplementation(async (sql: string) =>
     sql.startsWith("SELECT date")
       ? [[{ date: input.expectedDate }]]
-      : sql.startsWith("SELECT id,message")
+      : sql.startsWith('SELECT appointment_id')||sql.startsWith("SELECT id,message")
         ? [[]]
         : [{ affectedRows: 1 }]
   );
@@ -85,6 +85,17 @@ beforeEach(() => {
   m.send.mockResolvedValue({ success: true });
 });
 describe("reagendamento visual seguro", () => {
+  it('preserva o dia e horário do atendimento quando já existe presença, atraso ou falta registrada',async()=>{
+    const original=m.query.getMockImplementation()!;
+    m.query.mockImplementation((sql:string,...args:any[])=>sql.startsWith('SELECT appointment_id')?Promise.resolve([[{appointment_id:8}]]):original(sql,...args));
+    await expect(moveAppointment(ctx,input)).rejects.toMatchObject({code:'BAD_REQUEST',message:expect.stringContaining('histórico')});
+    expect(m.query.mock.calls.some(([sql])=>sql.startsWith('UPDATE appointments'))).toBe(false);expect(m.commit).not.toHaveBeenCalled();expect(m.rollback).toHaveBeenCalledOnce();
+  });
+  it('reconfere a conclusão dentro do bloqueio para não mover um atendimento encerrado em outra tela',async()=>{
+    const original=m.query.getMockImplementation()!;
+    m.query.mockImplementation((sql:string,...args:any[])=>sql.startsWith('SELECT date')?Promise.resolve([[{date:input.expectedDate,status:'concluido'}]]):original(sql,...args));
+    await expect(moveAppointment(ctx,input)).rejects.toMatchObject({code:'BAD_REQUEST'});expect(m.query.mock.calls.some(([sql])=>sql.startsWith('UPDATE appointments'))).toBe(false);
+  });
   it("preserva duração e não envia sem autorização", async () => {
     await moveAppointment(ctx, input);
     expect(m.conflict).toHaveBeenCalledWith("Artista", input.date, 90, 8, 7);

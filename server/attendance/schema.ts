@@ -27,7 +27,7 @@ export async function ensureAttendanceSchema() {
     try {
       const [lock]: any = await c.query("SELECT GET_LOCK('tatuei-attendance-schema',30) AS acquired");
       if (Number(lock[0]?.acquired) !== 1) throw new Error('Não foi possível preparar o acompanhamento.');
-      for (const [column, type] of [['attendanceEnabled', 'TINYINT NOT NULL DEFAULT 1'], ['attendanceRecipient', "VARCHAR(10) NOT NULL DEFAULT 'artist'"]]) {
+      for (const [column, type] of [['attendanceEnabled', 'TINYINT NOT NULL DEFAULT 1'], ['attendanceRecipient', "VARCHAR(10) NOT NULL DEFAULT 'artist'"],['continuationOfAppointmentId','INT NULL']]) {
         const [rows]: any = await c.query('SHOW COLUMNS FROM appointments LIKE ?', [column]);
         if (!rows.length) await c.query(`ALTER TABLE appointments ADD COLUMN ${column} ${type}`);
       }

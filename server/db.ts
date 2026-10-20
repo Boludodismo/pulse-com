@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { clientPatchFromAnamnese } from "../shared/clientPersonal";
 import {formWhatsappChoice,recordFormWhatsappPermission} from './attendance/consent';
 import {appointmentAttendance} from '../drizzle/attendanceSchema';
+import {APPOINTMENT_HISTORY_MESSAGE,changesAppointmentSlot} from '../shared/appointmentHistory';
 import { parseAnamneseExpiry } from "./anamneseTime";
 import { anamneseExpiryForDatabase } from "./anamneseTime";
 import { appointmentInstant, appointmentsOverlap } from "../shared/appointmentTime";
@@ -410,6 +411,7 @@ export async function listAppointments(studioId?: number | null, artistId?: numb
       includeArtistCard: appointments.includeArtistCard,
       attendanceEnabled: appointments.attendanceEnabled,
       attendanceRecipient: appointments.attendanceRecipient,
+      continuationOfAppointmentId:appointments.continuationOfAppointmentId,
       status: appointments.status,
       confirmationStatus: appointments.confirmationStatus,
       notes: appointments.notes,
@@ -503,11 +505,15 @@ export async function createAppointment(data: InsertAppointment) {
 export async function updateAppointment(id: number, data: Partial<InsertAppointment>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  if(data.clientId!==undefined||data.artistId!==undefined||data.artist!==undefined) {
+  if(data.clientId!==undefined||data.artistId!==undefined||data.artist!==undefined||data.date!==undefined||data.duration!==undefined||data.calendarId!==undefined) {
     return db.transaction(async tx=>{
       const [before]=await tx.select().from(appointments).where(eq(appointments.id,id)).limit(1).for('update');
       const changed=before && ((data.clientId!==undefined&&data.clientId!==before.clientId)||(data.artistId!==undefined&&data.artistId!==before.artistId)||(data.artist!==undefined&&data.artist!==before.artist));
-      if(changed){const [record]=await tx.select().from(appointmentAttendance).where(eq(appointmentAttendance.appointmentId,id)).limit(1);if(record)throw new TRPCError({code:'BAD_REQUEST',message:'Este agendamento já tem presença ou ocorrência registrada. Crie outro agendamento para mudar o cliente ou artista e preservar o histórico.'});}
+      const slotChanged=before&&changesAppointmentSlot(before,data);
+      if(changed||slotChanged){
+        const [record]=await tx.select().from(appointmentAttendance).where(eq(appointmentAttendance.appointmentId,id)).limit(1);
+        if(record||before?.status==='concluido')throw new TRPCError({code:'BAD_REQUEST',message:APPOINTMENT_HISTORY_MESSAGE});
+      }
       await tx.update(appointments).set(data).where(eq(appointments.id,id));
       return {success:true};
     });

@@ -23,6 +23,19 @@ beforeEach(() => {
   mock.getDb.mockResolvedValue({ select: () => { throw new Error("Unknown column studio_id in whatsapp_integrations"); } });
 });
 describe("Falha do WhatsApp após salvar agendamento", () => {
+  it('cria outra sessão vinculada ao atendimento original sem atualizar nem mover a anterior',async()=>{
+    const original={...saved,status:'concluido'};const nextDate='2026-09-17 14:00:00';mock.getAppointmentById.mockResolvedValue(original);
+    mock.createAppointment.mockImplementation(async data=>({...data,id:88}));
+    const result=await appRouter.createCaller(ctx).appointments.create({clientId:1,artistId:2,artist:saved.artist,date:nextDate,duration:90,service:saved.service,continuationOfAppointmentId:77,status:'concluido'});
+    expect(result.id).toBe(88);expect(mock.createAppointment).toHaveBeenCalledWith(expect.objectContaining({continuationOfAppointmentId:77,date:nextDate,status:'agendado'}));
+    expect(mock.updateAppointment).not.toHaveBeenCalled();expect(original).toMatchObject({id:77,date:saved.date,status:'concluido'});
+  });
+  it('não aceita origem de outra empresa, cliente ou artista nem uma data anterior à origem',async()=>{
+    const input={clientId:1,artistId:2,artist:saved.artist,date:'2026-09-17 14:00:00',duration:60,service:saved.service,continuationOfAppointmentId:77};
+    for(const patch of [{studioId:9},{clientId:9},{artistId:9}]){mock.getAppointmentById.mockResolvedValue({...saved,...patch});await expect(appRouter.createCaller(ctx).appointments.create(input)).rejects.toMatchObject({code:'FORBIDDEN'});}
+    mock.getAppointmentById.mockResolvedValue(saved);await expect(appRouter.createCaller(ctx).appointments.create({...input,date:'2026-09-09 14:00:00'})).rejects.toMatchObject({code:'BAD_REQUEST'});
+    expect(mock.createAppointment).not.toHaveBeenCalled();expect(mock.updateAppointment).not.toHaveBeenCalled();
+  });
   it("salva região e lado opcionais sem inferir ou alterar outros dados", async () => {
     await appRouter.createCaller(ctx).appointments.create({ clientId: 1, artistId: 2, artist: saved.artist, date: saved.date, duration: 60, service: "Teste", bodyRegion: " Antebraço ", bodySide: "esquerdo" });
     expect(mock.createAppointment).toHaveBeenCalledWith(expect.objectContaining({ bodyRegion: "Antebraço", bodySide: "esquerdo", date: saved.date, duration: 60 }));

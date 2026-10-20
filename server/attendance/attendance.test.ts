@@ -17,6 +17,7 @@ describe('Operational attendance and post-care anchor',()=>{
   it('rejects a no-show after a check-in or session start',()=>{for(const action of ['present','start'] as const)expect(()=>transitionAttendance(transitionAttendance(emptyAttendance,action),'no_show')).toThrow();});
   it('does not finish a no-show without first correcting the presence',()=>{expect(()=>transitionAttendance(transitionAttendance(emptyAttendance,'no_show'),'finish')).toThrow();});
   it('repeated finishing is idempotent and a completed session cannot regress',()=>{const finished=transitionAttendance(emptyAttendance,'finish');expect(transitionAttendance(finished,'finish')).toBe(finished);expect(()=>transitionAttendance(finished,'start')).toThrow();});
+  it('can request another session after completion without reopening the performed session',()=>{const finished=transitionAttendance(emptyAttendance,'finish');expect(transitionAttendance(finished,'needs_more')).toEqual({...finished,needsMore:true});});
   it('normalizes the automatic tag without allowing a different capitalization to forge it',()=>{expect(isNoShowTag(' NÃO   COMPARECEU ')).toBe(true);expect(isNoShowTag('compareceu')).toBe(false);});
 });
 describe('Scheduling in the studio timezone',()=>{
