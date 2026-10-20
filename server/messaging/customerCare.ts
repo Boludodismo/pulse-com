@@ -1,8 +1,8 @@
 import { automaticReminderIdempotencyKey } from "./automaticReminders";
 import {randomBytes,createHash} from 'node:crypto';
-import {and,eq,gte,lte,isNull,desc,sql} from 'drizzle-orm';
+import {and,eq,gte,lte,isNull,desc,asc,sql} from 'drizzle-orm';
 import {getDb} from '../db';
-import {appointments,technicalProcedures,clients,artists,studios,whatsappIntegrations,messageAutomationSettings,integrationContacts,messageQueue} from '../../drizzle/schema';
+import {appointments,technicalProcedures,clients,artists,studios,whatsappIntegrations,messageAutomationSettings,integrationContacts,messageQueue,users} from '../../drizzle/schema';
 import {careRules,careEvents,careSessions} from '../../drizzle/customerCareSchema';
 import {careDueDate,renderCareMessage} from '../../shared/customerCare';
 import {firstName} from './messagePresentation';
@@ -13,12 +13,21 @@ export function careClock(now:Date,timezone:string) {
  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(now);
  const part=(key:string)=>parts.find(p=>p.type===key)?.value??'00';return{date:`${part('year')}-${part('month')}-${part('day')}`,time:`${part('hour')}:${part('minute')}`};
 }
+export function selectCareChannel(channels: {id:number;ownerRole:string|null;ownerArtistId:number|null}[],artistId:number|null) {
+ // Use this artist's production channel, otherwise the studio. Never another artist's channel.
+ return channels.find(c=>artistId!=null&&c.ownerRole==='collaborator'&&c.ownerArtistId===artistId)
+  ?? channels.find(c=>c.ownerRole!=='collaborator') ?? null;
+}
 export async function runCustomerCareCycle() {
  const db=await getDb();if(!db)return;
  const rules=await db.select().from(careRules).where(eq(careRules.enabled,1));
  for(const studioId of Array.from(new Set(rules.map(r=>r.studioId)))) {
   const studioRules=rules.filter(r=>r.studioId===studioId);
-  const integration=(await db.select().from(whatsappIntegrations).where(and(eq(whatsappIntegrations.studioId,studioId),eq(whatsappIntegrations.status,'ativo'),eq(whatsappIntegrations.isEnabled,1))).limit(1))[0];if(!integration)continue;
+  const channels=await db.select({id:whatsappIntegrations.id,ownerRole:users.role,ownerArtistId:users.artistId}).from(whatsappIntegrations)
+   .leftJoin(users,and(eq(users.id,whatsappIntegrations.productionActivatedByUserId),eq(users.studioId,studioId)))
+   .where(and(eq(whatsappIntegrations.studioId,studioId),eq(whatsappIntegrations.status,'ativo'),eq(whatsappIntegrations.isEnabled,1),eq(whatsappIntegrations.sandboxMode,0))).orderBy(asc(whatsappIntegrations.id));
+  if(!channels.length){console.info('[CustomerCare] Sem canal de produção disponível.',{studioId});continue;}
+  const result={queued:0,withoutChannel:0,withoutPhone:0,withoutConsent:0,failed:0};
   const settings=(await db.select().from(messageAutomationSettings).where(eq(messageAutomationSettings.studioId,studioId)).limit(1))[0];const timezone=settings?.timezone||'America/Sao_Paulo';
   const clock=careClock(new Date(),timezone);
   const studio=(await db.select().from(studios).where(eq(studios.id,studioId)).limit(1))[0];
@@ -44,17 +53,20 @@ export async function runCustomerCareCycle() {
    }
    // Start at 09:00 and recover missed cycles during daytime; do not send at night.
    if(clock.time<'09:00'||clock.time>='20:00')continue;
-   const due=await db.select().from(careEvents).where(and(eq(careEvents.studioId,studioId),eq(careEvents.ruleId,rule.id),eq(careEvents.status,'pending'),lte(careEvents.dueDate,clock.date),gte(careEvents.dueDate,rule.kind==='birthday'?clock.date:careDueDate(clock.date,-1,'days'))));
+   const due=await db.select().from(careEvents).where(and(eq(careEvents.studioId,studioId),eq(careEvents.ruleId,rule.id),eq(careEvents.status,'pending'),lte(careEvents.dueDate,clock.date),gte(careEvents.dueDate,rule.kind==='birthday'?clock.date:careDueDate(clock.date,-7,'days'))));
    for(const event of due)try{
-    const client=studioClients.find(c=>c.id===event.clientId);if(!client?.phone)continue;
-    if(!await ensureCareWhatsappConsent(studioId,integration.id,event.clientId))continue;
+    const client=studioClients.find(c=>c.id===event.clientId);if(!client?.phone){result.withoutPhone++;continue;}
+    const integration=selectCareChannel(channels,event.artistId);
+    if(!integration){result.withoutChannel++;continue;}
+    if(!await ensureCareWhatsappConsent(studioId,integration.id,event.clientId)){result.withoutConsent++;continue;}
     const feedbackUrl=`${origin.replace(/\/$/,'')}/feedback/${event.token}`;
     let outgoing=renderCareMessage(rule.body,{primeiro_nome:firstName(client.name),nome_cliente:firstName(client.name),nome_artista:studioArtists.find(a=>a.id===event.artistId)?.name||'nossa equipe',nome_estudio:studio?.name||'nosso estúdio',link_feedback:feedbackUrl});
     if(rule.kind==='session'&&!rule.body.includes('{link_feedback}'))outgoing+=`\nConte para a gente: ${feedbackUrl}`;
     const sent=await sendAndLog({studioId,integrationId:integration.id,recipientType:'client',recipientPhone:normalizeBrazilianPhone(client.phone),recipientName:client.name,clientId:event.clientId,appointmentId:event.appointmentId??undefined,message:outgoing,trigger:'customer_care',idempotencyKey:rule.kind==='birthday'?automaticReminderIdempotencyKey('birthday',integration.id,event.clientId,event.dueDate):`care:${event.occurrenceKey}`});
-    if(sent.success)await db.update(careEvents).set({status:'queued',message:outgoing,queueId:sent.messageId?Number(sent.messageId):null}).where(eq(careEvents.id,event.id));
-   }catch{console.warn('[CustomerCare] Acompanhamento não enfileirado.',{studioId,eventId:event.id});}
+    if(sent.success){await db.update(careEvents).set({status:'queued',message:outgoing,queueId:sent.messageId?Number(sent.messageId):null}).where(eq(careEvents.id,event.id));result.queued++;}else result.failed++;
+   }catch{result.failed++;console.warn('[CustomerCare] Acompanhamento não enfileirado.',{studioId,eventId:event.id});}
   }
+  if(Object.values(result).some(Boolean))console.info('[CustomerCare] Resultado do ciclo.',{studioId,...result});
  }
 }
 // A free-text WhatsApp reply is attached only when the latest outbound message
