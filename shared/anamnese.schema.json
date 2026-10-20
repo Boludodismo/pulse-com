@@ -570,6 +570,12 @@
           "placeholder": "Ex: 30 de março de 2026"
         },
         {
+          "key": "whatsapp_updates",
+          "type": "checkbox",
+          "label": "Quero receber pelo WhatsApp confirmações, lembretes, acompanhamento após o atendimento e mensagem de aniversário deste estúdio. Posso pedir para parar a qualquer momento. Esta escolha é opcional.",
+          "required": false
+        },
+        {
           "key": "consent_terms",
           "type": "checkbox",
           "label": "Autorizo a realização do procedimento e o registro fotográfico, para documentação e divulgação do profissional. Declaro ser de minha espontânea vontade a realização da tatuagem no local aqui descrito. Estou ciente de que o procedimento é de caráter permanente e das dificuldades de uma remoção. Tenho conhecimento sobre o processo de realização de uma tatuagem. As declarações acima são verdadeiras, não cabendo ao profissional a responsabilidade por informações omitidas nesta avaliação. Estou ciente de que o procedimento será realizado em condições segurança e higiene, com a utilização de instrumentos descartáveis. Me comprometo a seguir todos os cuidados necessários após o procedimento.",

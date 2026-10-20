@@ -1,4 +1,5 @@
 import { studioNoticePhone } from "../minorConsent/database";
+import {attendanceStudioNoticePhone} from '../attendance/service';
 import { invitationId, invitationDeliveryError } from "../minorConsent/invitationDelivery";
 import { isOutboundMessagingBlocked } from "./outboundSafety";
 import {clients} from '../../drizzle/schema';
@@ -324,7 +325,7 @@ export async function processPendingIntegrationJobs(limit = 10) {
         }
       } else if (!inventoryNoticeId) {
         if (payload.operationalRecipient === "studio") {
-          const phone = await studioNoticePhone(job.studioId, queueItem?.trigger);
+          const phone = queueItem?.trigger?.startsWith('attendance:') ? await attendanceStudioNoticePhone(job.studioId,queueItem.trigger) : await studioNoticePhone(job.studioId, queueItem?.trigger);
           if (!phone || normalizeBrazilianPhone(phone) !== normalizeBrazilianPhone(payload.recipientPhone))
             throw new PermanentDeliveryError("Aviso ao estúdio sem vínculo autorizado ou telefone divergente.");
         } else if (payload.recipientType === "artist") {

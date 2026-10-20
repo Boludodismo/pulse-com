@@ -8,6 +8,7 @@ import ImportedClientRecords from '@/components/ImportedClientRecords';
 import ImportedAnamnesisSummary from '@/components/ImportedAnamnesisSummary';
 import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { ClientCare } from "@/components/CustomerCarePanel";
+import {ClientAttendanceHistory} from '@/components/AttendancePanel';
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -641,6 +642,7 @@ export default function ClientProfile() {
 
       {/* Tabs */}
       <ClientCare clientId={clientId} />
+      {can('appointments')&&<ClientAttendanceHistory clientId={clientId}/>}
       <Tabs defaultValue={can("appointments")?"appointments":"gallery"} className="w-full">
         <TabsList className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] w-full h-auto bg-zinc-800 rounded-lg p-1 gap-1">
           {can("quotes") && <TabsTrigger value="quotes" className="min-w-0 whitespace-normal h-auto min-h-11 text-xs sm:text-sm py-2">Orçamentos</TabsTrigger>}

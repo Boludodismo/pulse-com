@@ -1,4 +1,5 @@
 import AppointmentMaterials from "./AppointmentMaterials";
+import {AttendancePanel,ClientAttendanceHistory} from './AttendancePanel';
 import { emptyAppointmentKit, type AppointmentKitDraft } from "@shared/appointmentKit";
 import {useArtistAccess} from '@/hooks/useArtistAccess';
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -25,6 +26,7 @@ interface EventModalProps {
   initialStartTime?: string;
   initialEndTime?: string;
   initialClientId?: number | null;
+  initialArtistId?: number | null;
   initialQuote?: {id:number;artistId:number;artistName:string;title:string;totalAmount:number};
   onSuccess?: () => void;
 }
@@ -37,6 +39,7 @@ export function EventModal({
   initialStartTime,
   initialEndTime,
   initialClientId,
+  initialArtistId,
   initialQuote,
   onSuccess,
 }: EventModalProps) {
@@ -67,6 +70,8 @@ export function EventModal({
   const [artist, setArtist] = useState<string>("");
   const [artistId, setArtistId] = useState<string>("");
   const [includeArtistCard, setIncludeArtistCard] = useState(false);
+  const [attendanceEnabled,setAttendanceEnabled]=useState(true);
+  const [attendanceRecipient,setAttendanceRecipient]=useState<'artist'|'studio'>('artist');
   const [notes, setNotes] = useState<string>("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -395,6 +400,8 @@ export function EventModal({
       const resolvedArtistId = (existingEvent as any).artistId ?? artists.find((item) => item.name === existingEvent.artist)?.id;
       setArtistId(resolvedArtistId ? String(resolvedArtistId) : "");
       setIncludeArtistCard((existingEvent as any).includeArtistCard === 1);
+      setAttendanceEnabled(existingEvent.attendanceEnabled!==0);
+      setAttendanceRecipient(existingEvent.attendanceRecipient==='studio'?'studio':'artist');
       setNotes(existingEvent.notes || "");
       setImagePreview(existingEvent.referenceImageUrl || null);
       // Propriedades financeiras (Bug 6: banco armazena em centavos → dividir por 100 ao exibir)
@@ -428,8 +435,9 @@ export function EventModal({
       if (initialClientId) {
         setClientId(initialClientId.toString());
       }
+      if(initialArtistId){setArtistId(String(initialArtistId));setArtist(artists.find(a=>a.id===initialArtistId)?.name||'');}
     }
-  }, [isOpen, eventId, existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, initialQuote, artists]);
+  }, [isOpen, eventId, existingEvent, initialDate, initialStartTime, initialEndTime, initialClientId, initialArtistId, initialQuote, artists]);
 
   const resetForm = () => {
     setSaveError(null);
@@ -447,6 +455,8 @@ export function EventModal({
     setArtist("");
     setArtistId("");
     setIncludeArtistCard(false);
+    setAttendanceEnabled(true);
+    setAttendanceRecipient('artist');
     setNotes("");
     setImageFile(null);
     setImagePreview(null);
@@ -651,6 +661,8 @@ export function EventModal({
       artist,
       artistId: artistId ? Number(artistId) : undefined,
       includeArtistCard,
+      attendanceEnabled:attendanceEnabled?1:0,
+      attendanceRecipient,
       duration,
       notes: notes || undefined,
       status: "agendado" as const,
@@ -688,6 +700,8 @@ export function EventModal({
         artist,
         artistId: artistId ? Number(artistId) : undefined,
         includeArtistCard,
+        attendanceEnabled:attendanceEnabled?1:0,
+        attendanceRecipient,
         duration,
         notes: notes || undefined,
         depositPaid,
@@ -764,7 +778,10 @@ export function EventModal({
           {/* ABA: INFORMAÇÕES */}
           <TabsContent value="info" className="flex-1 overflow-y-auto">
         <div className="space-y-4 pr-2">
+          {eventId&&<AttendancePanel appointmentId={eventId}/>}
+          <section className="rounded-lg border p-3 space-y-3"><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={attendanceEnabled} onChange={e=>setAttendanceEnabled(e.target.checked)}/><span>Acompanhar presença e sessão pelo WhatsApp</span></label>{attendanceEnabled&&<label className="block text-sm">Quem recebe os avisos de início e término?<select className="mt-1 w-full rounded border bg-background p-2" value={attendanceRecipient} onChange={e=>setAttendanceRecipient(e.target.value as 'artist'|'studio')}><option value="artist">Artista responsável</option><option value="studio">WhatsApp do estúdio</option></select><span className="mt-1 block text-xs text-muted-foreground">O artista recebe no telefone cadastrado. O canal do estúdio é usado quando ele não tem conexão própria. Para avisar o estúdio, cadastre o telefone nas configurações.</span></label>}</section>
           {/* Cliente */}
+          {clientId&&<ClientAttendanceHistory clientId={Number(clientId)} compact/>}
           <div>
             {requiresStudioSelection && (
               <div className="mb-3 space-y-1.5">

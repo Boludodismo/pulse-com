@@ -40,6 +40,7 @@ import RiskAlerts from "./pages/RiskAlerts";
 import Stock from "./pages/Stock";
 import Suppliers from "./pages/Suppliers";
 import ConfirmAppointment from "./pages/ConfirmAppointment";
+import Attendance from './pages/Attendance';
 import Artists from "./pages/Artists";
 import ResetPassword from "./pages/ResetPassword";
 import CollaboratorReports from "./pages/CollaboratorReports";
@@ -201,6 +202,7 @@ function Router() {
       {/* Rotas públicas sem layout */}
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/confirmar" component={ConfirmAppointment} />
+      <Route path="/atendimento/:token" component={Attendance} />
       <Route path="/anamnese/:token" component={PublicAnamnese} />
       <Route path="/autorizacao/:token" component={PublicMinorConsent} />
       <Route path="/anamnese/view/:id" component={AnamneseView} />

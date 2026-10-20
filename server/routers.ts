@@ -1,4 +1,5 @@
 import { minorConsentRouter } from "./minorConsent/router";
+import { attendanceRouter } from './attendance/router';
 import { artistDashboardRouter } from "./artistDashboard";
 import { calendarSyncRouter } from "./calendarSync/router";
 import { agendaMovesRouter } from "./agendaMoves";
@@ -79,6 +80,7 @@ async function recordAppointmentWhatsappConsent(input: { studioId: number; clien
 }
 
 export const appRouter = router({
+  attendance: attendanceRouter,
   minorConsent: minorConsentRouter,
   commitments: commitmentsRouter,
   agendaMoves: agendaMovesRouter,
@@ -578,6 +580,8 @@ export const appRouter = router({
         artist: z.string().min(1),
         artistId: z.number().optional(), // FK opcional para artists.id
         includeArtistCard: z.boolean().optional(),
+        attendanceEnabled: z.number().int().min(0).max(1).optional(),
+        attendanceRecipient: z.enum(['artist','studio']).optional(),
         status: z.enum(["agendado", "confirmado", "concluido", "cancelado", "reagendado"]).optional(),
         notes: z.string().optional(),
         referenceImageUrl: z.string().optional(),
@@ -827,6 +831,8 @@ export const appRouter = router({
           artist: z.string().min(1).optional(),
           artistId: z.number().optional(), // FK opcional para artists.id
           includeArtistCard: z.boolean().optional(),
+          attendanceEnabled: z.number().int().min(0).max(1).optional(),
+          attendanceRecipient: z.enum(['artist','studio']).optional(),
           status: z.enum(["agendado", "confirmado", "concluido", "cancelado", "reagendado"]).optional(),
           confirmationStatus: z.enum(["pendente", "confirmado", "nao_confirmado", "atraso", "chegada_antecipada"]).optional(),
           notes: z.string().optional(),

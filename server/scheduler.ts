@@ -3,6 +3,7 @@ import { runCommitmentCycle } from "./commitments/service";
 import { firstName } from "./messaging/messagePresentation";
 import {runProcurementCycle} from './messaging/studioRelations';
 import { runCustomerCareCycle } from "./messaging/customerCare";
+import { runAttendanceCycle } from './attendance/service';
 /**
  * scheduler.ts
  * Cron jobs automáticos para lembretes de aniversário, agendamentos e WhatsApp.
@@ -358,7 +359,8 @@ export async function runLegacyNotificationCycle() {
   // A agenda e os aniversários não passam pela configuração de reenvio. Cada
   // origem cria jobs próprios, idempotentes e escopados, que o Heartbeat entrega
   // posteriormente pela integração ativa do respectivo estúdio.
-  await runCustomerCareCycle();
+  try { await runAttendanceCycle(); } catch { console.error('[Attendance] Ciclo indisponível.'); }
+  try { await runCustomerCareCycle(); } catch { console.error('[CustomerCare] Ciclo indisponível.'); }
   try { await runCalendarSyncCycle(); } catch { console.error("[CalendarSync] Ciclo indisponível."); }
   try { await runCommitmentCycle(); } catch (error) { console.error("[Commitments] Falha no ciclo", error instanceof Error ? error.name : "erro"); }
   await runProcurementCycle();

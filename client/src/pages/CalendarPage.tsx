@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { EventModal } from "@/components/EventModal";
 import { RecentClientActions } from "@/components/RecentClientActions";
+import {AttendancePanel} from '@/components/AttendancePanel';
 
 // Paleta de cores estilo Apple Calendar
 const COLOR_PALETTE = [
@@ -620,7 +621,7 @@ export default function CalendarPage() {
                         {attention && <AlertCircle className="h-2.5 w-2.5 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
                         {apt.clientName || "Cliente"}
                       </div>
-                      {height > 30 && <div className="text-white/80 text-[10px] truncate mt-1">{apt.service || ""}</div>}
+                      {height > 30 && <div className="text-white/80 text-[10px] truncate mt-1">{apt.attendanceStatus==='no_show'?'Não compareceu':apt.sessionStatus==='in_progress'?'Em andamento · '+(apt.service||''):apt.service || ""}</div>}
                     </div>
                   );
                 })}
@@ -780,7 +781,7 @@ export default function CalendarPage() {
                       {attention && <AlertCircle className="h-3 w-3 shrink-0 text-amber-100" aria-label="Agendamento requer atenção" />}
                       {apt.clientName || "Cliente"}
                     </div>
-                    {height > 36 && <div className="text-white/80 text-[11px] truncate mt-1">{apt.service || ""}</div>}
+                    {height > 36 && <div className="text-white/80 text-[11px] truncate mt-1">{apt.attendanceStatus==='no_show'?'Não compareceu':apt.sessionStatus==='in_progress'?'Em andamento · '+(apt.service||''):apt.service || ""}</div>}
                     {height > 52 && <div className="text-white/70 text-[10px] mt-1">{aptDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</div>}
                   </div>
                 );
@@ -884,6 +885,7 @@ export default function CalendarPage() {
             <DialogDescription className="text-gray-400 text-xs">{calName}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            <AttendancePanel appointmentId={selectedApt.id}/>
             {/* Cliente */}
             <div className="flex items-start gap-3">
               <User className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />

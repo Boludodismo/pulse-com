@@ -91,6 +91,10 @@ export async function saveWhatsappConsent(input: {
       Number(saved[0].has_whatsapp_opt_in) !== (input.enabled ? 1 : 0)
     )
       throw new Error("A autorização não foi salva no cliente selecionado.");
+    await c.execute(
+      'INSERT INTO client_whatsapp_permissions(studio_id,client_id,normalized_phone,enabled,source,recorded_at) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE normalized_phone=VALUES(normalized_phone),enabled=VALUES(enabled),source=VALUES(source),recorded_at=VALUES(recorded_at)',
+      [input.studioId,input.clientId,phone,input.enabled?1:0,input.source,timestamp]
+    );
     await c.commit();
     return { ok: true };
   } catch (error) {

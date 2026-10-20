@@ -8,6 +8,8 @@ const templateRoot = path.resolve(__dirname);
 
 export default defineConfig({
   root: templateRoot,
+  // Match the React JSX runtime used by the production Vite build.
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       "@": path.resolve(templateRoot, "client", "src"),

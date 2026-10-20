@@ -62,6 +62,8 @@ export const appointments = mysqlTable("appointments", {
 	artist: varchar({ length: 255 }).notNull(),
 	artistId: int(), // FK opcional para artists.id — permite joins confiáveis por artista
 	includeArtistCard: tinyint().default(0).notNull(),
+	attendanceEnabled: tinyint().default(1).notNull(),
+	attendanceRecipient: varchar({length:10}).default('artist').notNull(),
 	status: mysqlEnum(['agendado','confirmado','concluido','cancelado','reagendado']).default('agendado').notNull(),
 	confirmationStatus: mysqlEnum(['pendente','confirmado','nao_confirmado','atraso','chegada_antecipada']).default('pendente'),
 	notes: text(),

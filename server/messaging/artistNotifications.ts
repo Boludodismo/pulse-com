@@ -18,7 +18,7 @@ import { selectArtistNotificationRecipient } from "../appointmentActions";
 export function isCoreArtistNotice(trigger?: string | null) {
   return (
     !!trigger &&
-    ([
+    (/^attendance:(start|end):\d+:[a-f0-9]{64}$/.test(trigger) || [
       "artist_appointment_created",
       "artist_appointment_updated",
       "artist_customer_reply",
@@ -105,7 +105,7 @@ export async function artistNotificationRoute(
   const route = selectArtistNoticeChannel(channels, artistId);
   if (!route) return null;
   // The approved studio fallback is automatic for scheduling and customer replies.
-  if (!(route.viaStudio && isCoreArtistNotice(trigger))) {
+  if (!trigger.startsWith('attendance:') && !(route.viaStudio && isCoreArtistNotice(trigger))) {
     const [preference] = await db
       .select()
       .from(artistNotificationSettings)
@@ -131,7 +131,7 @@ export async function queueArtistOperationalNotice(input: {
   clientId?: number;
   appointmentId?: number;
   trigger: string;
-  message: string;
+  message: string | (()=>Promise<string>);
   idempotencyKey: string;
 }) {
   try {
@@ -141,9 +141,11 @@ export async function queueArtistOperationalNotice(input: {
       input.trigger
     );
     if (!route) return false;
+    const message=typeof input.message==='function'?await input.message():input.message;
     const { sendAndLog } = await import("./service");
     const result = await sendAndLog({
       ...input,
+      message,
       integrationId: route.integrationId,
       recipientType: "artist",
       recipientPhone: route.phone,
@@ -170,6 +172,11 @@ export async function artistNoticeContextError(input: {
 }) {
   const db = await getDb();
   if (!db || !input.clientId) return "Aviso sem cliente identificado.";
+  if(input.trigger.startsWith('attendance:')) {
+    const {attendanceNoticeContext}=await import('../attendance/service');
+    const a=await attendanceNoticeContext(input.studioId,input.trigger);
+    return a && a.artistId===input.artistId && a.clientId===input.clientId && a.id===input.appointmentId && a.attendanceRecipient==='artist' ? null : 'O atendimento ou destinatário deste aviso mudou.';
+  }
   const quoteId = /^quote_artist_action:(\d+):/.exec(input.trigger)?.[1];
   if (quoteId) {
     const [quote] = await db

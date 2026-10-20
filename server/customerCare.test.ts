@@ -25,8 +25,8 @@ describe('Relacionamento e pós-venda',()=>{
   let deleted:any;let inserted:any;const chain:any={from:()=>chain,where:()=>chain,limit:async()=>[{id:50,studioId:10}]};
   const db:any={select:()=>chain,delete:()=>({where:async(c:any)=>{deleted=new MySqlDialect().sqlToQuery(c);}}),insert:()=>({values:async(v:any)=>{inserted=v;}}),transaction:async(fn:any)=>fn(db)};
   mocks.getDb.mockResolvedValue(db);
-  await customerCareRouter.createCaller(ctx).saveTags({clientId:50,labels:[' Realismo ','orçamento enviado','orçamento respondido']});
-  expect(deleted.sql).toContain('not in');expect(deleted.params).toEqual([10,50,'orçamento enviado','orçamento respondido']);
+  await customerCareRouter.createCaller(ctx).saveTags({clientId:50,labels:[' Realismo ','orçamento enviado','orçamento respondido',' NÃO   COMPARECEU ']});
+  expect(deleted.sql).toContain('not in');expect(deleted.params).toEqual([10,50,'orçamento enviado','orçamento respondido','Não compareceu']);
   expect(inserted).toEqual([{studioId:10,clientId:50,label:'realismo'}]);
  });
  it('registra feedback uma vez sem alterar consentimento nem agendamento',async()=>{const writes=database([[{id:5,status:'queued',dueDate:new Date().toISOString().slice(0,10),feedback:null}]]);await customerCareRouter.createCaller({} as any).feedback({token:'a'.repeat(64),text:'Gostei do atendimento'});expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({feedback:'Gostei do atendimento',status:'responded',readAt:null});});

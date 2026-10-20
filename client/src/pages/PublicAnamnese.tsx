@@ -263,7 +263,7 @@ export default function PublicAnamnese() {
     setIsSubmitting(true);
     submitMutation.mutate({
       token,
-      payload: formData,
+      payload: {...formData,whatsapp_updates:formData.whatsapp_updates===true},
       // null (sem submissão anterior) deve virar undefined para não acionar o modo edição
       submissionId: data?.isEditing && data.existingSubmissionId != null ? data.existingSubmissionId : undefined,
     });

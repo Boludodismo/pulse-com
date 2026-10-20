@@ -45,6 +45,7 @@ import { receiveBotConversaWebhook } from "../messaging/secureWebhook";
 import { runStartupMigrations } from "./migrations";
 import { ensureSessionCockpitSchema } from "./sessionCockpitSchema";
 import { storageGet, verifyStorageAccessToken, checkS3Storage } from "../storage";
+import {ensureAttendanceSchema} from '../attendance/schema';
 
 async function startServer() {
   // Keep schema synchronized on controlled standalone deployments.
@@ -71,12 +72,14 @@ async function startServer() {
   await ensureContactImportSchema();
   await ensureNativeBotSchema();
   await ensureMinorConsentSchema();
+  await ensureAttendanceSchema();
 
   if (process.env.STORAGE_STARTUP_CHECK === "true") {
     await checkS3Storage();
     console.log("[Storage] S3 write/read/delete check passed");
   }
   const app = express();
+  app.use('/atendimento',(_req,res,next)=>{res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Robots-Tag','noindex, nofollow');next();});
   registerGoogleCallback(app);
   app.set("trust proxy", 1);
   app.disable("x-powered-by");

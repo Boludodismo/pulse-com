@@ -1,5 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { clientPatchFromAnamnese } from "../shared/clientPersonal";
+import {formWhatsappChoice,recordFormWhatsappPermission} from './attendance/consent';
+import {appointmentAttendance} from '../drizzle/attendanceSchema';
 import { parseAnamneseExpiry } from "./anamneseTime";
 import { anamneseExpiryForDatabase } from "./anamneseTime";
 import { appointmentInstant, appointmentsOverlap } from "../shared/appointmentTime";
@@ -406,6 +408,8 @@ export async function listAppointments(studioId?: number | null, artistId?: numb
       artist: appointments.artist,
       artistId: appointments.artistId,
       includeArtistCard: appointments.includeArtistCard,
+      attendanceEnabled: appointments.attendanceEnabled,
+      attendanceRecipient: appointments.attendanceRecipient,
       status: appointments.status,
       confirmationStatus: appointments.confirmationStatus,
       notes: appointments.notes,
@@ -423,9 +427,13 @@ export async function listAppointments(studioId?: number | null, artistId?: numb
       updatedAt: appointments.updatedAt,
       studioId: appointments.studioId,
       clientName: clients.name,
+      attendanceStatus:appointmentAttendance.attendance,
+      sessionStatus:appointmentAttendance.session,
+      needsMoreSessions:appointmentAttendance.needsMore,
     })
     .from(appointments)
-    .leftJoin(clients, eq(appointments.clientId, clients.id));
+    .leftJoin(clients, eq(appointments.clientId, clients.id))
+    .leftJoin(appointmentAttendance,and(eq(appointmentAttendance.appointmentId,appointments.id),eq(appointmentAttendance.studioId,appointments.studioId),eq(appointmentAttendance.clientId,appointments.clientId)));
 
   if (studioId != null && artistId != null) {
     return await baseQuery
@@ -495,6 +503,15 @@ export async function createAppointment(data: InsertAppointment) {
 export async function updateAppointment(id: number, data: Partial<InsertAppointment>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  if(data.clientId!==undefined||data.artistId!==undefined||data.artist!==undefined) {
+    return db.transaction(async tx=>{
+      const [before]=await tx.select().from(appointments).where(eq(appointments.id,id)).limit(1).for('update');
+      const changed=before && ((data.clientId!==undefined&&data.clientId!==before.clientId)||(data.artistId!==undefined&&data.artistId!==before.artistId)||(data.artist!==undefined&&data.artist!==before.artist));
+      if(changed){const [record]=await tx.select().from(appointmentAttendance).where(eq(appointmentAttendance.appointmentId,id)).limit(1);if(record)throw new TRPCError({code:'BAD_REQUEST',message:'Este agendamento já tem presença ou ocorrência registrada. Crie outro agendamento para mudar o cliente ou artista e preservar o histórico.'});}
+      await tx.update(appointments).set(data).where(eq(appointments.id,id));
+      return {success:true};
+    });
+  }
   await db.update(appointments).set(data).where(eq(appointments.id, id));
   return { success: true };
 }
@@ -3356,6 +3373,7 @@ export async function savePublicAnamnese(token: string, payload: Record<string, 
       submissionId = result[0].insertId;
     }
     if (Object.keys(patch).length) await tx.update(clients).set(patch).where(eq(clients.id, request.clientId));
+    await recordFormWhatsappPermission(tx,{studioId:client.studioId,clientId:client.id,phone:Object.prototype.hasOwnProperty.call(patch,'phone')?patch.phone??null:client.phone,choice:formWhatsappChoice(payload),requestId:request.id});
     await tx.update(anamneseRequests).set({
       completedAt: request.completedAt || toDateStr(new Date()), statusRequest: "preenchida",
     }).where(eq(anamneseRequests.id, request.id));
