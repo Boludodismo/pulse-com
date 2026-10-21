@@ -21,7 +21,14 @@ describe('leitura do feedback no CRM',()=>{
  });
  it('oferece abertura direta da resposta no aviso',()=>{
   const html=renderToStaticMarkup(createElement(CareNotice));
-  expect(html).toContain('Ver resposta do cliente.');expect(html).toContain('type="button"');expect(html).toContain('1 nova(s)');
+  expect(html).toContain('Ver mensagem enviada e resposta recebida.');expect(html).toContain('type="button"');expect(html).toContain('1 nova(s)');
+ });
+ it('abre somente o evento selecionado, mesmo havendo outros feedbacks do mesmo cliente',()=>{
+  state.data=[response,{...response,id:11,appointmentId:4,message:'Gostou do atendimento?',feedback:'Outro retorno'},{...response,id:12,clientName:'João',feedback:'Resposta do João'}];
+  const html=renderToStaticMarkup(createElement(CareHistory,{responsesOnly:true,eventId:9}));
+  expect(html).toContain('Cicatrizou bem.');expect(html).not.toContain('Outro retorno');expect(html).not.toContain('Resposta do João');
+  const notices=renderToStaticMarkup(createElement(CareNotice));
+  expect(notices.match(/type="button"/g)).toHaveLength(3);expect(notices).toContain('Maria');expect(notices).toContain('João');expect(notices).toContain('Atendimento #4');
  });
  it('distingue carregamento de ausência de respostas',()=>{
   state.data=[];state.isLoading=true;
