@@ -98,7 +98,7 @@ export const contactImportRouter=router({
    return {batchId:Number(batch.id),studioId:ctx.studioId,studioName:String(state.studio.name),total:plan.length,newClients:plan.filter(g=>g.action==='criar').length,matched:plan.filter(g=>g.action==='completar').length,eligible:plan.filter(g=>g.eligible).length,withReview:plan.filter(g=>g.review.length).length,integrationReady:state.integrations.length===1,plan};
   }finally{await c.end()}
  }),
- importBatch:tenantProcedure.input(z.object({batchId:z.number().int().positive(),offset:z.number().int().min(0)})).mutation(async({ctx,input})=>{
+ importBatch:tenantProcedure.input(z.object({batchId:z.number().int().positive(),offset:z.number().int().min(0),recordWhatsAppConsent:z.boolean().default(true)})).mutation(async({ctx,input})=>{
   manager(ctx);const c=await connect();
   try{
    await c.beginTransaction();
@@ -128,21 +128,33 @@ export const contactImportRouter=router({
      const found=await rows(c,'SELECT id FROM care_tags WHERE studio_id=? AND client_id=? AND BINARY label=?',[ctx.studioId,clientId,tag]);
      if(!found.length)await c.execute('INSERT INTO care_tags(studio_id,client_id,label) VALUES(?,?,?)',[ctx.studioId,clientId,tag]);
     }
-    let permission='fora_do_criterio';const reason=permissionReason(group);
+    const isNew=plan.action==='criar';
+    const source=`cadastro_cliente:operacional:usuario_${ctx.user.id}`;
+    let permission='fora_do_criterio';
+    const reason=input.recordWhatsAppConsent?(isNew?source:permissionReason(group)):null;
+    if(isNew&&!input.recordWhatsAppConsent){
+     let phone='';try{phone=normalizeBrazilianPhone(group.basic.phone||'')}catch{}
+     await c.execute('INSERT INTO client_whatsapp_permissions(studio_id,client_id,normalized_phone,enabled,source,recorded_at) VALUES(?,?,?,0,?,NOW())',[ctx.studioId,clientId,phone,source]);
+     permission='notificacoes_desativadas';
+    }
     if(reason){
      permission='pendente';
      const [client]=await rows(c,'SELECT * FROM clients WHERE id=? AND studioId=?',[clientId,ctx.studioId]);
      let phone='';try{phone=normalizeBrazilianPhone(client.phone||'')}catch{}
      const siblings=bundle.groups.filter(g=>g.key!==group.key&&phoneAlias(g.basic.phone)&&phoneAlias(g.basic.phone)===phoneAlias(group.basic.phone));
      const links=await rows(c,'SELECT * FROM integration_contacts WHERE studio_id=? AND (client_id=? OR normalized_phone=?)',[ctx.studioId,clientId,phone]);
-     if(links.some(l=>l.opted_out_at))permission='recusa_existente_preservada';
+     const prior=await rows(c,'SELECT enabled FROM client_whatsapp_permissions WHERE studio_id=? AND client_id=?',[ctx.studioId,clientId]);
+     if(prior.some(p=>p.enabled===0)||links.some(l=>l.opted_out_at))permission='recusa_existente_preservada';
      else if(plan.block||siblings.length)permission='identidade_ou_telefone_a_revisar';
      else if(!phone)permission='telefone_a_validar';
-     else if(state.integrations.length!==1)permission='integracao_a_validar';
-     else if(links.some(l=>l.client_id!==clientId||l.normalized_phone!==phone||l.integration_id!==state.integrations[0].id))permission='vinculo_existente_a_revisar';
+     else if(links.some(l=>l.client_id!==clientId||l.normalized_phone!==phone||(state.integrations.length===1&&l.integration_id!==state.integrations[0].id)))permission='vinculo_existente_a_revisar';
      else{
+      if(isNew)await c.execute('INSERT INTO client_whatsapp_permissions(studio_id,client_id,normalized_phone,enabled,source,recorded_at) VALUES(?,?,?,1,?,NOW())',[ctx.studioId,clientId,phone,source]);
+      if(state.integrations.length!==1)permission=isNew?'preferencia_salva_sem_integracao':'integracao_a_validar';
+      else{
       await c.execute('INSERT INTO integration_contacts(studio_id,integration_id,client_id,normalized_phone,has_whatsapp_opt_in,opt_in_at,opt_in_source) VALUES(?,?,?,?,1,NOW(),?) ON DUPLICATE KEY UPDATE has_whatsapp_opt_in=1,opt_in_at=COALESCE(opt_in_at,NOW()),opt_in_source=COALESCE(opt_in_source,VALUES(opt_in_source))',[ctx.studioId,state.integrations[0].id,clientId,phone,reason]);
       permission='autorizado_pelo_administrador';
+      }
      }
     }
     const result={groupKey:group.key,clientId,action:plan.action,permission,review:plan.review};

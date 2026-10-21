@@ -1,3 +1,4 @@
+import WhatsappConsentField from "@/components/WhatsappConsentField";
 import PreparationMaterials from "@/components/PreparationMaterials";
 import PreparationPalette from "@/components/PreparationPalette";
 import {
@@ -299,6 +300,7 @@ function NewProcedureForm({
     setSourceId(0);
   }, [form.clientId]);
   const [clientSearch, setClientSearch] = useState("");
+  const [newClientConsent, setNewClientConsent] = useState(true);
   const [newClientOpen, setNewClientOpen] = useState(false);
   const [newClientForm, setNewClientForm] = useState({
     name: "",
@@ -437,6 +439,8 @@ function NewProcedureForm({
       setClientSearch("");
       setNewClientOpen(false);
       setNewClientForm({ name: "", phone: "", email: "", instagram: "" });
+      setNewClientConsent(true);
+      for (const warning of client.warnings || []) toast.warning(warning);
       toast.success("Cliente cadastrado e selecionado para esta sessão.");
     },
     onError: error =>
@@ -1502,7 +1506,7 @@ function NewProcedureForm({
           if (!createClientMutation.isPending) setNewClientOpen(open);
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Novo cliente</DialogTitle>
           </DialogHeader>
@@ -1569,6 +1573,7 @@ function NewProcedureForm({
               />
             </div>
           </div>
+          <WhatsappConsentField checked={newClientConsent} onChange={setNewClientConsent} disabled={createClientMutation.isPending} />
           <DialogFooter className="gap-2">
             <Button
               type="button"
@@ -1589,6 +1594,7 @@ function NewProcedureForm({
                   return;
                 }
                 createClientMutation.mutate({
+                  recordWhatsAppConsent: newClientConsent,
                   name: newClientForm.name.trim(),
                   phone: newClientForm.phone.trim() || undefined,
                   email: newClientForm.email.trim(),

@@ -1,3 +1,4 @@
+import WhatsappConsentField from "@/components/WhatsappConsentField";
 import { formatAppointmentDate, formatAppointmentDateTime } from "@shared/appointmentTime";
 import AppointmentMaterials from "./AppointmentMaterials";
 import {AttendancePanel,ClientAttendanceHistory} from './AttendancePanel';
@@ -263,6 +264,7 @@ export function EventModal({
   const uploadImageMutation = trpc.appointments.uploadImage.useMutation();
 
   // Mutation de cadastro rápido de cliente
+  const [quickClientConsent, setQuickClientConsent] = useState(true);
   const createClientMutation = trpc.clients.create.useMutation({
     onSuccess: async (newClient: any) => {
       await utils.clients.list.invalidate();
@@ -274,6 +276,8 @@ export function EventModal({
       setQuickClientName("");
       setQuickClientPhone("");
       setQuickClientEmail("");
+      setQuickClientConsent(true);
+      for (const warning of newClient.warnings || []) toast.warning(warning);
       setClientSearch("");
       toast.success(`Cliente "${newClient?.name}" cadastrado e selecionado!`);
       notifySync("cliente");
@@ -291,6 +295,7 @@ export function EventModal({
       return;
     }
     createClientMutation.mutate({
+      recordWhatsAppConsent: quickClientConsent,
       name: quickClientName.trim(),
       phone: quickClientPhone.trim() || undefined,
       email: quickClientEmail.trim() || undefined,
@@ -877,6 +882,7 @@ export function EventModal({
                     className="h-8 text-sm"
                   />
                 </div>
+                <WhatsappConsentField checked={quickClientConsent} onChange={setQuickClientConsent} disabled={createClientMutation.isPending} />
                 <div className="flex gap-2 pt-1">
                   <Button
                     type="button"

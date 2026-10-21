@@ -1,3 +1,4 @@
+import { recordClientRegistrationPermission } from "../attendance/consent";
 /**
  * Router de Importação e Exportação de Contatos
  * Suporta CSV e Excel (.xlsx)
@@ -292,6 +293,7 @@ export const contactsRouter = router({
       format: z.enum(["csv", "xlsx"]),
       content: z.string(),
       skipDuplicates: z.boolean().default(true),
+      recordWhatsAppConsent: z.boolean().default(true),
     }))
     .mutation(async ({ ctx, input }) => {
       let rows: Record<string, string>[];
@@ -320,7 +322,7 @@ export const contactsRouter = router({
       const existingPhones = new Set(existingClients.map((c) => c.phone?.replace(/\D/g, "") ?? "").filter(Boolean));
       const existingEmails = new Set(existingClients.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean));
 
-      const results = { imported: 0, skipped: 0, errors: 0, errorDetails: [] as string[] };
+      const results = { notificationWarnings: 0, imported: 0, skipped: 0, errors: 0, errorDetails: [] as string[] };
 
       for (const row of rows) {
         if (!row.nome?.trim()) {
@@ -340,7 +342,7 @@ export const contactsRouter = router({
 
         try {
           const birthDate = normalizeBirthDate(row.data_nascimento ?? "");
-          await db.createClient({
+          const created = await db.createClient({
             studioId,
             artistId: ctx.user.artistId ?? null,
             name: row.nome.trim(),
@@ -362,6 +364,11 @@ export const contactsRouter = router({
             country: row.pais?.trim() || "Brasil",
           } as any);
           results.imported++;
+          // Failure must never turn a successful insert into a retry/duplicate.
+          try {
+            const recorded=await recordClientRegistrationPermission({studioId,clientId:created.id,enabled:input.recordWhatsAppConsent,actorId:ctx.user.id});
+            if(input.recordWhatsAppConsent && !recorded)results.notificationWarnings++;
+          } catch {results.notificationWarnings++;}
           if (input.skipDuplicates) {
             const phone = row.telefone?.replace(/\D/g, "") ?? "";
             const email = row.email?.toLowerCase().trim() ?? "";

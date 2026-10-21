@@ -1,3 +1,4 @@
+import WhatsappConsentField from "@/components/WhatsappConsentField";
 import { useState, useRef } from "react";
 import CompleteContactImport from '@/components/CompleteContactImport';
 import ConfirmImportedSessionDates from '@/components/ConfirmImportedSessionDates';
@@ -69,6 +70,7 @@ export default function ContactsImportExport() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importFormat, setImportFormat] = useState<"csv" | "xlsx">("csv");
   const [importContent, setImportContent] = useState<string>("");
+  const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(true);
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   const [previewData, setPreviewData] = useState<{
     totalRows: number;
@@ -104,6 +106,7 @@ export default function ContactsImportExport() {
   const importMutation = trpc.contacts.importContacts.useMutation({
     onSuccess: (data) => {
       setImportResult(data);
+      if(data.notificationWarnings)toast.warning(`${data.notificationWarnings} contatos importados sem habilitar notificações. Revise telefone e autorização na central de mensagens.`);
       toast.success(`${data.imported} contatos importados com sucesso!`);
     },
     onError: (e) => toast.error(`Erro na importação: ${e.message}`),
@@ -173,7 +176,7 @@ export default function ContactsImportExport() {
 
   function handleImport() {
     if (!importContent) return;
-    importMutation.mutate({ format: importFormat, content: importContent, skipDuplicates });
+    importMutation.mutate({ format: importFormat, content: importContent, skipDuplicates, recordWhatsAppConsent });
   }
 
   function handleReset() {
@@ -376,6 +379,7 @@ export default function ContactsImportExport() {
                     </div>
                   )}
 
+                  {importFile && <WhatsappConsentField checked={recordWhatsAppConsent} onChange={setRecordWhatsAppConsent} disabled={importMutation.isPending} />}
                   {/* Opções */}
                   {importFile && (
                     <div className="flex items-center gap-2 text-sm">

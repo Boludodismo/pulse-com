@@ -261,7 +261,7 @@ export default function Quotes() {
   const [quickClientOpen, setQuickClientOpen] = useState(false);
   const [quickClientName, setQuickClientName] = useState("");
   const [quickClientPhone, setQuickClientPhone] = useState("");
-  const [quickClientConsent, setQuickClientConsent] = useState(false);
+  const [quickClientConsent, setQuickClientConsent] = useState(true);
   const quickClientMutation = trpc.clients.create.useMutation();
   const [artistId, setArtistId] = useState(user?.artistId || 0);
   const [editor, setEditor] = useState<QuoteEditorData>(() => buildEmptyQuoteEditorData());
@@ -322,7 +322,7 @@ export default function Quotes() {
       });
       utils.clients.list.setData({}, previous => [saved, ...(previous || []).filter(c => c.id !== saved.id)]);
       setClientId(saved.id); setClientFilter(""); setSnapshot(null);
-      setQuickClientOpen(false); setQuickClientName(""); setQuickClientPhone(""); setQuickClientConsent(false);
+      setQuickClientOpen(false); setQuickClientName(""); setQuickClientPhone(""); setQuickClientConsent(true);
       toast.success("Cliente criado e selecionado no orçamento.");
       for (const warning of saved.warnings || []) toast.warning(warning);
       void utils.clients.list.invalidate();
@@ -719,8 +719,8 @@ export default function Quotes() {
                 <form onSubmit={saveQuickClient} className="space-y-4">
                   <div className="space-y-2"><Label htmlFor="quick-client-name">Nome *</Label><Input id="quick-client-name" autoFocus required maxLength={255} value={quickClientName} disabled={quickClientMutation.isPending} onChange={e => setQuickClientName(e.target.value)} placeholder="Primeiro nome ou nome completo" /></div>
                   <div className="space-y-2"><Label htmlFor="quick-client-phone">Telefone / WhatsApp *</Label><Input id="quick-client-phone" type="tel" required value={quickClientPhone} disabled={quickClientMutation.isPending} onChange={e => setQuickClientPhone(e.target.value)} placeholder="(31) 99999-9999" /></div>
-                  {duplicateClient && <div className="rounded-lg border p-3 space-y-2"><p className="text-sm">Este telefone já está cadastrado para {duplicateClient.name}.</p><Button type="button" variant="outline" disabled={quickClientMutation.isPending} onClick={() => { setClientId(duplicateClient.id); setClientFilter(""); setSnapshot(null); setQuickClientConsent(false); setQuickClientOpen(false); }}>Selecionar cliente existente</Button></div>}
-                  {!duplicateClient && (user?.role === "admin" || user?.role === "superadmin") && <WhatsappConsentField checked={quickClientConsent} onChange={setQuickClientConsent} disabled={quickClientMutation.isPending} />}
+                  {duplicateClient && <div className="rounded-lg border p-3 space-y-2"><p className="text-sm">Este telefone já está cadastrado para {duplicateClient.name}.</p><Button type="button" variant="outline" disabled={quickClientMutation.isPending} onClick={() => { setClientId(duplicateClient.id); setClientFilter(""); setSnapshot(null); setQuickClientConsent(true); setQuickClientOpen(false); }}>Selecionar cliente existente</Button></div>}
+                  {!duplicateClient && <WhatsappConsentField checked={quickClientConsent} onChange={setQuickClientConsent} disabled={quickClientMutation.isPending} />}
                   <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="outline" disabled={quickClientMutation.isPending} onClick={() => setQuickClientOpen(false)}>Cancelar</Button><Button type="submit" disabled={quickClientMutation.isPending || Boolean(duplicateClient)}>{quickClientMutation.isPending ? "Salvando…" : "Salvar e selecionar"}</Button></div>
                 </form>
               </DialogContent>

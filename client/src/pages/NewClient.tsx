@@ -32,7 +32,7 @@ function parseDateToISO(masked: string): string {
 
 export default function NewClient() {
   const { user } = useAuth();
-  const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(false);
+  const [recordWhatsAppConsent, setRecordWhatsAppConsent] = useState(true);
   const { notifySync } = useSyncToast();
   const [, setLocation] = useLocation();
   const [formData, setFormData] = useState({
@@ -317,8 +317,7 @@ export default function NewClient() {
               </div>
             </div>
 
-            {(user?.role === "admin" || user?.role === "superadmin") &&
-              <WhatsappConsentField checked={recordWhatsAppConsent} onChange={setRecordWhatsAppConsent} disabled={createClient.isPending} />}
+            <WhatsappConsentField checked={recordWhatsAppConsent} onChange={setRecordWhatsAppConsent} disabled={createClient.isPending} />
 
             <Separator />
 

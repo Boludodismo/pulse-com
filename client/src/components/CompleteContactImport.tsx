@@ -1,3 +1,4 @@
+import WhatsappConsentField from "@/components/WhatsappConsentField";
 import {useState} from 'react';
 import {trpc} from '@/lib/trpc';
 import {Button} from '@/components/ui/button';
@@ -7,12 +8,15 @@ export default function CompleteContactImport(){
  const prepare=trpc.contactImport.prepare.useMutation();
  const apply=trpc.contactImport.importBatch.useMutation();
  const utils=trpc.useUtils();
+ const [recordWhatsAppConsent,setRecordWhatsAppConsent]=useState(true);
  const [plan,setPlan]=useState<any>(null),[progress,setProgress]=useState(0),[running,setRunning]=useState(false),[results,setResults]=useState<any[]>([]);
  async function load(file?:File){if(!file)return;setPlan(null);setResults([]);setProgress(0);try{setPlan(await prepare.mutateAsync({content:await file.text()}))}catch(e){toast.error((e as Error).message)}}
- async function run(){if(!plan)return;setRunning(true);try{let offset=progress;while(offset<plan.total){const page=await apply.mutateAsync({batchId:plan.batchId,offset});setResults(old=>[...old,...page.results]);offset=page.nextOffset;setProgress(offset);if(page.done)break;}toast.success('Importação completa. Consulte as permissões e pendências no relatório.');await utils.clients.list.invalidate();}catch(e){toast.error((e as Error).message)}finally{setRunning(false)}}
+ async function run(){if(!plan)return;setRunning(true);try{let offset=progress;while(offset<plan.total){const page=await apply.mutateAsync({batchId:plan.batchId,offset,recordWhatsAppConsent});setResults(old=>[...old,...page.results]);offset=page.nextOffset;setProgress(offset);if(page.done)break;}toast.success('Importação completa. Consulte as permissões e pendências no relatório.');await utils.clients.list.invalidate();}catch(e){toast.error((e as Error).message)}finally{setRunning(false)}}
  async function download(){if(!plan)return;const data=await utils.contactImport.report.fetch({batchId:plan.batchId});const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`importacao_tatuei_${plan.batchId}_resultado.json`;a.click();URL.revokeObjectURL(url)}
  return <Card className="mb-6"><CardHeader><CardTitle>Importação completa de fichas e contatos</CardTitle></CardHeader><CardContent className="space-y-4">
   <p className="text-sm text-muted-foreground">Preserva cada formulário, os campos originais e as etiquetas. Completa apenas campos vazios dos cadastros correspondentes. A autorização administrativa de WhatsApp se aplica às fichas de anamnese e à etiqueta Nome_Confirmado; recusas anteriores e identidades duvidosas ficam pendentes.</p>
+  <WhatsappConsentField checked={recordWhatsAppConsent} onChange={setRecordWhatsAppConsent} disabled={running||progress>0}/>
+  <p className="text-xs text-muted-foreground">A opção vale para os novos cadastros. Cadastros existentes seguem os critérios do relatório e recusas anteriores são preservadas.</p>
   <label className="block text-sm font-medium" htmlFor="complete-contact-file">Arquivo completo de contatos (.json)</label>
   <input id="complete-contact-file" type="file" accept=".json,application/json" disabled={running||prepare.isPending} onChange={e=>void load(e.target.files?.[0])}/>
   {prepare.isPending&&<p>Verificando arquivo e conta de destino…</p>}

@@ -3,7 +3,7 @@ import {getTableName} from 'drizzle-orm';
 import {MySqlDialect} from 'drizzle-orm/mysql-core';
 const mock=vi.hoisted(()=>({getDb:vi.fn()}));
 vi.mock('../db',()=>({getDb:mock.getDb}));
-import {ensureCareWhatsappConsent,recordFormWhatsappPermission} from './consent';
+import {ensureCareWhatsappConsent,recordFormWhatsappPermission,recordClientRegistrationPermission} from './consent';
 let data:Record<string,any[]>,writes:any[],conditions:any[],tx:any;
 beforeEach(()=>{
   vi.clearAllMocks();writes=[];conditions=[];
@@ -30,5 +30,43 @@ describe('Eligibility for birthday and post-sale delivery',()=>{
     data.client_whatsapp_permissions=[{enabled:1,normalizedPhone:'+5531988887777'}];expect(await ensureCareWhatsappConsent(2,19,3)).toBe(false);
     data.client_whatsapp_permissions=[{enabled:0,normalizedPhone:'+5531999998888'}];expect(await ensureCareWhatsappConsent(2,19,3)).toBe(false);
     data.client_whatsapp_permissions=[{enabled:1,normalizedPhone:'+5531999998888'}];data.integration_contacts=[{hasWhatsappOptIn:1,normalizedPhone:'+5531999998888',optedOutAt:'2026-10-19 12:00:00'}];expect(await ensureCareWhatsappConsent(2,19,3)).toBe(false);expect(writes).toEqual([]);
+  });
+});
+
+describe('New-client operational preference',()=>{
+  const input={studioId:2,clientId:3,enabled:true,actorId:8};
+  it('records the administrative source and scoped client without a channel',async()=>{
+    data.whatsapp_integrations=[];
+    expect(await recordClientRegistrationPermission(input)).toBe(true);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].value).toMatchObject({studioId:2,clientId:3,enabled:1,source:'cadastro_cliente:operacional:usuario_8'});
+    expect(conditions.find(c=>c.table==='clients').params).toEqual([3,2,0]);
+  });
+  it('materializes permission in an active integration',async()=>{
+    await recordClientRegistrationPermission(input);
+    expect(writes[1].value).toMatchObject({integrationId:19,clientId:3,hasWhatsappOptIn:1});
+  });
+  it('keeps explicit opt-outs blocked',async()=>{
+    data.integration_contacts=[{id:5,optedOutAt:'2026-10-19 12:00:00'}];
+    await recordClientRegistrationPermission(input);
+    expect(writes).toHaveLength(0);
+    expect(await ensureCareWhatsappConsent(2,19,3)).toBe(false);
+  });
+  it('preserves an earlier durable refusal',async()=>{
+    data.client_whatsapp_permissions=[{enabled:0,normalizedPhone:'+5531999998888'}];
+    expect(await recordClientRegistrationPermission(input)).toBe(false);
+    expect(writes).toEqual([]);
+  });
+  it('saves unchecked choice even without a phone',async()=>{
+    data.clients=[{phone:null}];
+    expect(await recordClientRegistrationPermission({...input,enabled:false})).toBe(true);
+    expect(writes[0].value.enabled).toBe(0);
+  });
+  it('never grants permission to an invalid phone or nonexistent scoped client',async()=>{
+    data.clients=[{phone:'123'}];
+    expect(await recordClientRegistrationPermission(input)).toBe(false);
+    data.clients=[];
+    await expect(recordClientRegistrationPermission(input)).rejects.toThrow('Client not found');
+    expect(writes).toEqual([]);
   });
 });

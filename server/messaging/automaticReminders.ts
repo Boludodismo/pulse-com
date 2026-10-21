@@ -2,7 +2,7 @@ import {ensureCareWhatsappConsent} from '../attendance/consent';
 import { careRules } from "../../drizzle/customerCareSchema";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { appointments, artists, artistNotificationSettings, clients, integrationContacts, integrationJobs, messageAutomationSettings, appointmentReminders, studios, whatsappIntegrations } from "../../drizzle/schema";
+import { appointments, artists, artistNotificationSettings, clients, integrationJobs, messageAutomationSettings, appointmentReminders, studios, whatsappIntegrations } from "../../drizzle/schema";
 import { hashIntegrationPayload } from "./crypto";
 import { dispatchTemplateMessage, sendAndLog } from "./service";
 import { interpolateTemplate } from "./provider";
@@ -115,16 +115,7 @@ export function buildClientWhatsAppLink(phone: string, message: string) {
 }
 
 async function hasActiveConsent(studioId: number, integrationId: number, clientId: number) {
-  const db = await getDb();
-  if (!db) return false;
-  const consent = (await db.select({ id: integrationContacts.id }).from(integrationContacts).where(and(
-    eq(integrationContacts.studioId, studioId),
-    eq(integrationContacts.integrationId, integrationId),
-    eq(integrationContacts.clientId, clientId),
-    eq(integrationContacts.hasWhatsappOptIn, 1),
-    sql`${integrationContacts.optedOutAt} IS NULL`,
-  )).limit(1))[0];
-  return Boolean(consent);
+  return ensureCareWhatsappConsent(studioId, integrationId, clientId);
 }
 
 async function alreadyQueued(integrationId: number, idempotencyKey: string) {
