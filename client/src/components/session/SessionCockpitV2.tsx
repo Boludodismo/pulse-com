@@ -3,6 +3,7 @@ import { materialSymbol, materialSymbolLabels, recordedColor, recipeDisplayColor
 import SessionMaterialIcon from "./SessionMaterialIcon";
 import SessionMaterialHint from "./SessionMaterialHint";
 import SessionAppearancePanel from "./SessionAppearancePanel";
+import SessionGlassWindow from "./SessionGlassWindow";
 import { useSessionAppearance } from "./useSessionAppearance";
 import { imageSamplePoint, samplePixelRegion, averageSamplePixels, imageSampleMarker, type SampleSource } from "@shared/sessionColorSampling";
 import { visualLayerStack } from "@shared/sessionVisualLayers";
@@ -579,7 +580,7 @@ return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opac
 <input ref={finalInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void finalPhoto(f);e.currentTarget.value=""}}/>
 <footer className="cockpit-bottom"><button type="button" aria-label={timerLabel} disabled={props.finished||props.timerBusy} onClick={()=>void toggleTimer()}>{props.running?<Pause size={18}/>:<Play size={18}/>}<span className="button-label">{props.running?"PAUSAR":props.started?"RETOMAR":"INICIAR"}</span></button><button type="button" aria-label="Buscar materiais no estoque" onClick={()=>setSheet("materials")}><Package size={18}/><span className="button-label">ESTOQUE</span></button><button type="button" aria-label="Adicionar foto da sessão" onClick={()=>finalInput.current?.click()}><Camera size={18}/><span className="button-label">FOTO</span></button><button type="button" aria-label="Revisar conclusão da sessão" className="finish" onClick={()=>setSheet("finish")}><Square size={17}/><span className="button-label">CONCLUIR</span></button></footer>
 
-{sheet==="appearance"&&<SessionAppearancePanel value={appearance.value} onChange={appearance.change} artistName={appearance.artistName} canSave={appearance.canSave} busy={appearance.busy} dirty={appearance.dirty} onSave={()=>void appearance.save()} onReload={()=>void appearance.reload()} onReset={appearance.reset} onClose={()=>setSheet(null)}/>}
+{sheet==="appearance"&&<SessionGlassWindow title="Preferências visuais" onClose={()=>setSheet(null)}><SessionAppearancePanel value={appearance.value} onChange={appearance.change} artistName={appearance.artistName} canSave={appearance.canSave} busy={appearance.busy} dirty={appearance.dirty} onSave={()=>void appearance.save()} onReload={()=>void appearance.reload()} onReset={appearance.reset} onClose={()=>setSheet(null)}/></SessionGlassWindow>}
 {sheet==="layerAdd"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Nova camada visual</h3><p>Adicione uma imagem independente. O arquivo será exibido como enviado, sem filtros. Você controla a ordem, a opacidade e a visibilidade.</p>
 <div className="sheet-grid">{[
   {type:"contrast",name:"Contraste",desc:"Versão preparada para leitura de contraste"},
