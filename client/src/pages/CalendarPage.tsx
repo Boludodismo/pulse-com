@@ -877,7 +877,7 @@ export default function CalendarPage() {
 
     return (
       <Dialog open={detailsOpen && Boolean(selectedApt)} onOpenChange={(open) => { if (!open) dismissDetails(); }}>
-        <DialogContent className="flex w-[calc(100vw-1rem)] max-w-md min-w-0 max-h-[calc(100dvh-1rem)] flex-col gap-3 overflow-hidden border-white/10 bg-[#2c2c2e] p-3 text-gray-100 sm:max-h-[90dvh] sm:p-6">
+        <DialogContent className="!flex w-[calc(100vw-1rem)] max-w-md min-w-0 max-h-[calc(100dvh-1rem)] flex-col gap-3 overflow-hidden border-white/10 bg-[#2c2c2e] p-3 text-gray-100 sm:max-h-[90dvh] sm:p-6">
           <DialogHeader className="min-w-0 shrink-0 pr-6">
             <DialogTitle className="flex min-w-0 items-center gap-2 break-words text-left leading-snug text-gray-100">
               <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: calColor }} />
@@ -948,7 +948,7 @@ export default function CalendarPage() {
               <div className="whitespace-pre-wrap break-words rounded-lg bg-white/5 p-3 text-sm text-gray-300 [overflow-wrap:anywhere]">{selectedApt.notes}</div>
             )}
           </div>
-          <DialogFooter className="min-w-0 shrink-0 flex-col-reverse gap-2 border-t border-white/10 pt-3 sm:flex-row sm:flex-wrap sm:justify-end">
+          <DialogFooter className="min-w-0 max-h-[40dvh] shrink-0 flex-col-reverse gap-2 overflow-y-auto border-t border-white/10 pt-3 sm:flex-row sm:flex-wrap sm:justify-end">
             {hasPod && (
               <Button size="sm" variant="outline"
                 className="h-auto min-h-9 w-full whitespace-normal break-words border-violet-500/50 text-xs text-violet-300 hover:bg-violet-500/10 sm:w-auto"
@@ -1194,7 +1194,7 @@ export default function CalendarPage() {
         open={detailsOpen && Boolean(alertUnderReview) && !selectedApt}
         onOpenChange={(open) => { if (!open) dismissDetails(); }}
       >
-        <DialogContent className="flex w-[calc(100vw-1rem)] max-w-md min-w-0 max-h-[calc(100dvh-1rem)] flex-col gap-3 overflow-hidden border-white/10 bg-[#2c2c2e] p-4 text-gray-100 sm:max-h-[90dvh] sm:p-6">
+        <DialogContent className="!flex w-[calc(100vw-1rem)] max-w-md min-w-0 max-h-[calc(100dvh-1rem)] flex-col gap-3 overflow-hidden border-white/10 bg-[#2c2c2e] p-4 text-gray-100 sm:max-h-[90dvh] sm:p-6">
           <DialogHeader className="min-w-0 shrink-0 pr-6">
             <DialogTitle className="break-words text-left leading-snug">Notificação de cliente</DialogTitle>
             <DialogDescription className="break-words text-left text-gray-300">
@@ -1204,7 +1204,7 @@ export default function CalendarPage() {
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain break-words py-2 [overflow-wrap:anywhere]">
             Fechar a janela não marca o aviso como visualizado.
           </div>
-          <DialogFooter className="min-w-0 shrink-0 flex-col-reverse gap-2 border-t border-white/10 pt-3 sm:flex-row">
+          <DialogFooter className="min-w-0 max-h-[40dvh] shrink-0 flex-col-reverse gap-2 overflow-y-auto border-t border-white/10 pt-3 sm:flex-row">
             <Button variant="ghost" className="h-auto min-h-9 w-full whitespace-normal sm:w-auto" onClick={dismissDetails}>Fechar sem confirmar</Button>
             <Button className="h-auto min-h-9 w-full whitespace-normal bg-green-600 text-white hover:bg-green-700 sm:w-auto"
               disabled={markActionAlertViewed.isPending} onClick={confirmAlertViewed}>
