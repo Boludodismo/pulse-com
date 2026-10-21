@@ -98,8 +98,8 @@ export function RecentClientActions({
               `Agendamento: ${when}`,
               previousResponse,
               appointment
-                ? "Abrir agendamento e marcar aviso como visualizado"
-                : "Agendamento indisponível. Marcar aviso como visualizado",
+                ? "Abrir agendamento; confirmar a leitura pelo botão OK"
+                : "Agendamento indisponível; confirmar a leitura pelo botão OK",
             ]
               .filter(Boolean)
               .join("\n");
@@ -118,18 +118,18 @@ export function RecentClientActions({
                     className="mt-0.5 h-3.5 w-3.5 shrink-0"
                     aria-hidden="true"
                   />
-                  <span className="min-w-0 break-words">
+                  <span className="min-w-0 break-words [overflow-wrap:anywhere]">
                     {firstName} · {label}
                   </span>
                 </span>
-                <span className="w-full truncate text-gray-200">
+                <span className="w-full break-words text-gray-200 [overflow-wrap:anywhere]">
                   Artista: {artist}
                 </span>
-                <span className="tabular-nums text-gray-200">
+                <span className="w-full break-words tabular-nums text-gray-200 [overflow-wrap:anywhere]">
                   Agendamento: {when}
                 </span>
                 {previousResponse && (
-                  <span className="text-gray-300">{previousResponse}</span>
+                  <span className="w-full break-words text-gray-300 [overflow-wrap:anywhere]">{previousResponse}</span>
                 )}
               </button>
             );
