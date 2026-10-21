@@ -309,3 +309,44 @@
   .cockpit-lab .reference-sampler-card{top:64px;}
   .cockpit-lab .appearance-sheet fieldset{grid-template-columns:1fr;gap:8px;}
 }
+
+
+/* Universal session glass UI: same visual language on iOS, Android and desktop. */
+.cockpit-lab .session-glass-window{
+  position:absolute;z-index:55;left:clamp(8px,calc((100% - 740px)/2),100%);top:calc(var(--cockpit-header-height,76px) + 8px);
+  transform:translate(var(--glass-x,0px),var(--glass-y,0px));
+  width:min(740px,calc(100% - 16px));height:min(720px,calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - 20px));
+  max-width:calc(100% - 16px);min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;
+  color:#f4f4f5;background:rgba(24,24,27,.73);border:1px solid rgba(255,255,255,.23);border-radius:22px;
+  box-shadow:inset 0 1px rgba(255,255,255,.18),0 22px 60px rgba(0,0,0,.52);
+  -webkit-backdrop-filter:blur(28px) saturate(135%);backdrop-filter:blur(28px) saturate(135%);
+  transition:box-shadow .2s cubic-bezier(.25,1,.5,1),border-color .2s ease;
+}
+.cockpit-lab .session-glass-window.is-dragging{box-shadow:0 28px 80px #000b;border-color:#ffffff66}
+.cockpit-lab .session-glass-header{display:flex;align-items:center;gap:8px;flex:0 0 auto;min-height:58px;padding:8px 12px;border-bottom:1px solid #ffffff20}
+.cockpit-lab .session-glass-grip{display:flex;flex:1;min-width:0;align-items:center;gap:10px;text-align:left;cursor:grab;color:#f4f4f5;touch-action:none}
+.cockpit-lab .session-glass-grip:active{cursor:grabbing}
+.cockpit-lab .session-glass-handle{width:30px;height:5px;border-radius:10px;background:#ffffff70;flex:none}
+.cockpit-lab .session-glass-title{font-size:clamp(14px,3vw,18px);font-weight:650;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.cockpit-lab .session-glass-controls{display:flex;flex:none;gap:6px}
+.cockpit-lab .session-glass-controls button{display:grid;place-items:center;min-width:38px;min-height:38px;border:1px solid #ffffff2b;border-radius:12px;background:#ffffff16;color:#fff}
+.cockpit-lab .session-glass-scroll{flex:1;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;touch-action:pan-y;padding:14px;-webkit-overflow-scrolling:touch}
+.cockpit-lab .session-glass-window .appearance-sheet{position:static;inset:auto;transform:none;width:100%;max-width:none;max-height:none;overflow:visible;padding:0;background:transparent;border:0;box-shadow:none}
+.cockpit-lab .session-glass-window .appearance-sheet>.close{display:none}
+.cockpit-lab .session-glass-window .appearance-sheet h3{display:none}
+.cockpit-lab .session-glass-window .appearance-sheet fieldset{min-width:0;border:1px solid #ffffff38;border-radius:16px;padding:14px}
+.cockpit-lab .session-glass-window .appearance-sheet label{overflow-wrap:anywhere}
+.cockpit-lab .session-glass-window .appearance-sheet input{max-width:100%;min-width:0}
+.cockpit-lab .session-glass-window :is(p,button,small,legend,label,output,span){overflow-wrap:anywhere;word-break:normal}
+.cockpit-lab .session-glass-window .sheet-actions{display:flex;flex-wrap:wrap}
+.cockpit-lab .session-glass-window .sheet-actions button{flex:1 1 150px;white-space:normal;height:auto;min-height:44px}
+.cockpit-lab .session-glass-window.is-minimized{top:auto;left:auto;right:8px;bottom:calc(var(--cockpit-footer-height,76px) + 8px);width:min(300px,calc(100% - 16px));height:auto;border-radius:18px;transform:none}
+.cockpit-lab .session-glass-window.is-minimized .session-glass-header{min-height:48px}
+.cockpit-lab .session-glass-window.is-maximized{left:8px;top:calc(var(--cockpit-header-height,76px) + 4px);width:calc(100% - 16px);max-width:none;height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - 8px);transform:none}
+@media(max-width:620px){
+ .cockpit-lab .session-glass-window{left:8px;top:calc(var(--cockpit-header-height,76px) + 6px);height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - 16px);border-radius:20px}
+ .cockpit-lab .session-glass-scroll{padding:12px}
+ .cockpit-lab .session-glass-window .appearance-sheet fieldset{grid-template-columns:minmax(0,1fr)}
+ .cockpit-lab .session-glass-window.is-minimized{top:auto}
+}
+@media(prefers-reduced-motion:reduce){.cockpit-lab .session-glass-window{transition:none}}
