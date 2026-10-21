@@ -92,6 +92,8 @@ export default function CalendarPage() {
   // Modal de detalhes do agendamento
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedApt, setSelectedApt] = useState<any>(null);
+  // A ação do cliente permanece não visualizada até confirmação explícita.
+  const [alertUnderReview, setAlertUnderReview] = useState<{ id: number; appointmentId: number } | null>(null);
 
   // EventModal (criar/editar agendamento)
   const [eventModalOpen, setEventModalOpen] = useState(false);
@@ -166,6 +168,26 @@ export default function CalendarPage() {
     onSuccess: () => refetchActionAlerts(),
     onError: (error) => toast.error(error.message),
   });
+
+  const confirmAlertViewed = () => {
+    if (!alertUnderReview || markActionAlertViewed.isPending) return;
+    markActionAlertViewed.mutate(
+      { alertId: alertUnderReview.id },
+      {
+        onSuccess: () => {
+          setDetailsOpen(false);
+          setAlertUnderReview(null);
+          setSelectedApt(null);
+          toast.success("Aviso marcado como visualizado.");
+        },
+      },
+    );
+  };
+
+  const dismissDetails = () => {
+    setDetailsOpen(false);
+    setAlertUnderReview(null);
+  };
 
   // Handlers de Drag & Drop
   const handleDragStart = (e: React.DragEvent, apt: any) => {
@@ -462,6 +484,7 @@ export default function CalendarPage() {
   };
 
   const openDetails = (apt: any) => {
+    setAlertUnderReview(null);
     setSelectedApt(apt);
     setDetailsOpen(true);
   };
@@ -840,18 +863,36 @@ export default function CalendarPage() {
     const calColor = selectedApt.calendarId
       ? (calendars as any[]).find((c) => c.id === selectedApt.calendarId)?.color
       : AGENDA_VIRTUAL_COLOR;
+    const reviewedAction = alertUnderReview
+      ? actionAlerts.find((alert) => alert.id === alertUnderReview.id)?.action
+      : null;
+    const reviewedLabel = reviewedAction
+      ? ({
+          confirmed: "Confirmou presença",
+          early: "Avisou adiantamento",
+          late: "Avisou atraso",
+          reschedule_requested: "Solicitou remarcação",
+        } as Record<string, string>)[reviewedAction] || "Nova ação do cliente"
+      : null;
 
     return (
-      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="bg-[#2c2c2e] border-white/10 text-gray-100 max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-gray-100 flex items-center gap-2">
+      <Dialog open={detailsOpen && Boolean(selectedApt)} onOpenChange={(open) => { if (!open) dismissDetails(); }}>
+        <DialogContent className="!flex w-[calc(100vw-1rem)] max-w-md min-w-0 max-h-[calc(100dvh-1rem)] flex-col gap-3 overflow-hidden border-white/10 bg-[#2c2c2e] p-3 text-gray-100 sm:max-h-[90dvh] sm:p-6">
+          <DialogHeader className="min-w-0 shrink-0 pr-6">
+            <DialogTitle className="flex min-w-0 items-center gap-2 break-words text-left leading-snug text-gray-100">
               <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: calColor }} />
               Detalhes do Agendamento
             </DialogTitle>
-            <DialogDescription className="text-gray-400 text-xs">{calName}</DialogDescription>
+            <DialogDescription className="break-words text-left text-xs text-gray-400">
+              {alertUnderReview ? "Confira os dados. Só o botão OK registra a leitura da notificação." : calName}
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overscroll-contain break-words py-2 pr-1 [overflow-wrap:anywhere]">
+            {alertUnderReview && (
+              <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 p-3 text-sm text-blue-100" role="status">
+                Ação do cliente: <strong>{reviewedLabel || "Nova ação do cliente"}</strong>
+              </div>
+            )}
             <AttendancePanel appointmentId={selectedApt.id}/>
             {/* Cliente */}
             <div className="flex items-start gap-3">
@@ -875,7 +916,7 @@ export default function CalendarPage() {
               </div>
             </div>
             {/* Serviço / Artista */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex items-start gap-2">
                 <FileText className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
                 <div>
@@ -904,29 +945,35 @@ export default function CalendarPage() {
             </div>
             {/* Observações */}
             {selectedApt.notes && (
-              <div className="bg-white/5 rounded-lg p-3 text-sm text-gray-300">{selectedApt.notes}</div>
+              <div className="whitespace-pre-wrap break-words rounded-lg bg-white/5 p-3 text-sm text-gray-300 [overflow-wrap:anywhere]">{selectedApt.notes}</div>
             )}
           </div>
-          <DialogFooter className="flex gap-2 flex-wrap">
+          <DialogFooter className="min-w-0 max-h-[40dvh] shrink-0 flex-col-reverse gap-2 overflow-y-auto border-t border-white/10 pt-3 sm:flex-row sm:flex-wrap sm:justify-end">
             {hasPod && (
               <Button size="sm" variant="outline"
-                className="border-violet-500/50 text-violet-300 hover:bg-violet-500/10 text-xs"
+                className="h-auto min-h-9 w-full whitespace-normal break-words border-violet-500/50 text-xs text-violet-300 hover:bg-violet-500/10 sm:w-auto"
                 onClick={() => { setDetailsOpen(false); navigate(`/procedures/${podLinkedMap![selectedApt.id]}`); }}>
                 <Stethoscope className="h-3.5 w-3.5 mr-1" />
                 Abrir POD
               </Button>
             )}
             <Button size="sm" variant="outline"
-              className="border-white/20 text-gray-300 hover:bg-white/10 text-xs"
+              className="h-auto min-h-9 w-full whitespace-normal break-words border-white/20 text-xs text-gray-300 hover:bg-white/10 sm:w-auto"
               onClick={() => { setDetailsOpen(false); navigate(`/clients/${selectedApt.clientId}`); }}>
               <ExternalLink className="h-3.5 w-3.5 mr-1" />
               Ver Cliente
             </Button>
-            <Button size="sm" onClick={() => { setDetailsOpen(false); openEditApt(selectedApt); }}>Editar agendamento</Button>
-            <Button size="sm" variant="ghost" className="text-gray-400 text-xs ml-auto"
-              onClick={() => setDetailsOpen(false)}>
-              Fechar
+            <Button size="sm" className="h-auto min-h-9 w-full whitespace-normal break-words sm:w-auto" onClick={() => { dismissDetails(); openEditApt(selectedApt); }}>Editar agendamento</Button>
+            <Button size="sm" variant="ghost" className="h-auto min-h-9 w-full whitespace-normal break-words text-xs text-gray-300 sm:w-auto"
+              onClick={dismissDetails}>
+              {alertUnderReview ? "Fechar sem confirmar" : "Fechar"}
             </Button>
+            {alertUnderReview && (
+              <Button size="sm" className="h-auto min-h-9 w-full whitespace-normal break-words bg-green-600 text-white hover:bg-green-700 sm:w-auto"
+                disabled={markActionAlertViewed.isPending} onClick={confirmAlertViewed}>
+                {markActionAlertViewed.isPending ? "Confirmando..." : "OK, visualizado"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1123,10 +1170,10 @@ export default function CalendarPage() {
           alerts={actionAlerts}
           appointments={appointments}
           onSelect={(alertId, appointmentId) => {
-            markActionAlertViewed.mutate({ alertId });
             const appointment = appointments.find((item) => item.id === appointmentId);
-            if (appointment) { setSelectedApt(appointment); setDetailsOpen(true); }
-            else toast.info("O agendamento deste aviso não está disponível na sua agenda.");
+            setAlertUnderReview({ id: alertId, appointmentId });
+            setSelectedApt(appointment || null);
+            setDetailsOpen(true);
           }}
         />
 
@@ -1141,6 +1188,31 @@ export default function CalendarPage() {
 
       {/* Modal de detalhes */}
       {renderDetailsModal()}
+
+      {/* Mesmo sem acesso ao agendamento, o artista pode ler e reconhecer o aviso. */}
+      <Dialog
+        open={detailsOpen && Boolean(alertUnderReview) && !selectedApt}
+        onOpenChange={(open) => { if (!open) dismissDetails(); }}
+      >
+        <DialogContent className="!flex w-[calc(100vw-1rem)] max-w-md min-w-0 max-h-[calc(100dvh-1rem)] flex-col gap-3 overflow-hidden border-white/10 bg-[#2c2c2e] p-4 text-gray-100 sm:max-h-[90dvh] sm:p-6">
+          <DialogHeader className="min-w-0 shrink-0 pr-6">
+            <DialogTitle className="break-words text-left leading-snug">Notificação de cliente</DialogTitle>
+            <DialogDescription className="break-words text-left text-gray-300">
+              O agendamento associado não está disponível na sua agenda. Você pode confirmar a leitura do aviso sem alterar o agendamento.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain break-words py-2 [overflow-wrap:anywhere]">
+            Fechar a janela não marca o aviso como visualizado.
+          </div>
+          <DialogFooter className="min-w-0 max-h-[40dvh] shrink-0 flex-col-reverse gap-2 overflow-y-auto border-t border-white/10 pt-3 sm:flex-row">
+            <Button variant="ghost" className="h-auto min-h-9 w-full whitespace-normal sm:w-auto" onClick={dismissDetails}>Fechar sem confirmar</Button>
+            <Button className="h-auto min-h-9 w-full whitespace-normal bg-green-600 text-white hover:bg-green-700 sm:w-auto"
+              disabled={markActionAlertViewed.isPending} onClick={confirmAlertViewed}>
+              {markActionAlertViewed.isPending ? "Confirmando..." : "OK, visualizado"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* EventModal: criar/editar agendamento */}
       <EventModal
