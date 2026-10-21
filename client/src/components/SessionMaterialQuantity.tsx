@@ -29,6 +29,10 @@ export default function SessionMaterialQuantity({material,value,onChange,disable
     <label className="block text-xs">{ink ? mode==='base'?`Quantidade (${material.unit})`:mode==='drops'?'Quantidade de gotas':'Quantidade de batoques cheios' : cup?'Quantidade de unidades':`Quantidade (${material.unit})`}
       <input className={control} aria-label={`Quantidade de ${material.name}`} type="number" min={(ink&&mode!=='base')||counted?'1':'0.001'} step={(ink&&mode!=='base')||counted?'1':'0.001'} inputMode={(ink&&mode!=='base')||counted?'numeric':'decimal'} disabled={disabled} value={ink&&mode!=='base'?count:value} onChange={e=>ink?update(e.target.value):onChange(counted && !Number.isInteger(Number(e.target.value))?'':e.target.value)}/>
     </label>
+    {ink && mode==='drops' && <label className="block text-xs">Deslizar quantidade de gotas
+      <input aria-label={`Deslizar gotas de ${material.name}`} className="w-full min-h-11" type="range" min="1" max={Math.max(100,Number(count)||1)} step="1" value={Number(count)||1} disabled={disabled} onChange={e=>update(e.target.value)}/>
+      <output>{count || 0} gotas</output>
+    </label>}
     {ink && <p className="text-xs text-muted-foreground">{value ? `${planning ? "Quantidade prevista" : "Consumo"}: ${Number(value).toLocaleString('pt-BR')} ${material.unit}.` : 'Informe uma quantidade inteira e cadastre o material em ml ou gotas.'} Volume estimado com {dropsPerMl} gotas/ml; ajuste à calibração do produto ou informe diretamente em ml. O batoque vazio é registrado separadamente.</p>}
   </div>;
 }

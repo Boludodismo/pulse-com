@@ -351,7 +351,7 @@
 }
 @media(prefers-reduced-motion:reduce){.cockpit-lab .session-glass-window{transition:none}}
 
-/* Every session submenu uses the same shell; the existing tool bodies keep
+/* Floating session submenus share this shell; the existing tool bodies keep
    their controls and handlers, with one independent vertical scroll area. */
 .cockpit-lab .session-glass-window{
   width:min(calc(740px * var(--tools-size,1)),calc(100% - 16px));
@@ -426,3 +426,46 @@
 /* Reserve the minimized tray instead of laying it over tool actions. */
 .cockpit-lab .session-glass-window{max-height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - var(--cockpit-tray-height,0px) - 24px);}
 .cockpit-lab .session-glass-window.is-maximized{height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - var(--cockpit-tray-height,0px) - 16px);max-height:none;}
+
+/* Consumption stays anchored beside the material rail; other tools remain movable. */
+.cockpit-lab .session-timer-control{min-height:44px;cursor:pointer;flex-shrink:0;touch-action:manipulation;}
+.cockpit-lab .session-timer-control:disabled{cursor:default;opacity:.65;}
+.cockpit-lab .session-timer-control:focus-visible{outline:2px solid #fb923c;outline-offset:3px;}
+.cockpit-lab .session-material-drawer{
+ position:absolute;z-index:50;left:80px;top:calc(var(--cockpit-header-height,76px) + 8px);
+ bottom:calc(var(--cockpit-footer-height,76px) + var(--cockpit-tray-height,0px) + 12px);
+ width:min(360px,calc(100% - 88px));min-width:0;
+ display:flex;flex-direction:column;overflow:hidden;border:1px solid #ffffff38;border-radius:18px;
+ background:rgba(24,24,27,var(--tools-alpha,.84));backdrop-filter:blur(28px) saturate(135%);-webkit-backdrop-filter:blur(28px) saturate(135%);
+ box-shadow:inset 0 1px #ffffff25,0 16px 38px #0007;animation:sessionDrawerIn .18s ease-out;
+}
+.cockpit-lab .session-material-drawer>header{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #ffffff26;flex-shrink:0;}
+.cockpit-lab .session-material-drawer h2{margin:0;min-width:0;flex:1;font-size:15px;line-height:1.4;overflow-wrap:anywhere;}
+.cockpit-lab .session-material-drawer>header button{display:grid;place-items:center;flex-shrink:0;min-width:44px;min-height:44px;border-radius:12px;background:#ffffff12;}
+.cockpit-lab .session-material-drawer-scroll{overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;touch-action:pan-y;min-height:0;flex:1;padding:12px;}
+.cockpit-lab .session-material-drawer .cockpit-sheet{position:static;inset:auto;transform:none;width:100%;max-width:none;max-height:none;min-width:0;overflow:visible;background:transparent;border:0;padding:0;box-shadow:none;}
+.cockpit-lab .session-material-drawer :is(input,select,textarea){min-width:0;max-width:100%;}
+.cockpit-lab .session-material-drawer :is(p,label,small,b,strong,span,output,button){overflow-wrap:anywhere;white-space:normal;line-height:1.5;}
+.cockpit-lab .session-material-drawer .sheet-grid{grid-template-columns:repeat(auto-fit,minmax(min(130px,100%),1fr));}
+.cockpit-lab .session-material-drawer .sheet-actions{display:flex;flex-wrap:wrap;gap:8px;}
+.cockpit-lab .session-material-drawer .sheet-actions button{flex:1 1 150px;min-height:44px;padding:10px;}
+.cockpit-lab .session-material-drawer .mix-ingredient-head{grid-template-columns:22px minmax(0,1fr) 32px;}
+.cockpit-lab .session-material-drawer .mix-number-wrap{grid-column:2/-1;}
+.cockpit-lab .session-material-drawer .mix-number-wrap input{width:100%;}
+.cockpit-lab .session-material-drawer .color-family-strip{display:flex;flex-wrap:wrap;overflow:visible;}
+.cockpit-lab .session-material-drawer .mix-summary-sticky{position:static;}
+.cockpit-lab .mixture-shortcut{flex-wrap:wrap;min-height:54px;}
+.cockpit-lab .mixture-shortcut span{min-width:0;display:grid;}
+.cockpit-lab .mixture-shortcut small{font-size:10px;}
+@keyframes sessionDrawerIn{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}
+@media(prefers-reduced-motion:reduce){.cockpit-lab .session-material-drawer{animation:none;}}
+@media(max-height:420px){.cockpit-lab .session-material-drawer>header{padding:2px 8px;}.cockpit-lab .session-material-drawer-scroll{padding:8px;}}
+
+.cockpit-lab .session-material-drawer .recipe-actions{position:static;}
+.cockpit-lab .session-material-drawer .mix-number-wrap{min-width:0;display:flex;}
+.cockpit-lab .session-material-drawer .mix-number-wrap input{flex:1;min-width:0;width:0;}
+.cockpit-lab .session-material-drawer .mix-number-wrap span{flex:none;white-space:nowrap;}
+.cockpit-lab .session-material-drawer .stock-colors-title{flex-wrap:wrap;gap:6px;}
+
+.cockpit-lab.material-drawer-open .cockpit-dock.left{width:64px;transition:none;}
+@media(max-width:620px){.cockpit-lab .session-material-drawer{left:77px;width:calc(100% - 85px);max-width:360px;}}

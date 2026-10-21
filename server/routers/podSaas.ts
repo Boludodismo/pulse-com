@@ -1,3 +1,4 @@
+import { effectiveSessionSeconds } from "../../shared/sessionTiming";
 import type { SampleSource } from "../../shared/sessionColorSampling";
 import { completeVisualLayerOrder, visualLayerStack, validateVisualLayerOrder } from "../../shared/sessionVisualLayers";
 import { readSessionMaterials, snapshotSessionMaterials } from "../sessionMaterials";
@@ -954,7 +955,7 @@ export const podSaasRouter = router({
         eq(appointmentPlannedMaterials.studioId, ctx.studioId), eq(appointmentPlannedMaterials.appointmentId, procedure.appointmentId),
       )) : [];
       const { materials: sessionMaterials } = await readSessionMaterials(database, procedure);
-      return { procedure, pauses, consumptions, plannedMaterials, sessionMaterials, timing: calculateTiming(procedure.startedAt, procedure.finishedAt, pauses) };
+      return { procedure, pauses, consumptions, plannedMaterials, sessionMaterials, timing: {...calculateTiming(procedure.startedAt, procedure.finishedAt, pauses),effectiveSeconds:effectiveSessionSeconds(procedure.startedAt,procedure.finishedAt,pauses)} };
     }),
 
     addMaterial: tenantProcedure.input(z.object({ procedureId: z.number().int().positive(), tenantMaterialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
@@ -1474,6 +1475,7 @@ export const podSaasRouter = router({
         procedureId: z.number().int().positive(),
         requestId: z.string().uuid().optional(),
         sampleId: z.number().int().positive().optional(),
+        refillRecipeId: z.number().int().positive().optional(),
         cupSize: z.enum(["P", "M", "G", "GG"]).nullable().default(null),
         dropsPerMl: z.number().min(5).max(60).default(SESSION_DROPS_PER_ML),
         cupTenantMaterialId: z.number().int().positive().optional(),
@@ -1498,6 +1500,15 @@ export const podSaasRouter = router({
           if (replay) return replay;
           if (procedure.status === "finalizado")
             throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível registrar mistura em uma sessão finalizada." });
+
+          if (input.refillRecipeId) {
+            const parent = (await tx.select().from(procedureInkRecipes).where(and(
+              eq(procedureInkRecipes.id,input.refillRecipeId),eq(procedureInkRecipes.studioId,ctx.studioId),eq(procedureInkRecipes.procedureId,procedure.id),
+            )).limit(1).for("update"))[0];
+            if(!parent || parent.status!=="active" || parent.refillRecipeId)throw new TRPCError({code:"BAD_REQUEST",message:"Selecione uma mistura original ativa desta sessão para repor."});
+            if(input.cupTenantMaterialId || input.cupBatchId)throw new TRPCError({code:"BAD_REQUEST",message:"A reposição usa o batoque existente; não deve baixar outro recipiente."});
+            if(input.cupSize!==parent.cupSize)throw new TRPCError({code:"BAD_REQUEST",message:"A reposição deve manter o tamanho do batoque original."});
+          }
 
           if (input.sampleId) {
             const linkedSample = (await tx
@@ -1542,6 +1553,7 @@ export const podSaasRouter = router({
             clientId: procedure.clientId,
             artistId: procedure.artistId,
             sampleId: input.sampleId ?? null,
+            refillRecipeId: input.refillRecipeId ?? null,
             code,
             cupSize: input.cupSize,
             cupCapacityMl: cupCapacityMl?.toFixed(3) ?? null,
@@ -1686,7 +1698,7 @@ export const podSaasRouter = router({
               newQuantity: persistedNext,
               sourceType: "procedure_recipe_consumption",
               sourceId: consumptionId,
-              reason: `Mistura ${code} da sessão POD #${procedure.id}`,
+              reason: input.refillRecipeId ? `Reposição ${code} do batoque #${input.refillRecipeId} da sessão POD #${procedure.id}` : `Mistura ${code} da sessão POD #${procedure.id}`,
               createdByUserId: ctx.user.id,
             });
 
@@ -1791,6 +1803,11 @@ export const podSaasRouter = router({
           );
           if (recipe.status === "reverted")
             return { id: recipe.id, alreadyReverted: true, restored: 0 };
+
+          const activeRefill = (await tx.select({id:procedureInkRecipes.id}).from(procedureInkRecipes).where(and(
+            eq(procedureInkRecipes.studioId,ctx.studioId),eq(procedureInkRecipes.refillRecipeId,recipe.id),eq(procedureInkRecipes.status,"active"),
+          )).limit(1))[0];
+          if(activeRefill)throw new TRPCError({code:"CONFLICT",message:"Desfaça primeiro as reposições deste batoque."});
 
           const recipeItems = await tx
             .select({ consumptionId: procedureInkRecipeItems.consumptionId })

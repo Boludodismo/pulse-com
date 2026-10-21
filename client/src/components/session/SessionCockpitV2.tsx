@@ -4,6 +4,7 @@ import SessionMaterialIcon from "./SessionMaterialIcon";
 import SessionMaterialHint from "./SessionMaterialHint";
 import SessionAppearancePanel from "./SessionAppearancePanel";
 import SessionGlassWindow from "./SessionGlassWindow";
+import SessionMaterialDrawer from "./SessionMaterialDrawer";
 import { useSessionWindows, type SessionWindow } from "./useSessionWindows";
 import { useSessionAppearance } from "./useSessionAppearance";
 import { imageSamplePoint, samplePixelRegion, averageSamplePixels, imageSampleMarker, type SampleSource } from "@shared/sessionColorSampling";
@@ -30,7 +31,7 @@ type ReferenceDraft=ColorValue&{xPct:number;yPct:number;source:SampleSource;requ
 type SamplerFeedback={x:number;y:number;hex:string;placement:"above"|"below"};
 type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
-type RecipeAction={kind:"recipe";recipeId:number;label:string;payload:{procedureId:number;sampleId?:number;cupSize:Cup|null;dropsPerMl:number;cupTenantMaterialId?:number;ingredients:{tenantMaterialId:number;drops:number}[]}};
+type RecipeAction={kind:"recipe";recipeId:number;label:string;payload:{procedureId:number;refillRecipeId?:number;sampleId?:number;cupSize:Cup|null;dropsPerMl:number;cupTenantMaterialId?:number;ingredients:{tenantMaterialId:number;drops:number}[]}};
 type StockAction=QuickAction|RecipeAction;
 
 const CUP=SESSION_CUP_ML;
@@ -145,6 +146,8 @@ const [layerOrder,setLayerOrder]=useState<string[]|null>(null);
 const [layerBusy,setLayerBusy]=useState(false),layerSaving=useRef(false);
 const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null),[samplerFeedback,setSamplerFeedback]=useState<SamplerFeedback|null>(null);
 const [directQuantity,setDirectQuantity]=useState("1");
+const [quantityRevision,setQuantityRevision]=useState(0);
+const [refillRecipeId,setRefillRecipeId]=useState<number|null>(null);
 const sessionWindows=useSessionWindows();
 const {windows:openWindows,active:sheet,open:setSheet,close:closeSheet,closeAll:closeSheets}=sessionWindows;
 const [minimizedTray,setMinimizedTray]=useState<HTMLDivElement|null>(null);
@@ -185,6 +188,8 @@ const imageGesture=useRef(new SessionImageGesture());
 const samples:Sample[]=useMemo(()=>((sampleQuery.data||[]) as any[]).map(s=>({source:s.source,id:String(s.id),code:s.code,hex:s.hex,rgb:[s.red,s.green,s.blue],cmyk:[s.cyan,s.magenta,s.yellow,s.black],lab:[Number(s.labL||0),Number(s.labA||0),Number(s.labB||0)],xPct:Number(s.xPct),yPct:Number(s.yPct)})),[sampleQuery.data]);
 useEffect(()=>{if(preparationQuery.data?.preparation?.colors.length)setMode("color")},[preparationQuery.data?.preparation]);
 const recipes=(recipeQuery.data||[]) as any[];
+const refillRecipe=recipes.find(r=>r.id===refillRecipeId&&r.status==="active");
+const rootRecipes=recipes.filter(r=>!r.refillRecipeId&&r.status==="active");
 const visualLayers=(visualLayerQuery.data||[]) as any[];
 const referenceLayer=visualLayers.find(l=>l.layerKey==="reference");
 const refOn=layerLocal.reference?.isVisible??Boolean(referenceLayer?.isVisible??true);
@@ -208,7 +213,7 @@ function samplePosition(s:Sample){
 }
 
 const totals=useMemo(()=>{const o:Record<string,number>={};for(const u of (session.data?.consumptions||[]) as any[]){if(u.status!=="consumido")continue;o[String(u.tenantMaterialId)]=(o[String(u.tenantMaterialId)]||0)+Number(u.quantity)}return o},[session.data?.consumptions]);
-const visibleRecipeColors=useMemo(()=>stock.filter(m=>m.kind==="ink"||m.kind==="diluent").filter(m=>{if(!familyFilter||m.kind==="diluent")return true;const stored=materialColorMap[m.id];return familyForColor(stored?.hex||m.color,stored)===familyFilter}),[stock,familyFilter,materialColorMap]);
+const visibleRecipeColors=stock.filter(m=>m.kind==="ink"||m.kind==="diluent").filter(m=>!refillRecipeId||recipes.filter(r=>r.id===refillRecipeId||r.refillRecipeId===refillRecipeId).some(r=>r.items?.some((i:any)=>String(i.tenantMaterialId)===m.id))).filter(m=>{if(!familyFilter||m.kind==="diluent")return true;const stored=materialColorMap[m.id];return familyForColor(stored?.hex||m.color,stored)===familyFilter});
 
 function vset(n:View){const previous=vr.current;setVu(h=>[...h,previous].slice(-30));setVredo([]);setView(n)}
 function vundo(){const p=vu[vu.length-1];if(!p)return;const current=vr.current;setVu(h=>h.slice(0,-1));setVredo(r=>[current,...r]);setView(p)}
@@ -295,23 +300,27 @@ const retryKeys=useRef(new Map<string,string>());
 function stockRequestId(key:string){const id=retryKeys.current.get(key)||crypto.randomUUID();retryKeys.current.set(key,id);return id}
 async function quickConsume(m:Material,quantity:string,label?:string){
   if(stockActionPending.current||props.finished)return;stockActionPending.current=true;
-  try{const key=JSON.stringify(["consume",procedureId,m.id,quantity]);const r=await consumeAuto.mutateAsync({procedureId,tenantMaterialId:Number(m.id),quantity,expectedUnit:m.unit,requestId:stockRequestId(key)});retryKeys.current.delete(key);pushAction({kind:"consumption",consumptionId:r.id,materialId:Number(m.id),quantity,label:label||m.name,unit:m.unit});closeSheet("ink");await refreshAll()}
+  try{const key=JSON.stringify(["consume",procedureId,m.id,quantity]);const r=await consumeAuto.mutateAsync({procedureId,tenantMaterialId:Number(m.id),quantity,expectedUnit:m.unit,requestId:stockRequestId(key)});retryKeys.current.delete(key);pushAction({kind:"consumption",consumptionId:r.id,materialId:Number(m.id),quantity,label:label||m.name,unit:m.unit});setDirectQuantity((m.kind==="ink"||m.kind==="diluent")?inkStockQuantity(m.unit,1,"drops","M"):"1");setQuantityRevision(v=>v+1);await refreshAll();toast.success("Consumo registrado no estoque.")}
   catch(e:any){toast.error(e.message||"Falha ao consumir material.")}finally{stockActionPending.current=false}
 }
 function useMat(m:Material){
   try{validateSessionUnit(m)}catch(e:any){toast.error(e.message);return}
-  setInk(m);setDirectQuantity((m.kind==="ink"||m.kind==="diluent")?inkStockQuantity(m.unit,1,"drops","M"):m.kind==="ointment"?"":"1");setSheet("ink");
+  setLmin(false);setLex(false);setRmin(true);setInk(m);setQuantityRevision(v=>v+1);setDirectQuantity((m.kind==="ink"||m.kind==="diluent")?inkStockQuantity(m.unit,1,"drops","M"):m.kind==="ointment"?"":"1");setSheet("ink");
 }
 function setIng(mid:string,n:number){setIngs(a=>n<=0?a.filter(x=>x.materialId!==mid):a.some(x=>x.materialId===mid)?a.map(x=>x.materialId===mid?{...x,drops:n}:x):[...a,{materialId:mid,drops:n}])}
-function recipe(seed?:Material){setRecipeDropsPerMl(SESSION_DROPS_PER_ML);setCup(null);setIngs(seed?[{materialId:seed.id,drops:1}]:[]);setRecipeCupMaterialId("");setSheet("recipe")}
+function recipe(seed?:Material){setRefillRecipeId(null);setLmin(false);setLex(false);setRmin(true);setFamilyFilter(null);setRecipeDropsPerMl(SESSION_DROPS_PER_ML);setCup(null);setIngs(seed?[{materialId:seed.id,drops:1}]:[]);setRecipeCupMaterialId("");setSheet("recipe")}
+function openRefill(r:any){
+  setRefillRecipeId(r.id);setRecipeDropsPerMl(Number(r.dropsPerMl)||SESSION_DROPS_PER_ML);setCup(r.cupSize||null);setRecipeCupMaterialId("");setIngs([]);setFamilyFilter(null);setLmin(false);setLex(false);setRmin(true);setSample(samples.find(s=>Number(s.id)===r.sampleId)||null);setSheet("recipe");
+}
 const [recipeCupMaterialId,setRecipeCupMaterialId]=useState<string>("");
 
 
 async function saveRecipe(){
-  if(stockActionPending.current)return;
+  if(stockActionPending.current||props.finished)return;
+  if(refillRecipeId&&!refillRecipe)return toast.error("A mistura original não está mais ativa. Atualize a sessão.");
   const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP;if(!drops)return toast.error("Adicione tinta ou diluente.");if(cup&&ml>CUP[cup])return toast.error("Mistura maior que a capacidade do batoque.");
-  const payload={procedureId,sampleId:sample?Number(sample.id):undefined,cupSize:cup,dropsPerMl:recipeDropsPerMl,cupTenantMaterialId:recipeCupMaterialId?Number(recipeCupMaterialId):undefined,ingredients:ings.map(i=>({tenantMaterialId:Number(i.materialId),drops:i.drops}))};
-  try{stockActionPending.current=true;const key=JSON.stringify(["recipe",payload]);const r=await saveRecipeMutation.mutateAsync({...payload,requestId:stockRequestId(key)});retryKeys.current.delete(key);pushAction({kind:"recipe",recipeId:r.id,label:r.code+" · "+drops+" gotas",payload});closeSheet("recipe");await refreshAll();toast.success(r.code+" salva com baixa transacional no estoque.")}
+  const payload={procedureId,refillRecipeId:refillRecipeId??undefined,sampleId:sample?Number(sample.id):undefined,cupSize:cup,dropsPerMl:recipeDropsPerMl,cupTenantMaterialId:!refillRecipeId&&recipeCupMaterialId?Number(recipeCupMaterialId):undefined,ingredients:ings.map(i=>({tenantMaterialId:Number(i.materialId),drops:i.drops}))};
+  try{stockActionPending.current=true;const key=JSON.stringify(["recipe",payload]);const r=await saveRecipeMutation.mutateAsync({...payload,requestId:stockRequestId(key)});retryKeys.current.delete(key);pushAction({kind:"recipe",recipeId:r.id,label:r.code+" · "+drops+" gotas",payload});setRefillRecipeId(refillRecipeId??r.id);setIngs([]);await refreshAll();toast.success(refillRecipeId?"Reposição registrada no batoque e no estoque.":r.code+" salva com baixa transacional no estoque.")}
   catch(e:any){toast.error(e.message||"Não foi possível salvar a mistura.")}finally{stockActionPending.current=false}
 }
 
@@ -411,7 +420,7 @@ function wheel(e:RW<HTMLDivElement>){if(isControl(e.target))return;e.preventDefa
 // Recolhe UI transitória sem bloquear o pointerdown que continua para a imagem.
 function dismissOutside(target:EventTarget|null){
   if(!(target instanceof Element))return;
-  if(target.closest(".session-glass-window,.session-glass-tray,.cockpit-top,.cockpit-bottom,.focus-toolbar,.cockpit-dock,.cockpit-palette,.focus-palette-strip,.cockpit-sheet,.appearance-sheet,.temp-sampler-panel,.session-material-tooltip"))return;
+  if(target.closest(".session-material-drawer,.focus-timer,.session-glass-window,.session-glass-tray,.cockpit-top,.cockpit-bottom,.focus-toolbar,.cockpit-dock,.cockpit-palette,.focus-palette-strip,.cockpit-sheet,.appearance-sheet,.temp-sampler-panel,.session-material-tooltip"))return;
   if(sheet)closeSheets();
   if(!target.closest(".cockpit-dock.left")){if(!lmin)setLmin(true);if(lex)setLex(false)}
   if(!target.closest(".cockpit-dock.right")){if(!rmin)setRmin(true);if(rex)setRex(false)}
@@ -420,7 +429,7 @@ useEffect(()=>{
   const key=(event:KeyboardEvent)=>{
     if(event.key!=="Escape")return;
     if(photoSrc)return;
-    if(sheet){closeSheet(sheet);return}
+    if(sheet){event.preventDefault();closeSheet(sheet);return}
     if(!lmin||!rmin){setLmin(true);setRmin(true);setLex(false);setRex(false)}
   };
   document.addEventListener("keydown",key);
@@ -498,15 +507,15 @@ const stackLayers=visualLayerStack(visualLayers.length?visualLayers:[
 const panelLayers=layerOrder?layerOrder.map(key=>stackLayers.find(layer=>layer.layerKey===key)).filter(Boolean):stackLayers;
 const orderedLayers=[...panelLayers].reverse();
 
-return createPortal(<div style={{...viewport,...chromeSize,"--tools-alpha":toolAppearance.opacity,"--tools-size":toolAppearance.size,"--palette-alpha":paletteAppearance.opacity,"--palette-size":paletteAppearance.size} as CSSProperties} ref={cockpitRoot} onPointerDownCapture={event=>dismissOutside(event.target)} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
+return createPortal(<div style={{...viewport,...chromeSize,"--tools-alpha":toolAppearance.opacity,"--tools-size":toolAppearance.size,"--palette-alpha":paletteAppearance.opacity,"--palette-size":paletteAppearance.size} as CSSProperties} ref={cockpitRoot} onPointerDownCapture={event=>dismissOutside(event.target)} className={"cockpit-lab "+(openWindows.includes("ink")||openWindows.includes("recipe")?"material-drawer-open ":"")+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
 <header className="cockpit-top">
 <button type="button" aria-label="Voltar à sessão" className="cockpit-icon" onClick={props.onClose}><ArrowLeft size={18}/></button>
 <button className="cockpit-icon" onClick={vundo} disabled={!vu.length} title="Desfazer imagem"><Undo2 size={18}/></button><button className="cockpit-icon" onClick={vred} disabled={!vredo.length} title="Refazer imagem"><Redo2 size={18}/></button>
 <div className="cockpit-client"><strong>{client.data?.name||"Cliente"}</strong><small>{props.title} {proc.bodyLocation?"· "+proc.bodyLocation:""}</small></div>
 <button type="button" className="cockpit-icon" aria-label="Preferências visuais" title="Preferências visuais" onClick={()=>setSheet("appearance")}><Settings2 size={18}/></button>
-<button className="cockpit-icon desktop-only" aria-label="Notas rápidas" onClick={()=>{if(!openWindows.includes("notes"))setNote(String(proc.notes||""));setSheet("notes")}}><StickyNote size={17}/></button><div className="cockpit-status"><i/><b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.running?"EM ANDAMENTO":props.started?"PAUSADA":"NÃO INICIADA"}</span></div>
+<button className="cockpit-icon desktop-only" aria-label="Notas rápidas" onClick={()=>{if(!openWindows.includes("notes"))setNote(String(proc.notes||""));setSheet("notes")}}><StickyNote size={17}/></button><button type="button" className="cockpit-status session-timer-control" aria-label={props.finished?"Sessão concluída":timerLabel} title={props.finished?"Sessão concluída":timerLabel} disabled={props.finished||props.timerBusy} onClick={toggleTimer}>{props.running?<Pause size={14}/>:<Play size={14}/>}<b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.timerBusy?"AGUARDE…":props.running?"PAUSAR":props.started?"RETOMAR":"INICIAR"}</span></button>
 </header>
-{focusMode&&<><div className="focus-timer"><span className="cockpit-status"><i/><b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.running?"EM ANDAMENTO":props.started?"PAUSADA":"NÃO INICIADA"}</span></span></div><div className="focus-toolbar">
+{focusMode&&<><div className="focus-timer"><button type="button" className="cockpit-status session-timer-control" aria-label={props.finished?"Sessão concluída":timerLabel} title={props.finished?"Sessão concluída":timerLabel} disabled={props.finished||props.timerBusy} onClick={toggleTimer}>{props.running?<Pause size={14}/>:<Play size={14}/>}<b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.timerBusy?"AGUARDE…":props.running?"PAUSAR":props.started?"RETOMAR":"INICIAR"}</span></button></div><div className="focus-toolbar">
   <button type="button" aria-label="Preferências visuais" title="Preferências visuais" onClick={()=>setSheet("appearance")}><Settings2 size={17}/></button>
   <button onClick={()=>void exitFocusMode()} title="Sair do modo foco"><Minimize2 size={17}/><span>Sair</span></button>
   <button className={cleanMode?"active":""} onClick={()=>setCleanMode(v=>!v)} title={cleanMode?"Mostrar painéis":"Imagem limpa"}>{cleanMode?<Eye size={17}/>:<EyeOff size={17}/>}<span>{cleanMode?"Painéis":"Limpar"}</span></button>
@@ -553,14 +562,14 @@ return createPortal(<div style={{...viewport,...chromeSize,"--tools-alpha":toolA
   const linkedCups=m.kind==="cup"?recipes.filter(r=>r.status==="active"&&String(r.cupTenantMaterialId)===m.id).map(r=>({code:r.code,...recipeDisplayColor(r,samples)})):[];
   const description=[m.detail,`Previsto: ${m.plannedQuantity} ${m.unit}`,`Utilizado: ${Number(totals[m.id]||0).toLocaleString("pt-BR",{maximumFractionDigits:3})} ${m.unit}`,m.kind==="ink"?(color?`Cor registrada: ${color}`:"Cor ainda não registrada"):null,...linkedCups.map(c=>`${c.code}: ${c.label}${c.color?" · "+c.color:""}`)].filter(Boolean).join("\n");
   return <SessionMaterialHint key={m.id} title={m.name} description={description} opacity={toolAppearance.opacity}>
-    <button disabled={props.finished||consumeAuto.isPending||!stock.some(x=>x.id===m.id)} aria-label={`Registrar consumo de ${m.name}`} className={"material-card "+(totals[m.id]?"active":"")} onClick={()=>useMat(m)}>
+    <button disabled={props.finished||consumeAuto.isPending||saveRecipeMutation.isPending||!stock.some(x=>x.id===m.id)} aria-label={`Registrar consumo de ${m.name}`} className={"material-card "+(totals[m.id]?"active":"")} onClick={()=>useMat(m)}>
       <span className="material-glyph"><SessionMaterialIcon symbol={symbol} color={symbol==="ink"?color:linkedCups.length===1?linkedCups[0].color:undefined}/><span className="material-symbol-label">{label}{m.kind==="cup"&&sessionCupSize(m)?" "+sessionCupSize(m):""}</span></span>
       {lex&&<span className="material-meta"><b>{m.name}</b><small>{`Previsto: ${m.plannedQuantity} ${m.unit}`}</small></span>}
       {linkedCups.length>1&&<span className="material-cup-colors">{linkedCups.map(c=><span key={c.code} aria-label={`${c.code}: ${c.label}`}><SessionMaterialIcon symbol="cup" color={c.color}/><small>{c.code}</small></span>)}</span>}
       {!!totals[m.id]&&<span className="material-count">✓ {Number(totals[m.id]).toLocaleString("pt-BR",{maximumFractionDigits:3})} {m.unit}</span>}
     </button>
   </SessionMaterialHint>;
-})}<button className="dock-add" onClick={()=>setSheet("materials")}><Plus size={18}/>{lex&&" Adicionar"}</button></div>
+})}{rootRecipes.map(r=><button key={"mix-"+r.id} type="button" className="material-card mixture-shortcut" aria-label={`Repor mistura ${r.code}`} disabled={props.finished||consumeAuto.isPending||saveRecipeMutation.isPending} onClick={()=>openRefill(r)}><Droplets size={20}/><span><b>{r.code}</b><small>Repor gotas</small></span></button>)}<button className="dock-add" onClick={()=>setSheet("materials")}><Plus size={18}/>{lex&&" Adicionar"}</button></div>
 <div className="dock-undo"><button onClick={()=>void undoStock()} disabled={!undoStack.length}><Undo2 size={16}/></button><button onClick={()=>void redoStock()} disabled={!redoStack.length}><Redo2 size={16}/></button></div>
 </aside>
 
@@ -615,25 +624,28 @@ return createPortal(<div style={{...viewport,...chromeSize,"--tools-alpha":toolA
 }} onRecipe={props.finished?undefined:index=>{
   const color=preparationQuery.data?.preparation?.colors[index];if(!color)return;
   if(color.ingredients.some(i=>!stock.some(m=>Number(m.id)===i.tenantMaterialId)))return toast.error("Uma tinta está indisponível. Atualize o estoque antes de reutilizar a receita.");
-  setSample(samples.find(s=>s.code===`P${String(index+1).padStart(2,"0")}`)||null);setCup(color.cupSize);setRecipeCupMaterialId("");setRecipeDropsPerMl(color.dropsPerMl);setIngs(color.ingredients.map(i=>({materialId:String(i.tenantMaterialId),drops:i.drops})));setFamilyFilter(null);setReferenceDraft(null);setSheet("recipe");
+  setRefillRecipeId(null);setLmin(false);setLex(false);setRmin(true);setSample(samples.find(s=>s.code===`P${String(index+1).padStart(2,"0")}`)||null);setCup(color.cupSize);setRecipeCupMaterialId("");setRecipeDropsPerMl(color.dropsPerMl);setIngs(color.ingredients.map(i=>({materialId:String(i.tenantMaterialId),drops:i.drops})));setFamilyFilter(null);setReferenceDraft(null);setSheet("recipe");
 }}/></section></SessionGlassWindow>}
 {openWindows.includes("materials")&&<SessionGlassWindow title="Adicionar material ativo" {...windowProps("materials")}><section className="cockpit-sheet">{preparationQuery.data?.preparation&&<button className="dock-add" onClick={()=>setSheet("preparation")}>Ver materiais e receitas preparados</button>}<p>Adicionar inclui o material nesta sessão. A baixa acontece ao confirmar a quantidade utilizada.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><details className="session-costs"><summary>Consumo e custos desta sessão</summary><p>Valores registrados no consumo. Cadastros de teste ou preços estimados não comprovam gasto real.</p><p>Total registrado: {new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format((session.data?.consumptions||[]).filter(c=>c.status==='consumido').reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0))}</p>{(session.data?.consumptions||[]).filter(c=>c.status==='consumido').map(c=><article key={c.id}><b>{c.nameSnapshot}</b><p>{Number(c.quantity).toLocaleString('pt-BR')} {c.unitSnapshot} · Lote: {c.lotSnapshot||'não informado'} · {new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(c.totalCostSnapshot))}</p>{Number(c.unitCostSnapshot)===0&&<p>Custo registrado como zero; confira o cadastro do lote.</p>}</article>)}</details><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} disabled={addMaterial.isPending} onClick={async()=>{try{await addMaterial.mutateAsync({procedureId,tenantMaterialId:Number(m.id)});await refreshAll();closeSheet("materials");setSearch("")}catch(e:any){toast.error(e.message)}}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section></SessionGlassWindow>}
 
-{openWindows.includes("ink")&&ink&&<SessionGlassWindow title={ink.name} {...windowProps("ink")}><section className="cockpit-sheet">{(readTestMetadata(ink.notes).testStock||readTestMetadata(ink.notes).marketEstimate)&&<p>Este cadastro contém saldo de teste ou preço estimado. Confira a contagem e o custo de compra no estoque antes do uso real.</p>}
-<SessionMaterialQuantity key={ink.id} material={ink} value={directQuantity} onChange={setDirectQuantity} materials={stock} onMaterialChange={id=>{const m=stock.find(m=>m.id===id);if(m){setInk(m);setDirectQuantity("1")}}} disabled={consumeAuto.isPending}/>
-<div className="sheet-actions">{(ink.kind==="ink"||ink.kind==="diluent")&&<button onClick={()=>recipe(ink)}>Criar mistura</button>}<button className="primary" disabled={consumeAuto.isPending||!Number.isFinite(Number(directQuantity))||Number(directQuantity)<=0} onClick={()=>void quickConsume(ink,directQuantity,ink.name)}>Confirmar uso</button></div></section></SessionGlassWindow>}
+{openWindows.includes("ink")&&ink&&<SessionMaterialDrawer title={ink.name} onClose={()=>closeSheet("ink")}><section className="cockpit-sheet">{(readTestMetadata(ink.notes).testStock||readTestMetadata(ink.notes).marketEstimate)&&<p>Este cadastro contém saldo de teste ou preço estimado. Confira a contagem e o custo de compra no estoque antes do uso real.</p>}
+{ink.kind==="cup"&&rootRecipes.filter(r=>String(r.cupTenantMaterialId)===ink.id).map(r=><button key={r.id} className="sheet-option" type="button" onClick={()=>openRefill(r)}>Repor gotas de {r.code}</button>)}
+<SessionMaterialQuantity key={ink.id+":"+quantityRevision} material={ink} value={directQuantity} onChange={setDirectQuantity} materials={stock} onMaterialChange={id=>{const m=stock.find(m=>m.id===id);if(m){setInk(m);setDirectQuantity("1")}}} disabled={consumeAuto.isPending}/>
+<div className="sheet-actions">{(ink.kind==="ink"||ink.kind==="diluent")&&<button disabled={consumeAuto.isPending||saveRecipeMutation.isPending} onClick={()=>recipe(ink)}>Criar mistura</button>}<button className="primary" disabled={consumeAuto.isPending||!Number.isFinite(Number(directQuantity))||Number(directQuantity)<=0} onClick={()=>void quickConsume(ink,directQuantity,ink.name)}>Confirmar uso</button></div></section></SessionMaterialDrawer>}
 
-{openWindows.includes("recipe")&&<SessionGlassWindow title={`Receita${sample?" · "+sample.code:""}`} {...windowProps("recipe")}><section className="cockpit-sheet recipe-sheet"><p>Será gravada junto da sessão e das baixas de cada pigmento. Conversão: {recipeDropsPerMl} gotas/ml.</p>
+{openWindows.includes("recipe")&&<SessionMaterialDrawer title={refillRecipe?`Repor ${refillRecipe.code} · mesmo batoque`:`Nova mistura${sample?" · "+sample.code:""}`} onClose={()=>closeSheet("recipe")}><section className="cockpit-sheet recipe-sheet"><p>{refillRecipe?"Informe somente as gotas adicionadas agora. As adições anteriores permanecem registradas; não será baixado outro batoque.":"Será gravada junto da sessão e das baixas de cada pigmento."} Conversão: {recipeDropsPerMl} gotas/ml.</p>
+{refillRecipe&&<details className="mix-summary"><summary>Histórico do batoque {refillRecipe.code}</summary>{recipes.filter(r=>(r.id===refillRecipe.id||r.refillRecipeId===refillRecipe.id)&&r.status==="active").map(r=><div key={r.id}><b>{r.id===refillRecipe.id?"Mistura inicial":`Reposição ${r.code}`}</b>{r.items?.map((i:any)=><p key={i.id||i.tenantMaterialId}>{i.nameSnapshot}: {i.drops} gotas</p>)}</div>)}</details>}
 {sample&&<div className="recipe-sample-card">
   <div className="sample-crop" style={{background:sample.hex}}/>
   <div className="recipe-sample-swatch" style={{background:sample.hex}}/>
   <div className="recipe-sample-meta"><strong>{sample.code}</strong><span>{sample.code.startsWith("P")?"Cor preparada antes da sessão":"Referência retirada da imagem"}</span><small>{sample.hex.toUpperCase()} · RGB {sample.rgb.join(" / ")} · CMYK {sample.cmyk.join(" / ")}</small></div>
 </div>}
-<button className="sheet-option" onClick={()=>{setCup(null);setRecipeCupMaterialId("")}}>Sem recipiente definido</button><div className="sheet-grid cup-grid">{(["P","M","G","GG"] as Cup[]).map(c=><button key={c} className={"sheet-option "+(cup===c?"selected":"")} onClick={()=>{setCup(c);setRecipeCupMaterialId("")}}><b>Batoque {c}</b><small>{CUP[c]} ml · ~{Math.floor(CUP[c]/DROP)} gotas</small></button>)}</div>
+{!refillRecipeId&&<><button className="sheet-option" onClick={()=>{setCup(null);setRecipeCupMaterialId("")}}>Sem recipiente definido</button><div className="sheet-grid cup-grid">{(["P","M","G","GG"] as Cup[]).map(c=><button key={c} className={"sheet-option "+(cup===c?"selected":"")} onClick={()=>{setCup(c);setRecipeCupMaterialId("")}}><b>Batoque {c}</b><small>{CUP[c]} ml · ~{Math.floor(CUP[c]/DROP)} gotas</small></button>)}</div>
 {cup&&<><div className="recipe-cup-visual" aria-label={`Batoque ${cup}, capacidade ${CUP[cup]} ml`} style={{width:56+Math.sqrt(CUP[cup])*22,height:42+Math.sqrt(CUP[cup])*18}}><div style={{height:`${Math.min(100,pct)}%`,background:sample?.hex||"#777"}}/></div><p>Cor de referência; confirme o resultado real da mistura.</p><label>Baixar um batoque do estoque (opcional)<select className="search-input" value={recipeCupMaterialId} onChange={e=>setRecipeCupMaterialId(e.target.value)}><option value="">Já separado / não baixar outro</option>{stock.filter(m=>m.kind==="cup"&&sessionCupSize(m)===cup).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label></>}
-<div className="stock-colors-title"><strong>Paleta-base</strong><small>CMYK + Branco</small></div>
+</>}
+{!refillRecipeId&&<><div className="stock-colors-title"><strong>Paleta-base</strong><small>CMYK + Branco</small></div>
 <div className="color-family-strip">{COLOR_FAMILIES.map(f=><button key={f.key} className={"color-family-chip "+(familyFilter===f.key?"selected":"")} onClick={()=>setFamilyFilter(v=>v===f.key?null:f.key)}><i style={{background:f.hex}}/><span>{f.label}</span></button>)}</div>
-<div className="stock-colors-title"><strong>Cores do estoque</strong><small>{familyFilter?"Filtro "+familyFilter:"Todas as tintas cadastradas"}</small></div>
+</>}<div className="stock-colors-title"><strong>{refillRecipeId?"Cores deste batoque":"Cores do estoque"}</strong><small>{refillRecipeId?"Gotas adicionadas agora":familyFilter?"Filtro "+familyFilter:"Todas as tintas cadastradas"}</small></div>
 <div className="mix-ingredients">
 {visibleRecipeColors.map(m=>{const row=ings.find(x=>x.materialId===m.id),value=row?.drops??0,stored=materialColorMap[m.id],swatch=m.kind==="diluent"?undefined:stored?.hex||m.color;return <div className="mix-ingredient" key={m.id}>
   <div className="mix-ingredient-head with-swatch">
@@ -646,13 +658,13 @@ return createPortal(<div style={{...viewport,...chromeSize,"--tools-alpha":toolA
   <div className="mix-slider-scale"><span>0</span><span>{value} gotas</span><span>{ingredientLimit}</span></div>
 </div>})}
 </div>
-<div className={"mix-summary mix-summary-sticky "+(drops>cupDropCapacity?"over":"")}><div>Total: {drops}{cup?` / ${cupDropCapacity}`:""} gotas · ~{ml.toFixed(2)} ml</div>{cup?<div>Batoque {cup}: {CUP[cup].toFixed(2)} ml · ocupação ~{pct}%</div>:<div>Composição sem recipiente definido</div>}{drops>cupDropCapacity&&<div className="mix-over-warning">Mistura acima da capacidade do batoque.</div>}{ings.map(i=>{const m=stock.find(x=>x.id===i.materialId);return <div key={i.materialId}>{m?.short}: {i.drops}gt · {drops?((i.drops/drops)*100).toFixed(1):0}%</div>})}</div>
-<div className="sheet-actions recipe-actions"><button onClick={()=>closeSheet("recipe")}>Cancelar</button><button className="primary" disabled={saveRecipeMutation.isPending||drops===0||drops>cupDropCapacity} onClick={()=>void saveRecipe()}>Salvar receita + baixar estoque</button></div></section></SessionGlassWindow>}
+<div className={"mix-summary mix-summary-sticky "+(drops>cupDropCapacity?"over":"")}><div>{refillRecipeId?"Reposição":"Total"}: {drops}{cup?` / ${cupDropCapacity}`:""} gotas · ~{ml.toFixed(2)} ml</div>{cup?<div>Batoque {cup}: {CUP[cup].toFixed(2)} ml{!refillRecipeId&&` · ocupação ~${pct}%`}</div>:<div>Composição sem recipiente definido</div>}{drops>cupDropCapacity&&<div className="mix-over-warning">Mistura acima da capacidade do batoque.</div>}{ings.map(i=>{const m=stock.find(x=>x.id===i.materialId);return <div key={i.materialId}>{m?.short}: {i.drops}gt · {drops?((i.drops/drops)*100).toFixed(1):0}%</div>})}</div>
+<div className="sheet-actions recipe-actions"><button onClick={()=>closeSheet("recipe")}>Cancelar</button><button className="primary" disabled={props.finished||saveRecipeMutation.isPending||drops===0||drops>cupDropCapacity||Boolean(refillRecipeId&&!refillRecipe)} onClick={()=>void saveRecipe()}>{refillRecipeId?"Confirmar reposição":"Salvar mistura + baixar estoque"}</button></div></section></SessionMaterialDrawer>}
 
 {openWindows.includes("sample")&&sample&&<SessionGlassWindow title={`${sample.code} · ${sample.code.startsWith("P")?"Cor preparada":"Amostra 5×5 px"}`} {...windowProps("sample")}><section className="cockpit-sheet">{!sample.code.startsWith("P")&&<p>Camada de origem: {sample.source?.layerName||"não registrada nesta amostra antiga"}</p>}<div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{closeSheet("sample");startSampling()}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button>{sample.code.startsWith("P")&&<button onClick={()=>setSheet("preparation")}>Ver receita preparada</button>}</div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · {r.cupSize?`Batoque ${r.cupSize}`:"Sem recipiente"}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section></SessionGlassWindow>}
 
 {openWindows.includes("notes")&&<SessionGlassWindow title="Notas rápidas" {...windowProps("notes")}><section className="cockpit-sheet"><textarea className="cockpit-note" value={note} onChange={e=>setNote(e.target.value)}/><div className="sheet-actions"><button className="primary" disabled={updateProcedure.isPending} onClick={()=>void saveNotes()}>Salvar na sessão</button></div></section></SessionGlassWindow>}
-{openWindows.includes("finish")&&<SessionGlassWindow title="Revisão antes de concluir" {...windowProps("finish")}><section className="cockpit-sheet">{startSessionAction("finish")}<p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {recipes.filter((r:any)=>r.status!=="reverted").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>closeSheet("finish")}>Voltar</button><button className="primary" onClick={()=>{closeSheet("finish");props.onFinish()}}>Ir para conclusão da sessão</button></div></section></SessionGlassWindow>}
+{openWindows.includes("finish")&&<SessionGlassWindow title="Revisão antes de concluir" {...windowProps("finish")}><section className="cockpit-sheet">{startSessionAction("finish")}<p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {rootRecipes.length}</div><div>Reposições: {recipes.filter(r=>r.refillRecipeId&&r.status==="active").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>closeSheet("finish")}>Voltar</button><button className="primary" onClick={()=>{closeSheet("finish");props.onFinish()}}>Ir para conclusão da sessão</button></div></section></SessionGlassWindow>}
 <div className="session-glass-tray" ref={setMinimizedTray} aria-label="Janelas minimizadas"/>
 {photoTarget&&photoSrc&&<TemporaryColorSampler src={photoSrc} title={photoTarget.kind==="material"?"Calibrar "+photoTarget.name:"Resultado da mistura "+photoTarget.code} subtitle="Pressione e arraste o ponto. O quadrado superior mostra a cor em tempo real." onCancel={closeColorPhoto} onConfirm={confirmTemporaryColor}/>}
 </div>,document.body);

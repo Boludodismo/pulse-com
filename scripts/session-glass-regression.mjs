@@ -15,16 +15,17 @@ const mock = `import {useState} from 'react';
 const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800"><rect width="600" height="800" fill="#555"/><circle cx="300" cy="300" r="170" fill="#aaa"/></svg>');
 const ink={id:11,name:'Tinta preta com nome completo de fabricante e descrição para leitura em telas pequenas',category:'Tinta',unit:'ml',currentQuantity:30,quantity:'1',brand:'Marca de teste',configuration:'',notes:''};
 const needle={id:12,name:'Cartucho 09RL de teste',category:'Cartucho',unit:'unidade',currentQuantity:20,quantity:'1',notes:''};
+const white={id:14,name:'Tinta branca',category:'Tinta',unit:'ml',currentQuantity:30,brand:'Marca de teste',notes:''};
 const extra={id:13,name:'Material adicional de teste',category:'Proteção',unit:'unidade',currentQuantity:20};
 const sample={id:21,code:'A01',hex:'#777777',red:119,green:119,blue:119,cyan:0,magenta:0,yellow:0,black:53,labL:50,labA:0,labB:0,xPct:50,yPct:50};
 const preparation={materials:[{tenantMaterialId:12,name:needle.name,quantity:'1',unit:'unidade'}],colors:[]};
 const data={
  'pod.session.get':{procedure:{id:1,artistId:2,notes:'Nota existente',referenceImageUrl:image},sessionMaterials:[{tenantMaterialId:11,name:ink.name,unit:'ml',quantity:'1'},{tenantMaterialId:12,name:needle.name,unit:'unidade',quantity:'1'}],consumptions:[]},
  'clients.getById':{name:'Cliente de teste'},
- 'pod.inventory.list':[ink,needle,extra],
+ 'pod.inventory.list':[ink,needle,extra,white],
  'pod.inventory.materialColorSamples':[],
  'pod.session.listColorSamples':[sample],
- 'pod.session.listInkRecipes':[],
+ 'pod.session.listInkRecipes':[{id:61,code:'M01',status:'active',cupSize:'M',dropsPerMl:'20.000',items:[{id:1,tenantMaterialId:11,nameSnapshot:ink.name,drops:2},{id:2,tenantMaterialId:14,nameSnapshot:white.name,drops:3}]},{id:62,code:'M02',status:'active',refillRecipeId:61,cupSize:'M',dropsPerMl:'20.000',items:[{id:3,tenantMaterialId:11,nameSnapshot:ink.name,drops:1}]}],
  'pod.session.listVisualLayers':[{layerKey:'reference',name:'Referência principal',layerType:'reference',imageUrl:image,opacity:100,isVisible:1,sortOrder:0}],
  'procedures.getById':{preparation},
  'pod.session.getAppearance':{revision:1,preferences:null,artistId:2,artistName:'Artista de teste'},
@@ -38,7 +39,7 @@ const proxy=(parts=[])=>new Proxy(()=>Promise.resolve(),{get:(_t,key)=>{
  return proxy([...parts,String(key)]);
 }});export const trpc=proxy();`;
 const result = await build({
-  stdin: {contents:`import React from 'react';import {createRoot} from 'react-dom/client';import SessionCockpitV2 from './client/src/components/session/SessionCockpitV2';window.__calls=[];window.__timer=0;window.__finish=0;window.__close=0;createRoot(document.getElementById('root')).render(<SessionCockpitV2 procedureId={1} studioId={1} clientId={1} artistId={2} title="Sessão de teste" elapsed="00:12:34" running={true} started={true} finished={false} timerBusy={false} onTimer={()=>window.__timer++} onFinish={()=>window.__finish++} onClose={()=>window.__close++}/>);`,loader:'tsx',resolveDir:root},
+  stdin: {contents:`import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import SessionCockpitV2 from './client/src/components/session/SessionCockpitV2';window.__calls=[];window.__timer=0;window.__finish=0;window.__close=0;function Fixture(){const [timing,setTiming]=useState({running:true,started:true,finished:false,timerBusy:false});window.__setTimer=setTiming;return <SessionCockpitV2 procedureId={1} studioId={1} clientId={1} artistId={2} title="Sessão de teste" elapsed="00:12:34" {...timing} onTimer={()=>{window.__timer++;setTiming(t=>({...t,started:true,running:!t.running}));}} onFinish={()=>window.__finish++} onClose={()=>window.__close++}/>;}createRoot(document.getElementById('root')).render(<Fixture/>);`,loader:'tsx',resolveDir:root},
   bundle:true,write:false,outdir:'/tmp/session-glass-fixture',format:'iife',jsx:'automatic',
   define:{'process.env.NODE_ENV':'"production"'},alias:{'@':root+'/client/src','@shared':root+'/shared'},
   plugins:[{name:'local-rpc',setup(b){b.onResolve({filter:/lib\/trpc$/},()=>({path:'trpc',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:mock,loader:'tsx',resolveDir:root}));}}],
@@ -54,21 +55,33 @@ const server=http.createServer((request,response)=>{
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const url='http://127.0.0.1:'+server.address().port;
 if(process.env.SERVE_ONLY){console.log(url);await new Promise(()=>{});}
-const sizes=[[320,568],[390,844],[667,320],[768,1024],[1440,900]];
+const sizes=process.env.QA_VIEWPORT?[process.env.QA_VIEWPORT.split('x').map(Number)]:[[320,568],[390,844],[667,320],[768,1024],[1440,900]];
 const engine=process.env.BROWSER_ENGINE==='webkit'?webkit:chromium;
 let browser;
 try {
-  browser=await engine.launch({headless:true,executablePath:process.env.BROWSER_EXECUTABLE||undefined});
   for(const [width,height] of sizes){
+    browser=await engine.launch({headless:true,args:process.env.BROWSER_SINGLE_PROCESS?['--single-process','--no-zygote']:[],executablePath:process.env.BROWSER_EXECUTABLE||undefined});
     const page=await browser.newPage({viewport:{width,height}});
     const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR',e.message)});
     await page.goto(url);await page.getByRole('button',{name:'Buscar materiais no estoque'}).waitFor();
+    // Exercise the actual time badge through its existing start/pause/resume callback.
+    await page.evaluate(()=>window.__setTimer({running:false,started:false,finished:false,timerBusy:false}));
+    const timer=page.locator('.session-timer-control').first();
+    await page.waitForFunction(label=>document.querySelector('.session-timer-control')?.getAttribute('aria-label')===label,'Iniciar sessão');await timer.click();
+    await page.waitForFunction(label=>document.querySelector('.session-timer-control')?.getAttribute('aria-label')===label,'Pausar sessão');await timer.click();
+    await page.waitForFunction(label=>document.querySelector('.session-timer-control')?.getAttribute('aria-label')===label,'Retomar sessão');await timer.click();
+    assert.equal(await timer.locator('b').textContent(),'00:12:34');assert.equal(await page.evaluate(()=>window.__timer),3);
+    await page.evaluate(()=>window.__setTimer({running:false,started:true,finished:false,timerBusy:true}));
+    await page.waitForFunction(()=>document.querySelector('.session-timer-control')?.disabled);assert(await timer.isDisabled());
+    await page.evaluate(()=>window.__setTimer({running:false,started:true,finished:true,timerBusy:false}));
+    await page.waitForFunction(label=>document.querySelector('.session-timer-control')?.getAttribute('aria-label')===label,'Sessão concluída');assert(await timer.isDisabled());
+    await page.evaluate(()=>{window.__timer=0;window.__setTimer({running:true,started:true,finished:false,timerBusy:false});});
     const region=title=>page.locator('.session-glass-window').filter({has:page.locator('.session-glass-title',{hasText:title})});
     const click=async(locator)=>{await locator.scrollIntoViewIfNeeded();await locator.click({timeout:5000});};
     const check=async(panel)=>{
       const metrics=await panel.evaluate(el=>{
-        const r=el.getBoundingClientRect(),s=el.querySelector('.session-glass-scroll');
-        const horizontal=[el,s,...el.querySelectorAll('p,small,b,strong,label,summary,button,.mix-summary,.sample-data')].filter(n=>n.getClientRects().length&&n.scrollWidth>n.clientWidth+2).map(n=>n.className||n.tagName);
+        const r=el.getBoundingClientRect(),s=el.querySelector('.session-glass-scroll,.session-material-drawer-scroll');
+        const horizontal=[el,s,...el.querySelectorAll('h2,p,small,b,strong,label,summary,button,.mix-summary,.sample-data,.mix-number-wrap,.mix-number-wrap span')].filter(n=>n.getClientRects().length&&n.scrollWidth>n.clientWidth+2).map(n=>n.className||n.tagName);
         return{x:r.x,y:r.y,right:r.right,bottom:r.bottom,sw:s.scrollWidth,cw:s.clientWidth,horizontal};
       });
       assert(metrics.x>=-1&&metrics.y>=-1&&metrics.right<=width+1&&metrics.bottom<=height+1,JSON.stringify({width,height,metrics}));
@@ -106,32 +119,38 @@ try {
     const openMaterials=page.getByRole('button',{name:'Abrir materiais',exact:true});
     if(await openMaterials.isVisible())await openMaterials.click();
     await page.getByRole('button',{name:'Registrar consumo de Tinta preta',exact:false}).click();
-    const ink=region('Tinta preta');await check(ink);
+    const ink=page.locator('.session-material-drawer');await check(ink);
+    assert.equal(await page.locator('.session-glass-window:visible').count(),0);
     const quantity=ink.getByRole('spinbutton',{name:'Quantidade de Tinta preta',exact:false});
     await quantity.fill('7');
-    await click(ink.getByRole('button',{name:'Minimizar janela'}));
-    await page.locator('.session-glass-pill').filter({hasText:'Tinta preta'}).getByRole('button',{name:/Restaurar/}).click();
-    assert.equal(await quantity.inputValue(),'7');
-    await click(ink.getByRole('button',{name:'Criar mistura'}));
-    const recipe=region('Receita');await check(recipe);assert.equal(await ink.count(),0);
-    const drops=recipe.getByRole('spinbutton',{name:/Gotas de Tinta preta/});await drops.fill('5');
-    await click(recipe.getByRole('button',{name:'Minimizar janela'}));
-    await page.getByRole('button',{name:'Restaurar Receita',exact:true}).click();assert.equal(await drops.inputValue(),'5');
-    await click(recipe.getByRole('button',{name:'Salvar receita + baixar estoque'}));
-    const payload=await page.evaluate(()=>window.__calls.find(c=>c.name==='pod.session.saveInkRecipe').input);
-    assert.equal(payload.procedureId,1);assert.deepEqual(payload.ingredients,[{tenantMaterialId:11,drops:5}]);
-    await page.getByRole('button',{name:'Registrar consumo de Tinta preta',exact:false}).click();
-    await region('Tinta preta').getByRole('spinbutton',{name:'Quantidade de Tinta preta',exact:false}).fill('7');
-    await click(region('Tinta preta').getByRole('button',{name:'Confirmar uso'}));
+    assert.equal(await page.evaluate(()=>window.__calls.filter(c=>c.name==='pod.session.consumeAuto').length),0);
+    await click(ink.getByRole('button',{name:'Confirmar uso'}));
     const consumption=await page.evaluate(()=>window.__calls.find(c=>c.name==='pod.session.consumeAuto').input);
     assert.equal(consumption.tenantMaterialId,11);assert.equal(consumption.quantity,'0.350');assert.equal(consumption.expectedUnit,'ml');
+    await check(ink);assert.equal(await quantity.inputValue(),'1');
+    await click(ink.getByRole('button',{name:'Criar mistura'}));
+    const recipe=page.locator('.session-material-drawer');await check(recipe);
+    const drops=recipe.getByRole('spinbutton',{name:/Gotas de Tinta preta/});await drops.fill('5');
+    assert.equal(await page.evaluate(()=>window.__calls.filter(c=>c.name==='pod.session.saveInkRecipe').length),0);
+    await click(recipe.getByRole('button',{name:'Salvar mistura + baixar estoque'}));
+    const payload=await page.evaluate(()=>window.__calls.find(c=>c.name==='pod.session.saveInkRecipe').input);
+    assert.equal(payload.procedureId,1);assert.deepEqual(payload.ingredients,[{tenantMaterialId:11,drops:5}]);
+    await page.getByRole('button',{name:'Repor mistura M01',exact:true}).click();await check(recipe);
+    await recipe.getByRole('spinbutton',{name:/Gotas de Tinta preta/}).fill('4');
+    await recipe.getByRole('spinbutton',{name:'Gotas de Tinta branca',exact:true}).fill('2');
+    if(process.env.QA_SCREENSHOT_PATH)await page.screenshot({path:process.env.QA_SCREENSHOT_PATH});
+    await click(recipe.getByRole('button',{name:'Confirmar reposição'}));
+    const refill=await page.evaluate(()=>window.__calls.filter(c=>c.name==='pod.session.saveInkRecipe').at(-1).input);
+    assert.equal(refill.refillRecipeId,61);assert.equal(refill.cupTenantMaterialId,undefined);
+    assert.deepEqual(refill.ingredients,[{tenantMaterialId:11,drops:4},{tenantMaterialId:14,drops:2}]);
+    await click(recipe.getByRole('button',{name:'Recolher aba de materiais'}));
     // No automatic completion: the existing callback requires explicit action.
     await page.getByRole('button',{name:'Revisar conclusão da sessão'}).click();
     const finish=region('Revisão antes de concluir');await check(finish);
     assert.equal(await page.evaluate(()=>window.__finish),0);
     await click(finish.getByRole('button',{name:'Ir para conclusão da sessão'}));
     assert.equal(await page.evaluate(()=>window.__finish),1);
-    await page.getByRole('button',{name:'Pausar sessão',exact:true}).click();assert.equal(await page.evaluate(()=>window.__timer),1);
+    await page.locator('.session-timer-control').first().click();assert.equal(await page.evaluate(()=>window.__timer),1);
     // Other submenus use the same real shell and keep their original handlers.
     await page.keyboard.press('Escape');
     const openLayers=page.getByRole('button',{name:'Abrir camadas',exact:true});
@@ -168,6 +187,6 @@ try {
     assert.equal(await page.locator('.session-glass-window').count(),0);
     assert.deepEqual(errors,[]);
     console.log('PASS',width+'x'+height,': bounds, text, scroll, multiple windows, draft retention, recipe/consumption payloads, timer, finish, layers, samples, notes and resize');
-    await page.close();
+    await browser.close();
   }
 } finally {await browser?.close();server.close();}

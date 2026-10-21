@@ -273,22 +273,22 @@ export default function PodSession() {
   useEffect(() => {
     if (!procedure) return;
 
-    const persistedEffectiveSeconds = (podSessionQuery.data?.timing.effectiveMinutes ?? 0) * 60;
+    const persistedEffectiveSeconds = podSessionQuery.data?.timing.effectiveSeconds ?? (podSessionQuery.data ? podSessionQuery.data.timing.effectiveMinutes * 60 : undefined);
     if (procedure.status === "em_andamento" && procedure.startedAt) {
       const now = Date.now();
       const originalElapsed = Math.floor((now - new Date(procedure.startedAt).getTime()) / 1000);
-      const initialElapsed = persistedEffectiveSeconds > 0 ? persistedEffectiveSeconds : originalElapsed;
+      const initialElapsed = persistedEffectiveSeconds ?? originalElapsed;
       setElapsed(initialElapsed > 0 ? initialElapsed : 0);
       setIsRunning(true);
       startTimeRef.current = now - Math.max(0, initialElapsed) * 1000;
     } else if (procedure.status === "pausado") {
-      setElapsed(persistedEffectiveSeconds || (procedure.totalDurationMinutes ?? 0) * 60);
+      setElapsed(persistedEffectiveSeconds ?? (procedure.totalDurationMinutes ?? 0) * 60);
       setIsRunning(false);
     } else if (procedure.status === "finalizado") {
-      setElapsed(persistedEffectiveSeconds || (procedure.totalDurationMinutes ?? 0) * 60);
+      setElapsed(persistedEffectiveSeconds ?? (procedure.totalDurationMinutes ?? 0) * 60);
       setIsRunning(false);
     }
-  }, [procedure?.status, procedure?.startedAt, procedure?.totalDurationMinutes, podSessionQuery.data?.timing.effectiveMinutes]);
+  }, [procedure?.status, procedure?.startedAt, procedure?.totalDurationMinutes, podSessionQuery.data?.timing.effectiveMinutes, podSessionQuery.data?.timing.effectiveSeconds]);
 
   // ── Timer: incrementar a cada segundo ───────────────────────────────────
   useEffect(() => {
@@ -310,7 +310,7 @@ export default function PodSession() {
 
   useEffect(() => {
     if (!referenceFullscreen) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[role="dialog"]')) setReferenceFullscreen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector('[role="dialog"]')) setReferenceFullscreen(false); };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [referenceFullscreen]);
@@ -551,7 +551,7 @@ export default function PodSession() {
 
           {/* Timer */}
           <div className="bg-card border-b px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
+            <button type="button" className="flex min-h-11 items-center gap-2 rounded-md text-left focus-visible:outline focus-visible:outline-2" aria-label={isFinished?"Sessão concluída":isNew?"Iniciar sessão":isPaused?"Retomar sessão":"Pausar sessão"} disabled={isFinished||timerMutation.isPending||startPauseMutation.isPending||resumePauseMutation.isPending} onClick={isNew?handleStart:isPaused?handleResume:handlePause}>
               <Clock className={`w-5 h-5 ${isRunning ? "text-green-500 animate-pulse" : "text-muted-foreground"}`} />
               <span className={`font-mono text-2xl font-bold tabular-nums ${isRunning ? "text-green-500" : isFinished ? "text-muted-foreground" : "text-foreground"}`}>
                 {formatTime(elapsed)}
@@ -562,7 +562,7 @@ export default function PodSession() {
                   Finalizado
                 </Badge>
               )}
-            </div>
+            </button>
 
             <div className="flex flex-wrap gap-2 w-full sm:w-auto">
               <Button size="sm" variant="default" className="gap-1.5 w-full sm:w-auto" onClick={() => setReferenceFullscreen(current => !current)}>{referenceFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}<span>{referenceFullscreen ? "Sair do painel" : "Abrir painel da sessão"}</span></Button>

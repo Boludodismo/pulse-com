@@ -70,6 +70,7 @@ export const procedureInkRecipes = mysqlTable(
     clientId: int().notNull(),
     artistId: int(),
     sampleId: int(),
+    refillRecipeId: int(),
     code: varchar({ length: 16 }).notNull(),
     cupSize: varchar({ length: 8 }),
     cupCapacityMl: decimal({ precision: 8, scale: 3 }),
