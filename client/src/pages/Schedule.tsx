@@ -1,4 +1,5 @@
 import { appointmentTarget, monthTarget, useLongPressDrag, MoveConfirmation, DragIndicator } from "@/components/VisualMove";
+import { useAgendaLongPress, pressedSlotMinute } from "@/hooks/useAgendaLongPress";
 import { CommitmentStrip, CommitmentsManager } from "@/components/Commitments";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { EventModal } from "@/components/EventModal";
@@ -206,6 +207,7 @@ export default function Schedule() {
   const requestMove=(apt:any,date:string)=>{if(date!==apt.date)setPendingMove({apt,date,requestId:crypto.randomUUID()});setDraggedAppointment(null);setDragOverSlot(null);};
   const touchMove=useLongPressDrag<any>((x,y,apt,offset)=>appointmentTarget(x,y,apt.duration||60,offset)||monthTarget(x,y,apt.date),apt=>setDraggedAppointment(apt),target=>setDragOverSlot(target?{date:new Date(target.day+"T12:00:00"),hour:target.hour,minute:target.minute}:null),(apt,target)=>requestMove(apt,target.date),()=>{setDraggedAppointment(null);setDragOverSlot(null);});
 
+  const createPress = useAgendaLongPress();
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
   // Form state para edição
@@ -383,6 +385,11 @@ export default function Schedule() {
   };
 
   const handleSwipeEnd = (event: React.TouchEvent) => {
+    if (createPress.handled.current) {
+      createPress.handled.current = false;
+      swipeStart.current = null;
+      return;
+    }
     if (viewMode !== "week" || !swipeStart.current) return;
     const touch = event.changedTouches[0];
     const deltaX = touch.clientX - swipeStart.current.x;
@@ -763,11 +770,16 @@ export default function Schedule() {
               {HOURS.map((hour) => (
                 <div
                   key={hour}
-                  className="absolute w-full border-t border-border/30"
-                  style={{ top: `${(hour - HOURS[0]) * SLOT_HEIGHT}px`, height: `${SLOT_HEIGHT}px` }}
+                  className="absolute w-full border-t border-border/30 select-none"
+                  style={{ top: `${(hour - HOURS[0]) * SLOT_HEIGHT}px`, height: `${SLOT_HEIGHT}px`, WebkitTouchCallout: "none" }}
                   onDragOver={(e) => handleWeekDragOver(e, day, hour, 0)}
                   onDrop={(e) => handleWeekDrop(e, day, hour, 0)}
                   onDoubleClick={(e) => { e.stopPropagation(); handleSlotDoubleClick(day, hour, 0); }}
+                  onPointerDown={(event) => {
+                    const minute = pressedSlotMinute(event);
+                    createPress.start(event, () => handleSlotDoubleClick(day, hour, minute));
+                  }}
+                  onContextMenu={(event) => event.preventDefault()}
                 >
                   <div
                     className="absolute w-full border-t border-border/20"
@@ -859,6 +871,9 @@ export default function Schedule() {
             onDragLeave={() => setDragOverSlot(null)}
             onDrop={(e) => handleMonthDrop(e, day.date)}
             onDoubleClick={() => day.date && handleSlotDoubleClick(day.date)}
+            onPointerDown={(event) => day.date && createPress.start(event, () => handleSlotDoubleClick(day.date!))}
+            onContextMenu={(event) => event.preventDefault()}
+            style={{ WebkitTouchCallout: "none", userSelect: "none" }}
             className={`
               min-h-16 sm:min-h-24 p-1 sm:p-1.5 rounded-lg border transition-all
               ${day.date ? "bg-card hover:bg-accent/30 cursor-pointer" : "bg-muted/20"}

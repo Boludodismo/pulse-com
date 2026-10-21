@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { formatAppointmentDateTime } from "../../../shared/appointmentTime";
 import { trpc } from "@/lib/trpc";
 import {
   Dialog,
@@ -137,8 +138,6 @@ export function MoveConfirmation({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [notify, setNotify] = useState(false);
-  useEffect(() => setNotify(false), [pending?.requestId]);
   const move = trpc.agendaMoves.move.useMutation({
     onSuccess: r => {
       toast.success("Agendamento reagendado.");
@@ -164,17 +163,10 @@ export function MoveConfirmation({
             <p className="break-words">
               {pending.apt.clientName || pending.apt.service}
             </p>
-            <p>De {pending.apt.date.slice(0, 16)}</p>
-            <p>Para {pending.date.slice(0, 16)}</p>
+            <p>De {formatAppointmentDateTime(pending.apt.date)}</p>
+            <p>Para {formatAppointmentDateTime(pending.date)}</p>
             <p>Duração preservada: {pending.apt.duration} minutos.</p>
-            <label className="flex gap-2">
-              <input
-                type="checkbox"
-                checked={notify}
-                onChange={e => setNotify(e.target.checked)}
-              />
-              Autorizo enviar uma mensagem ao cliente sobre esta alteração.
-            </label>
+            <p>O cliente será avisado pelo WhatsApp sobre a alteração.</p>
             <p className="text-sm">
               O envio também depende de conexão ativa e consentimento do
               cliente.
@@ -194,7 +186,7 @@ export function MoveConfirmation({
                     id: pending.apt.id,
                     expectedDate: pending.apt.date,
                     date: pending.date,
-                    notify,
+                    notify: true,
                     requestId: pending.requestId,
                   })
                 }

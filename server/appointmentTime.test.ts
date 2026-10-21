@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appointmentInstant, appointmentsOverlap, formatAppointmentInterval, formatAppointmentConflictMessage } from "../shared/appointmentTime";
+import { formatAppointmentDate, formatAppointmentDateTime, appointmentInstant, appointmentsOverlap, formatAppointmentInterval, formatAppointmentConflictMessage } from "../shared/appointmentTime";
 describe("Agenda e calendário", () => {
   it("preserva horário local em datas SQL e ISO e identifica sobreposição na virada do dia", () => {
     expect(appointmentInstant("2026-09-08 14:00:00").toISOString()).toBe("2026-09-08T14:00:00.000Z");
@@ -19,5 +19,13 @@ describe("Agenda e calendário", () => {
     const message = formatAppointmentConflictMessage("Artista Exemplo", [{id:7, clientId:4, clientName:"Cliente Exemplo", date:"2026-09-11 23:45:00", duration:120, service:"Sessão exemplo"}]);
     expect(message).toContain("Cliente Exemplo — 11/09/2026 às 23:45 até 12/09/2026 às 01:45");
     expect(message).toContain("agendamento #7");
+  });
+});
+
+describe("Datas de agenda e lembretes no padrão brasileiro",()=>{
+  it("exibe dia/mês/ano e conserva a hora local, inclusive na virada do ano",()=>{
+    expect(formatAppointmentDate("2026-10-21")).toBe("21/10/2026");
+    expect(formatAppointmentDateTime("2026-12-31 23:45:00")).toBe("31/12/2026 às 23:45");
+    expect(formatAppointmentDateTime("2027-01-01T00:15:00.000Z")).toBe("01/01/2027 às 00:15");
   });
 });

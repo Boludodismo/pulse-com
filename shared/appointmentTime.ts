@@ -13,6 +13,15 @@ export function appointmentsOverlap(start: string | Date, duration: number, othe
   return a < b + otherDuration * 60000 && a + duration * 60000 > b;
 }
 
+export function formatAppointmentDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+}
+
+export function formatAppointmentDateTime(value: string) {
+  return `${formatAppointmentDate(value)} às ${value.slice(11, 16)}`;
+}
+
 export function formatAppointmentInterval(date: string | Date, duration: number) {
   const start = appointmentInstant(date);
   const end = new Date(start.getTime() + duration * 60000);

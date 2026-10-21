@@ -11,7 +11,8 @@ import { enforceRateLimit } from './security/rateLimit';
 import { revokeSession, revokeCredentialArtifacts } from './security/service';
 import { digest } from './security/crypto';
 import { sdk } from './_core/sdk';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { queueAppointmentRescheduleNotice } from "./messaging/appointmentRescheduleNotice";
 import { assertAnamneseClient, assertAnamneseRecord } from './security/anamneseAccess';
 import { nativeBotRouter } from "./routers/nativeBot";
 import { isPrivateInboxOwner } from "./intelligentInbox/access";
@@ -951,6 +952,16 @@ export const appRouter = router({
           userAgent: ctx.req.headers?.["user-agent"],
         });
 
+        if (appointmentAfter && appointmentAfter.date !== appointmentBefore.date) {
+          const warning = await queueAppointmentRescheduleNotice({
+            studioId: appointmentBefore.studioId, appointmentId: input.id,
+            clientId: appointmentAfter.clientId, previousDate: appointmentBefore.date,
+            date: appointmentAfter.date, service: appointmentAfter.service,
+            artist: appointmentAfter.artist,
+            idempotencyKey: `appointment-update:${appointmentBefore.studioId}:${input.id}:${randomUUID()}`,
+          });
+          if (warning) warnings.push(warning);
+        }
         if (appointmentAfter) {
           await (await import("./messaging/artistNotifications")).queueArtistAppointmentNotice({
             studioId: appointmentBefore.studioId, appointmentId: input.id, change: "updated",

@@ -6,8 +6,7 @@ import { router, tenantProcedure } from "./_core/trpc";
 import * as db from "./db";
 import { database, ensureCommitmentsSchema } from "./commitments/db";
 import { hasModulePermission } from "./saas";
-import { getActiveIntegration, sendAndLog } from "./messaging/service";
-import { firstName } from "./messaging/messagePresentation";
+import { queueAppointmentRescheduleNotice } from "./messaging/appointmentRescheduleNotice";
 import { buildAutomaticAppointmentReminderMessage } from "./messaging/appointmentReminderSchedule";
 const localDate = z
   .string()
@@ -25,12 +24,12 @@ export async function moveAppointment(
     id: number;
     expectedDate: string;
     date: string;
-    notify: boolean;
+    notify?: boolean;
     requestId: string;
     duration?: number;
   }
 ) {
-  if (!ctx.user.studioId || ctx.user.role === "superadmin")
+  if (!ctx.user.studioId)
     throw new TRPCError({ code: "FORBIDDEN" });
   const studioId = ctx.user.studioId;
   await ensureCommitmentsSchema();
@@ -140,6 +139,14 @@ export async function moveAppointment(
     warnings.push(
       "Lembretes personalizados mantiveram o texto. Confira suas datas no conteúdo."
     );
+  if (input.notify !== false) {
+    const warning = await queueAppointmentRescheduleNotice({
+      studioId, appointmentId: input.id, clientId: before.clientId,
+      previousDate: before.date, date: input.date, service: before.service,
+      artist: before.artist, idempotencyKey: `visual-move:${studioId}:${input.requestId}`,
+    });
+    if (warning) warnings.push(warning);
+  }
   await db.createAuditLog({
     userId: ctx.user.id,
     userName: ctx.user.name || "Usuário",
@@ -151,7 +158,7 @@ export async function moveAppointment(
       before: before.date,
       after: input.date,
       duration,
-      notifyAuthorized: input.notify,
+      notifyAuthorized: input.notify !== false,
     },
   });
   syncAppointmentToSheets({
@@ -170,36 +177,6 @@ export async function moveAppointment(
     totalPrice: before.totalAmount ? Number(before.totalAmount) : undefined,
     notes: before.notes,
   });
-  if (input.notify && client?.phone) {
-    try {
-      const integration = await getActiveIntegration(studioId);
-      if (!integration) throw new Error("Sem conexão");
-      const [consents]: any = await database().query(
-        "SELECT has_whatsapp_opt_in,opted_out_at FROM integration_contacts WHERE studio_id=? AND client_id=? AND integration_id=?",
-        [studioId, client.id, integration.id]
-      );
-      if (!consents[0]?.has_whatsapp_opt_in || consents[0].opted_out_at)
-        throw new Error("Sem consentimento");
-      const result = await sendAndLog({
-        studioId,
-        integrationId: integration.id,
-        recipientType: "client",
-        recipientPhone: client.phone,
-        recipientName: firstName(client.name),
-        clientId: client.id,
-        appointmentId: input.id,
-        trigger: "appointment_rescheduled",
-        message: `Olá, ${firstName(client.name)}! Seu agendamento foi alterado para ${input.date.slice(0, 10).split("-").reverse().join("/")} às ${input.date.slice(11, 16)}.\nServiço: ${before.service}\nArtista: ${before.artist}`,
-        idempotencyKey: `visual-move:${studioId}:${input.requestId}`,
-      });
-      if (!result.success) throw new Error("Fila indisponível");
-    } catch {
-      warnings.push(
-        "Horário salvo. O aviso não foi enfileirado; confira conexão e consentimento do cliente."
-      );
-    }
-  } else if (input.notify)
-    warnings.push("Horário salvo. O cliente não possui WhatsApp cadastrado.");
   return { success: true, warnings };
 }
 export const agendaMovesRouter = router({
@@ -209,7 +186,7 @@ export const agendaMovesRouter = router({
         id: z.number().int().positive(),
         expectedDate: localDate,
         date: localDate,
-        notify: z.boolean(),
+        notify: z.literal(true).default(true),
         requestId: z.string().uuid(),
       })
     )

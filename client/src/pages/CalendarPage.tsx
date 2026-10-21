@@ -1,3 +1,4 @@
+import { useAgendaLongPress, pressedSlotMinute } from "@/hooks/useAgendaLongPress";
 import { appointmentTarget, monthTarget, useLongPressDrag, MoveConfirmation, DragIndicator } from "@/components/VisualMove";
 import { CommitmentStrip, CommitmentsManager } from "@/components/Commitments";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
@@ -107,9 +108,7 @@ export default function CalendarPage() {
   const touchMove=useLongPressDrag<any>((x,y,apt,offset)=>appointmentTarget(x,y,apt.duration||60,offset)||monthTarget(x,y,apt.date),apt=>setDraggedApt(apt),target=>setDragOverSlot(target?{date:new Date(target.day+"T12:00:00"),hour:target.hour,minute:target.minute}:null),(apt,target)=>requestMove(apt,target.date),()=>{setDraggedApt(null);setDragOverSlot(null);});
 
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const longPressStart = useRef<{ x: number; y: number } | null>(null);
-  const longPressHandled = useRef(false);
+  const createPress = useAgendaLongPress();
 
   // Queries
   const { data: calendars = [], refetch: refetchCalendars } = trpc.calendars.list.useQuery();
@@ -387,8 +386,8 @@ export default function CalendarPage() {
   };
 
   const handleSwipeEnd = (event: React.TouchEvent) => {
-    if (longPressHandled.current) {
-      longPressHandled.current = false;
+    if (createPress.handled.current) {
+      createPress.handled.current = false;
       swipeStart.current = null;
       return;
     }
@@ -401,38 +400,9 @@ export default function CalendarPage() {
     nav(deltaX < 0 ? 1 : -1);
   };
 
-  const cancelLongPress = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-    longPressStart.current = null;
-  };
-
-  const handleSlotLongPressStart = (date: Date, hour: number, event: React.TouchEvent<HTMLDivElement>) => {
-    if (event.touches.length !== 1 || draggedApt) return;
-    cancelLongPress();
-    longPressHandled.current = false;
-    const touch = event.touches[0];
-    longPressStart.current = { x: touch.clientX, y: touch.clientY };
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const offsetY = Math.max(0, Math.min(bounds.height - 1, touch.clientY - bounds.top));
-    const minute = Math.floor((offsetY / bounds.height) * 4) * 15;
-    longPressTimer.current = setTimeout(() => {
-      longPressHandled.current = true;
-      openNewApt(date, hour, minute);
-      if (navigator.vibrate) navigator.vibrate(10);
-    }, 550);
-  };
-
-  const handleSlotLongPressMove = (event: React.TouchEvent<HTMLDivElement>) => {
-    const start = longPressStart.current;
-    const touch = event.touches[0];
-    if (!start || !touch) {
-      cancelLongPress();
-      return;
-    }
-    if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 12) cancelLongPress();
+  const handleSlotLongPressStart = (date: Date, hour: number, event: React.PointerEvent<HTMLDivElement>) => {
+    const minute = pressedSlotMinute(event);
+    createPress.start(event, () => openNewApt(date, hour, minute));
   };
 
   const getAptsByDay = (day: Date) =>
@@ -571,10 +541,7 @@ export default function CalendarPage() {
                     className="absolute w-full border-t border-white/10 hover:bg-white/5 cursor-pointer transition-colors"
                     style={{ top: `${(hour - HOURS[0]) * SLOT_HEIGHT}px`, height: `${SLOT_HEIGHT}px` }}
                     onDoubleClick={(e) => handleSlotDblClick(day, hour, e)}
-                    onTouchStart={(event) => handleSlotLongPressStart(day, hour, event)}
-                    onTouchMove={handleSlotLongPressMove}
-                    onTouchEnd={cancelLongPress}
-                    onTouchCancel={cancelLongPress}>
+                    onPointerDown={(event) => handleSlotLongPressStart(day, hour, event)}>
                     {/* Drop targets: hora cheia e meia hora */}
                     <div className="absolute inset-x-0 top-0 h-1/2 z-5"
                       onDragOver={(e) => handleDragOver(e, day, hour, 0)}
@@ -653,6 +620,9 @@ export default function CalendarPage() {
                 className={`min-h-[100px] p-1.5 border-b border-r border-white/10
                   ${day ? "hover:bg-white/5 cursor-pointer" : "bg-[#111]"}
                   ${isToday(day) ? "bg-blue-500/10" : ""}`}
+                onPointerDown={(event) => day && createPress.start(event, () => openNewApt(day))}
+                onContextMenu={(event) => event.preventDefault()}
+                style={{ WebkitTouchCallout: "none", userSelect: "none" }}
                 onDoubleClick={() => day && openNewApt(day)}>
                 {day && (
                   <>
@@ -734,10 +704,7 @@ export default function CalendarPage() {
                   className="absolute w-full border-t border-white/10 hover:bg-white/5 cursor-pointer"
                   style={{ top: `${(hour - HOURS[0]) * SLOT_HEIGHT}px`, height: `${SLOT_HEIGHT}px` }}
                   onDoubleClick={(e) => handleSlotDblClick(currentDate, hour, e)}
-                  onTouchStart={(event) => handleSlotLongPressStart(currentDate, hour, event)}
-                  onTouchMove={handleSlotLongPressMove}
-                  onTouchEnd={cancelLongPress}
-                  onTouchCancel={cancelLongPress}>
+                  onPointerDown={(event) => handleSlotLongPressStart(currentDate, hour, event)}>
                   <div className="absolute inset-x-0 top-0 h-1/2 z-5"
                     onDragOver={(e) => handleDragOver(e, currentDate, hour, 0)}
                     onDrop={(e) => handleDrop(e, currentDate, hour, 0)} />

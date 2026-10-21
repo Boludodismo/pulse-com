@@ -1,3 +1,5 @@
+vi.mock("./messaging/appointmentRescheduleNotice", () => ({ queueAppointmentRescheduleNotice: vi.fn().mockResolvedValue(null) }));
+import { queueAppointmentRescheduleNotice } from "./messaging/appointmentRescheduleNotice";
 vi.mock("./messaging/artistNotifications", () => ({ queueArtistAppointmentNotice: vi.fn().mockResolvedValue(true) }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mock = vi.hoisted(() => ({
@@ -81,6 +83,29 @@ describe("Falha do WhatsApp após salvar agendamento", () => {
     expect(result.id).toBe(77);
     expect(result.warnings).toHaveLength(1);
     expect(result.automaticReminder.scheduled).toBe(false);
+  });
+  it("avisa o cliente depois de salvar uma mudança de dia e hora no formulário",async()=>{
+    const after={...saved,date:"2026-09-11 15:45:00"};
+    mock.getAppointmentById.mockResolvedValueOnce(saved).mockResolvedValueOnce(after);
+    const result=await appRouter.createCaller(ctx).appointments.update({id:77,data:{date:after.date}});
+    expect(result).toEqual({success:true,warnings:[]});
+    expect(queueAppointmentRescheduleNotice).toHaveBeenCalledWith(expect.objectContaining({studioId:1,appointmentId:77,clientId:1,previousDate:saved.date,date:after.date}));
+    expect(mock.updateAppointment.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(queueAppointmentRescheduleNotice).mock.invocationCallOrder[0]);
+  });
+  it("mostra problema no WhatsApp sem desfazer o horário salvo",async()=>{
+    const after={...saved,date:"2026-09-11 15:45:00"};
+    mock.getAppointmentById.mockResolvedValueOnce(saved).mockResolvedValueOnce(after);
+    vi.mocked(queueAppointmentRescheduleNotice).mockResolvedValueOnce("Horário salvo. WhatsApp indisponível.");
+    expect(await appRouter.createCaller(ctx).appointments.update({id:77,data:{date:after.date}})).toEqual({success:true,warnings:["Horário salvo. WhatsApp indisponível."]});
+  });
+  it("não avisa em edições sem mudança de horário ou que não foram salvas",async()=>{
+    await appRouter.createCaller(ctx).appointments.update({id:77,data:{notes:"Anotação"}});
+    await appRouter.createCaller(ctx).appointments.update({id:77,data:{date:saved.date}});
+    mock.checkAppointmentConflicts.mockResolvedValueOnce({hasConflict:true,conflicts:[]});
+    await expect(appRouter.createCaller(ctx).appointments.update({id:77,data:{date:"2026-09-11 15:45:00"}})).rejects.toMatchObject({code:"CONFLICT"});
+    mock.updateAppointment.mockRejectedValueOnce(new Error("database offline"));
+    await expect(appRouter.createCaller(ctx).appointments.update({id:77,data:{date:"2026-09-11 15:45:00"}})).rejects.toThrow("database offline");
+    expect(queueAppointmentRescheduleNotice).not.toHaveBeenCalled();
   });
   it("falha real na gravação continua sendo um erro, sem indicar sucesso", async () => {
     mock.updateAppointment.mockRejectedValueOnce(new Error("database offline"));

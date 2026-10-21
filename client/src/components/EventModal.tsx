@@ -1,3 +1,4 @@
+import { formatAppointmentDate, formatAppointmentDateTime } from "@shared/appointmentTime";
 import AppointmentMaterials from "./AppointmentMaterials";
 import {AttendancePanel,ClientAttendanceHistory} from './AttendancePanel';
 import { emptyAppointmentKit, type AppointmentKitDraft } from "@shared/appointmentKit";
@@ -1567,7 +1568,7 @@ export function EventModal({
                   Novo Lembrete
                 </p>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <Label className="text-xs">Data do envio</Label>
                     <Input
                       type="date"
@@ -1576,7 +1577,7 @@ export function EventModal({
                       className="h-8 text-sm"
                     />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <Label className="text-xs">Horário do envio</Label>
                     <Input
                       type="time"
@@ -1647,7 +1648,7 @@ export function EventModal({
                   {pendingReminders.map((r, i) => (
                     <div key={i} className="rounded-lg border p-3 flex items-start justify-between gap-2 bg-muted/20">
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium">{r.date} às {r.time}</p>
+                        <p className="text-xs font-medium">{formatAppointmentDate(r.date)} às {r.time}</p>
                         <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{r.message}</p>
                       </div>
                       <button
@@ -1713,7 +1714,7 @@ export function EventModal({
                               <div className="flex items-center gap-2 mb-1">
                                 {reminderStatusBadge(r.status)}
                                 <span className="text-xs text-muted-foreground">
-                                  {new Date(r.scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                  {formatAppointmentDateTime(r.scheduledAt)}
                                 </span>
                               </div>
                               <p className="text-xs text-muted-foreground line-clamp-2 whitespace-pre-wrap">{r.message}</p>
