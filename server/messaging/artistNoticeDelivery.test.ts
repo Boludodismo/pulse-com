@@ -100,6 +100,14 @@ beforeEach(() => {
   });
 });
 describe("artist notification delivery guard", () => {
+  it("sends care feedback through the same worker ownership and recipient guards", async () => {
+    trigger='care_artist_feedback:9';
+    expect(await processPendingIntegrationJobs()).toMatchObject({completed:1,failed:0});
+    expect(state.contextError).toHaveBeenCalledWith(expect.objectContaining({trigger,artistId:7,clientId:3}));
+    state.contextError.mockResolvedValue('Artista alterado');
+    expect(await processPendingIntegrationJobs()).toMatchObject({completed:0,failed:1});
+    expect(state.send).toHaveBeenCalledTimes(1);
+  });
   it("delivers the approved studio fallback with no optional reminder opt-in and audits completion", async () => {
     expect(await processPendingIntegrationJobs()).toMatchObject({
       completed: 1,

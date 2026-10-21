@@ -1,3 +1,4 @@
+import {recoverCareFeedbackArtistNotices} from './messaging/careFeedbackNotices';
 import { runCalendarSyncCycle } from "./calendarSync/service";
 import { runCommitmentCycle } from "./commitments/service";
 import { firstName } from "./messaging/messagePresentation";
@@ -360,6 +361,7 @@ export async function runLegacyNotificationCycle() {
   // origem cria jobs próprios, idempotentes e escopados, que o Heartbeat entrega
   // posteriormente pela integração ativa do respectivo estúdio.
   try { await runAttendanceCycle(); } catch { console.error('[Attendance] Ciclo indisponível.'); }
+  try { await recoverCareFeedbackArtistNotices(); } catch { console.error('[CustomerCare] Avisos ao artista pendentes.'); }
   try { await runCustomerCareCycle(); } catch { console.error('[CustomerCare] Ciclo indisponível.'); }
   try { await runCalendarSyncCycle(); } catch { console.error("[CalendarSync] Ciclo indisponível."); }
   try { await runCommitmentCycle(); } catch (error) { console.error("[Commitments] Falha no ciclo", error instanceof Error ? error.name : "erro"); }

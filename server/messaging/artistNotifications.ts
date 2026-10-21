@@ -1,3 +1,4 @@
+import {careEvents} from "../../drizzle/customerCareSchema";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import {
@@ -18,7 +19,7 @@ import { selectArtistNotificationRecipient } from "../appointmentActions";
 export function isCoreArtistNotice(trigger?: string | null) {
   return (
     !!trigger &&
-    (/^attendance:(start|end):\d+:[a-f0-9]{64}$/.test(trigger) || [
+    (/^care_artist_feedback:\d+$/.test(trigger) || /^attendance:(start|end):\d+:[a-f0-9]{64}$/.test(trigger) || [
       "artist_appointment_created",
       "artist_appointment_updated",
       "artist_customer_reply",
@@ -176,6 +177,13 @@ export async function artistNoticeContextError(input: {
     const {attendanceNoticeContext}=await import('../attendance/service');
     const a=await attendanceNoticeContext(input.studioId,input.trigger);
     return a && a.artistId===input.artistId && a.clientId===input.clientId && a.id===input.appointmentId && a.attendanceRecipient==='artist' ? null : 'O atendimento ou destinatário deste aviso mudou.';
+  }
+  const feedbackId = /^care_artist_feedback:(\d+)$/.exec(input.trigger)?.[1];
+  if (feedbackId) {
+    const [event] = await db.select({artistId:careEvents.artistId,clientId:careEvents.clientId,appointmentId:careEvents.appointmentId,feedback:careEvents.feedback})
+      .from(careEvents).where(and(eq(careEvents.id,Number(feedbackId)),eq(careEvents.studioId,input.studioId))).limit(1);
+    return event?.feedback && event.artistId===input.artistId && event.clientId===input.clientId && (event.appointmentId??null)===(input.appointmentId??null)
+      ? null : 'O artista responsável por este feedback mudou ou o atendimento não está disponível.';
   }
   const quoteId = /^quote_artist_action:(\d+):/.exec(input.trigger)?.[1];
   if (quoteId) {

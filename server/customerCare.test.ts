@@ -1,8 +1,9 @@
 import {describe,it,expect,vi,beforeEach} from 'vitest';
 import {careDueDate,normalizeCareTags,CARE_DEFAULTS,renderCareMessage} from '../shared/customerCare';
-const mocks=vi.hoisted(()=>({getDb:vi.fn()}));
+const mocks=vi.hoisted(()=>({getDb:vi.fn(),notice:vi.fn(async()=>true)}));
 vi.mock('./db',()=>({getDb:mocks.getDb}));
 vi.mock('./saas',()=>({isUserAccessActive:vi.fn(async()=>true)}));
+vi.mock('./messaging/careFeedbackNotices',()=>({queueCareFeedbackArtistNotice:mocks.notice}));
 import {customerCareRouter} from './routers/customerCare';
 import {careClock} from './messaging/customerCare';
 import {MySqlDialect} from 'drizzle-orm/mysql-core';
@@ -29,6 +30,6 @@ describe('Relacionamento e pós-venda',()=>{
   expect(deleted.sql).toContain('not in');expect(deleted.params).toEqual([10,50,'orçamento enviado','orçamento respondido','Não compareceu']);
   expect(inserted).toEqual([{studioId:10,clientId:50,label:'realismo'}]);
  });
- it('registra feedback uma vez sem alterar consentimento nem agendamento',async()=>{const writes=database([[{id:5,status:'queued',dueDate:new Date().toISOString().slice(0,10),feedback:null}]]);await customerCareRouter.createCaller({} as any).feedback({token:'a'.repeat(64),text:'Gostei do atendimento'});expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({feedback:'Gostei do atendimento',status:'responded',readAt:null});});
+ it('registra feedback uma vez sem alterar consentimento nem agendamento',async()=>{const writes=database([[{id:5,studioId:10,status:'queued',dueDate:new Date().toISOString().slice(0,10),feedback:null}]]);await customerCareRouter.createCaller({} as any).feedback({token:'a'.repeat(64),text:'Gostei do atendimento'});expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({feedback:'Gostei do atendimento',status:'responded',readAt:null});expect(mocks.notice).toHaveBeenCalledWith(10,5);});
  it('rejeita link já respondido ou expirado',async()=>{for(const event of [{id:5,status:'responded',dueDate:'2026-09-07'},{id:5,status:'queued',dueDate:'2020-01-01'}]){const writes=database([[event]]);await expect(customerCareRouter.createCaller({} as any).feedback({token:'a'.repeat(64),text:'Repetido'})).rejects.toMatchObject({code:'BAD_REQUEST'});expect(writes).toEqual([]);}});
 });

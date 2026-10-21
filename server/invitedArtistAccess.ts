@@ -34,6 +34,7 @@ export function invitedRoutePermission(path: string): SaasModule | 'self' | null
   if (path.startsWith('pod.catalog.') || path.startsWith('pod.inventory.')) return 'stock';
   if (path.startsWith('pod.planning.')) return 'appointments';
   if (path.startsWith('pod.session.') || path.startsWith('procedures.')) return 'pod';
+  if (['customerCare.feedbackDetail','customerCare.markRead'].includes(path)) return 'self';
   if (['customerCare.history','customerCare.tags','customerCare.saveTags','customerCare.markRead'].includes(path)) return 'clients';
   return routes[path] ?? null;
 }

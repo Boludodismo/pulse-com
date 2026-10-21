@@ -1,3 +1,4 @@
+import CareFeedback from "./pages/CareFeedback";
 import { CommitmentsManager } from "./components/Commitments";
 import AccountSecurity from "./pages/AccountSecurity";
 import NativeBot from "./pages/NativeBot";
@@ -68,6 +69,7 @@ function Router() {
       <Route path="/intelligent-inbox" component={() => <DashboardLayout><IntelligentInbox/></DashboardLayout>} />
       <Route path="/artista/:token" component={PublicArtistCard} />
       <Route path="/proposta/:token" component={PublicProposal} />
+      <Route path="/acompanhamento/:id" component={() => <DashboardLayout><CareFeedback/></DashboardLayout>} />
       <Route path="/feedback/:token" component={CustomerFeedback} />
       <Route path="/" component={() => (
         <DashboardLayout>

@@ -1,3 +1,4 @@
+import {queueCareFeedbackArtistNotice} from '../messaging/careFeedbackNotices';
 import {NO_SHOW_TAG,isNoShowTag} from '../../shared/attendance';
 import {z} from 'zod';
 import {TRPCError} from '@trpc/server';
@@ -32,7 +33,16 @@ export const customerCareRouter=router({
   .from(careEvents).leftJoin(messageQueue,and(eq(messageQueue.id,careEvents.queueId),eq(messageQueue.studioId,ctx.studioId))).leftJoin(clients,and(eq(clients.id,careEvents.clientId),eq(clients.studioId,ctx.studioId)))
   .where(and(eq(careEvents.studioId,ctx.studioId),input?.clientId?eq(careEvents.clientId,input.clientId):undefined,ctx.user.role==='collaborator'?eq(careEvents.artistId,ctx.artistId!):undefined)).orderBy(desc(careEvents.feedbackAt),desc(careEvents.dueDate)).limit(200);
  }),
- linkFeedback:tenantProcedure.input(z.object({id:z.number(),targetId:z.number()})).mutation(async({ctx,input})=>{manager(ctx);const db=await database();const event=(await db.select().from(careEvents).where(and(eq(careEvents.id,input.id),eq(careEvents.studioId,ctx.studioId))).limit(1))[0];const target=(await db.select().from(careEvents).where(and(eq(careEvents.id,input.targetId),eq(careEvents.studioId,ctx.studioId))).limit(1))[0];if(!event?.feedback||event.artistId||!target?.artistId||target.clientId!==event.clientId)throw new TRPCError({code:'BAD_REQUEST',message:'Escolha um atendimento deste cliente.'});await db.update(careEvents).set({artistId:target.artistId,appointmentId:target.appointmentId,readAt:null}).where(and(eq(careEvents.id,event.id),eq(careEvents.studioId,ctx.studioId)));return{ok:true};}),
+ linkFeedback:tenantProcedure.input(z.object({id:z.number(),targetId:z.number()})).mutation(async({ctx,input})=>{manager(ctx);const db=await database();const event=(await db.select().from(careEvents).where(and(eq(careEvents.id,input.id),eq(careEvents.studioId,ctx.studioId))).limit(1))[0];const target=(await db.select().from(careEvents).where(and(eq(careEvents.id,input.targetId),eq(careEvents.studioId,ctx.studioId))).limit(1))[0];if(!event?.feedback||event.artistId||!target?.artistId||target.clientId!==event.clientId)throw new TRPCError({code:'BAD_REQUEST',message:'Escolha um atendimento deste cliente.'});await db.update(careEvents).set({artistId:target.artistId,appointmentId:target.appointmentId,readAt:null}).where(and(eq(careEvents.id,event.id),eq(careEvents.studioId,ctx.studioId)));await queueCareFeedbackArtistNotice(ctx.studioId!,event.id);return{ok:true};}),
+ feedbackDetail:tenantProcedure.input(z.object({id:z.number().int().positive()})).query(async({ctx,input})=>{
+  if(ctx.user.role==='collaborator'&&!ctx.artistId)throw new TRPCError({code:'FORBIDDEN'});
+  const db=await database();
+  const [event]=await db.select({id:careEvents.id,clientName:clients.name,artistId:careEvents.artistId,appointmentId:careEvents.appointmentId,message:careEvents.message,feedback:careEvents.feedback,feedbackAt:careEvents.feedbackAt,readAt:careEvents.readAt})
+   .from(careEvents).leftJoin(clients,and(eq(clients.id,careEvents.clientId),eq(clients.studioId,ctx.studioId)))
+   .where(and(eq(careEvents.id,input.id),eq(careEvents.studioId,ctx.studioId),ctx.user.role==='collaborator'?eq(careEvents.artistId,ctx.artistId!):undefined)).limit(1);
+  if(!event?.feedback)throw new TRPCError({code:'NOT_FOUND',message:'Feedback não encontrado ou sem acesso para sua conta.'});
+  return {...event,message:event.message.replace(/https?:\/\/\S+\/feedback\/\S+/g,'[link de feedback do atendimento]')};
+ }),
  markRead:tenantProcedure.input(z.object({id:z.number()})).mutation(async({ctx,input})=>{if(ctx.user.role==='collaborator'&&!ctx.artistId)throw new TRPCError({code:'FORBIDDEN'});const db=await database();await db.update(careEvents).set({readAt:new Date().toISOString().slice(0,19).replace('T',' ')}).where(and(eq(careEvents.id,input.id),eq(careEvents.studioId,ctx.studioId),ctx.user.role==='collaborator'?eq(careEvents.artistId,ctx.artistId!):undefined));return{ok:true};}),
  tags:tenantProcedure.input(z.object({clientId:z.number()})).query(async({ctx,input})=>{await requireClient(ctx,input.clientId);return(await database()).select({label:careTags.label}).from(careTags).where(and(eq(careTags.studioId,ctx.studioId),eq(careTags.clientId,input.clientId)));}),
  saveTags:tenantProcedure.input(z.object({clientId:z.number(),labels:z.array(z.string().trim().min(1).max(60)).max(32)})).mutation(async({ctx,input})=>{await requireClient(ctx,input.clientId);const db=await database();await db.transaction(async tx=>{await tx.delete(careTags).where(and(eq(careTags.studioId,ctx.studioId),eq(careTags.clientId,input.clientId),notInArray(careTags.label,[...QUOTE_AUTOMATIC_TAGS,NO_SHOW_TAG])));const labels=normalizeCareTags(input.labels).filter(label=>!isAutomaticQuoteTag(label)&&!isNoShowTag(label));if(labels.length>30)throw new TRPCError({code:'BAD_REQUEST',message:'Use até 30 etiquetas manuais.'});if(labels.length)await tx.insert(careTags).values(labels.map(label=>({studioId:ctx.studioId,clientId:input.clientId,label})));});return{ok:true};}),
@@ -42,6 +52,6 @@ export const customerCareRouter=router({
  }),
  feedback:publicProcedure.input(z.object({token:z.string().regex(/^[a-f0-9]{64}$/),text:z.string().trim().min(2).max(4000)})).mutation(async({input})=>{
   const db=await database();const event=(await db.select().from(careEvents).where(eq(careEvents.token,input.token)).limit(1))[0];if(!event || event.status!=='queued' || Date.now()>Date.parse(event.dueDate+'T00:00:00Z')+90*86400000)throw new TRPCError({code:'BAD_REQUEST',message:'Link expirado ou resposta já recebida.'});
-  await db.update(careEvents).set({feedback:input.text,feedbackAt:new Date().toISOString().slice(0,19).replace('T',' '),status:'responded',readAt:null}).where(and(eq(careEvents.id,event.id),isNull(careEvents.feedback)));return{ok:true};
+  await db.update(careEvents).set({feedback:input.text,feedbackAt:new Date().toISOString().slice(0,19).replace('T',' '),status:'responded',readAt:null}).where(and(eq(careEvents.id,event.id),isNull(careEvents.feedback)));await queueCareFeedbackArtistNotice(event.studioId,event.id);return{ok:true};
  }),
 });

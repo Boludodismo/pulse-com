@@ -69,6 +69,18 @@ beforeEach(() => {
   });
 });
 describe("artist operational notices through the studio WhatsApp", () => {
+  it("validates care-event ownership at delivery even if the client owner differs", async () => {
+    data.care_events=[{id:9,artistId:7,clientId:3,appointmentId:14,feedback:'Tudo bem'}];
+    data.clients[0].artistId=8;
+    const context={studioId:2,artistId:7,clientId:3,appointmentId:14,trigger:'care_artist_feedback:9'};
+    expect(isCoreArtistNotice(context.trigger)).toBe(true);
+    expect(await artistNoticeContextError(context)).toBeNull();
+    expect(queries.find(q=>q.table==='care_events')?.params).toEqual([9,2]);
+    data.care_events[0].artistId=8;
+    expect(await artistNoticeContextError(context)).toContain('artista responsável');
+    data.care_events=[];
+    expect(await artistNoticeContextError(context)).toContain('artista responsável');
+  });
   it("automatically sends a new appointment to the artist personal number, with date and actual context", async () => {
     expect(
       await queueArtistAppointmentNotice({

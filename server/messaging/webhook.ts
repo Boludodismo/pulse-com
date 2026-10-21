@@ -24,7 +24,7 @@ export async function handleWebhookReply(
       appointmentId,
     });
   if (await recordCareWhatsappReply(studioId, phone, message, eventKey)) {
-    await notifyReply();
+    // The care handler queues the exact event context and its assigned artist.
     return true;
   }
   const db = await getDb();

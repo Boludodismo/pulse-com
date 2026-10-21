@@ -1,3 +1,4 @@
+import {queueCareFeedbackArtistNotice} from './careFeedbackNotices';
 import { automaticReminderIdempotencyKey } from "./automaticReminders";
 import {randomBytes,createHash} from 'node:crypto';
 import {and,eq,gte,lte,isNull,desc,asc,sql} from 'drizzle-orm';
@@ -83,5 +84,5 @@ export async function recordCareWhatsappReply(studioId:number,phone:string,text:
   return true;
  }
  const event=(await db.select().from(careEvents).where(and(eq(careEvents.studioId,studioId),eq(careEvents.clientId,message.clientId!),eq(careEvents.message,message.message))).limit(1))[0];if(!event||Date.now()-Date.parse(message.sentAt.replace(' ','T')+'Z')>90*86400000)return false;
- await db.update(careEvents).set({feedback:((event.feedback?event.feedback+'\n\n':'')+text).slice(-12000),feedbackAt:new Date().toISOString().slice(0,19).replace('T',' '),readAt:null,status:'responded'}).where(eq(careEvents.id,event.id));return true;
+ await db.update(careEvents).set({feedback:((event.feedback?event.feedback+'\n\n':'')+text).slice(-12000),feedbackAt:new Date().toISOString().slice(0,19).replace('T',' '),readAt:null,status:'responded'}).where(eq(careEvents.id,event.id));await queueCareFeedbackArtistNotice(studioId,event.id);return true;
 }

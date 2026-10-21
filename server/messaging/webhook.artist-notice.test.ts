@@ -99,12 +99,12 @@ describe("authenticated replies keep the assigned artist notified", () => {
     expect(state.updates).not.toHaveBeenCalled();
     expect(state.actionNotice).not.toHaveBeenCalled();
   });
-  it("notifies about a care reply while preserving the care handler result", async () => {
+  it("lets the care handler notify its exact artist without a second generic notice", async () => {
     state.care.mockResolvedValue(true);
     expect(
       await handleWebhookReply("+5531988887777", "Tudo certo", 2, "event-3", 19)
     ).toBe(true);
-    expect(state.replyNotice).toHaveBeenCalledTimes(1);
+    expect(state.replyNotice).not.toHaveBeenCalled();
     expect(state.updates).not.toHaveBeenCalled();
   });
   it("keeps recorded customer confirmation successful if internal notification fails", async () => {
