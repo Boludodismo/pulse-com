@@ -350,3 +350,79 @@
  .cockpit-lab .session-glass-window.is-minimized{top:auto}
 }
 @media(prefers-reduced-motion:reduce){.cockpit-lab .session-glass-window{transition:none}}
+
+/* Every session submenu uses the same shell; the existing tool bodies keep
+   their controls and handlers, with one independent vertical scroll area. */
+.cockpit-lab .session-glass-window{
+  width:min(calc(740px * var(--tools-size,1)),calc(100% - 16px));
+  height:auto;max-height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - 20px);
+  background:rgba(24,24,27,var(--tools-alpha,.73));
+}
+.cockpit-lab .session-glass-window.is-active{border-color:#ffffff59;box-shadow:inset 0 1px #ffffff30,0 24px 65px #0009;}
+.cockpit-lab .session-glass-window[hidden],.cockpit-lab .session-glass-scroll[hidden]{display:none;}
+.cockpit-lab .session-glass-header{flex-wrap:wrap;}
+.cockpit-lab .session-glass-grip{flex:1 1 140px;min-height:44px;touch-action:none;}
+.cockpit-lab .session-glass-controls button{width:44px;min-height:44px;}
+.cockpit-lab .session-glass-window :focus-visible,.cockpit-lab .session-glass-pill :focus-visible{outline:2px solid #fb923c;outline-offset:2px;}
+.cockpit-lab .session-glass-window .cockpit-sheet{
+  position:static;inset:auto;transform:none;width:100%;min-width:0;max-width:none;max-height:none;
+  overflow:visible;padding:0;background:transparent;border:0;box-shadow:none;
+}
+.cockpit-lab .session-glass-window .sheet-grid{grid-template-columns:repeat(auto-fit,minmax(min(160px,100%),1fr));}
+.cockpit-lab .session-glass-window :is(input,select,textarea){min-width:0;max-width:100%;}
+.cockpit-lab .session-glass-window select{width:100%;}
+.cockpit-lab .session-glass-window :is(p,small,summary,label,b,strong,legend,.mix-summary,.sample-data){overflow-wrap:anywhere;line-height:1.5;}
+.cockpit-lab .session-glass-window :is(button,.stock-colors-title){white-space:normal;min-width:0;}
+.cockpit-lab .session-glass-window button svg{flex-shrink:0;}
+.cockpit-lab .session-glass-window .sheet-option{border-radius:14px;padding:12px;background:#ffffff08;}
+.cockpit-lab .session-glass-window .sheet-actions button{padding:12px;line-height:1.5;}
+.cockpit-lab .session-glass-window .color-family-strip{flex-wrap:wrap;overflow:visible;}
+.cockpit-lab .session-glass-window .color-family-chip{flex:1 1 90px;height:auto;min-height:48px;}
+.cockpit-lab .session-glass-window .stock-colors-title{flex-wrap:wrap;gap:8px;}
+.cockpit-lab .session-glass-window .sample-detail{grid-template-columns:auto minmax(0,1fr);}
+.cockpit-lab .session-glass-window .mix-ingredient-head.with-swatch{grid-template-columns:34px minmax(0,1fr) 38px;}
+.cockpit-lab .session-glass-window .mix-number-wrap{grid-column:2/-1;justify-self:end;}
+.cockpit-lab .session-glass-window .recipe-sample-card{grid-template-columns:auto auto minmax(0,1fr);}
+.cockpit-lab .session-glass-window .recipe-result-line{flex-wrap:wrap;}
+.cockpit-lab .session-glass-window .recipe-actions,.cockpit-lab .session-glass-window .mix-summary-sticky{position:static;}
+.cockpit-lab .session-glass-window.is-maximized{
+  height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - 8px);
+  max-height:none;
+}
+.cockpit-lab .session-glass-tray{
+  position:absolute;z-index:75;bottom:calc(var(--cockpit-footer-height,76px) + 8px);left:8px;right:8px;
+  display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;pointer-events:none;max-height:35%;overflow-y:auto;
+}
+.cockpit-lab .session-glass-pill{
+  display:flex;flex:0 1 280px;min-width:0;max-width:100%;align-items:center;border:1px solid #ffffff38;border-radius:22px;
+  background:#242427e8;backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);box-shadow:0 8px 24px #0006;pointer-events:auto;
+}
+.cockpit-lab .session-glass-pill button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:8px 12px;min-width:44px;}
+.cockpit-lab .session-glass-pill button:first-child{flex:1;min-width:0;text-align:left;}
+.cockpit-lab .session-glass-pill span{overflow-wrap:anywhere;white-space:normal;font-size:13px;}
+.cockpit-lab .session-glass-pill svg{flex-shrink:0;}
+.cockpit-lab .cockpit-dock,.cockpit-lab .cockpit-palette,.cockpit-lab .focus-palette-strip{
+  border-color:#ffffff30;border-radius:20px;box-shadow:inset 0 1px #ffffff12,0 12px 32px #0006;
+  -webkit-backdrop-filter:blur(28px) saturate(135%);backdrop-filter:blur(28px) saturate(135%);
+}
+@media(max-width:620px){
+  .cockpit-lab .session-glass-window{height:auto;}
+  .cockpit-lab .session-glass-window.is-maximized{height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - 8px);}
+  .cockpit-lab .session-glass-handle{width:18px;}
+}
+.cockpit-lab .session-glass-window .recipe-sample-meta small{white-space:normal;overflow:visible;text-overflow:clip;}
+.cockpit-lab .session-glass-window .cockpit-note{width:100%;}
+.cockpit-lab .cockpit-top{height:auto;min-height:58px;}
+.cockpit-lab .cockpit-client :is(strong,small){white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;line-height:1.4;}
+@media(max-width:620px){
+  .cockpit-lab .cockpit-top{flex-wrap:wrap;justify-content:space-between;}
+  .cockpit-lab .cockpit-client{order:10;flex:1 0 100%;}
+}
+/* On narrow screens the floating description can overlap its anchor. Let the
+   original material button receive taps; its close control stays interactive. */
+.session-material-tooltip{pointer-events:none;}
+.session-material-tooltip button{pointer-events:auto;}
+
+/* Reserve the minimized tray instead of laying it over tool actions. */
+.cockpit-lab .session-glass-window{max-height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - var(--cockpit-tray-height,0px) - 24px);}
+.cockpit-lab .session-glass-window.is-maximized{height:calc(100% - var(--cockpit-header-height,76px) - var(--cockpit-footer-height,76px) - var(--cockpit-tray-height,0px) - 16px);max-height:none;}

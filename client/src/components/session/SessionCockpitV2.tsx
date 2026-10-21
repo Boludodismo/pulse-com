@@ -4,6 +4,7 @@ import SessionMaterialIcon from "./SessionMaterialIcon";
 import SessionMaterialHint from "./SessionMaterialHint";
 import SessionAppearancePanel from "./SessionAppearancePanel";
 import SessionGlassWindow from "./SessionGlassWindow";
+import { useSessionWindows, type SessionWindow } from "./useSessionWindows";
 import { useSessionAppearance } from "./useSessionAppearance";
 import { imageSamplePoint, samplePixelRegion, averageSamplePixels, imageSampleMarker, type SampleSource } from "@shared/sessionColorSampling";
 import { visualLayerStack } from "@shared/sessionVisualLayers";
@@ -28,7 +29,6 @@ type Sample={source?:SampleSource|null;id:string;code:string;hex:string;rgb:[num
 type ReferenceDraft=ColorValue&{xPct:number;yPct:number;source:SampleSource;requestId:string};
 type SamplerFeedback={x:number;y:number;hex:string;placement:"above"|"below"};
 type PhotoTarget={kind:"material";materialId:number;name:string}|{kind:"recipe";recipeId:number;code:string};
-type Sheet="preparation"|"materials"|"ink"|"recipe"|"sample"|"notes"|"finish"|"layerAdd"|"appearance"|null;
 type QuickAction={kind:"consumption";consumptionId:number;materialId:number;quantity:string;label:string;unit:string};
 type RecipeAction={kind:"recipe";recipeId:number;label:string;payload:{procedureId:number;sampleId?:number;cupSize:Cup|null;dropsPerMl:number;cupTenantMaterialId?:number;ingredients:{tenantMaterialId:number;drops:number}[]}};
 type StockAction=QuickAction|RecipeAction;
@@ -145,7 +145,11 @@ const [layerOrder,setLayerOrder]=useState<string[]|null>(null);
 const [layerBusy,setLayerBusy]=useState(false),layerSaving=useRef(false);
 const [mode,setMode]=useState<"tonal"|"color">("tonal"),[sampler,setSampler]=useState(false),[sample,setSample]=useState<Sample|null>(null),[referenceDraft,setReferenceDraft]=useState<ReferenceDraft|null>(null),[samplerFeedback,setSamplerFeedback]=useState<SamplerFeedback|null>(null);
 const [directQuantity,setDirectQuantity]=useState("1");
-const [sheet,setSheet]=useState<Sheet>(null),[ink,setInk]=useState<Material|null>(null),[note,setNote]=useState("");
+const sessionWindows=useSessionWindows();
+const {windows:openWindows,active:sheet,open:setSheet,close:closeSheet,closeAll:closeSheets}=sessionWindows;
+const [minimizedTray,setMinimizedTray]=useState<HTMLDivElement|null>(null);
+const [ink,setInk]=useState<Material|null>(null),[note,setNote]=useState("");
+const windowProps=(id:SessionWindow)=>({onClose:()=>closeSheet(id),onFocus:()=>sessionWindows.focus(id),active:sheet===id,order:openWindows.indexOf(id),restoreKey:sessionWindows.requests[id]??0,minimizeTarget:minimizedTray});
 const [recipeDropsPerMl,setRecipeDropsPerMl]=useState(SESSION_DROPS_PER_ML);
 const DROP=1/recipeDropsPerMl;
 const [cup,setCup]=useState<Cup|null>(null),[ings,setIngs]=useState<Ingredient[]>([]),[familyFilter,setFamilyFilter]=useState<string|null>(null);
@@ -153,6 +157,20 @@ const [undoStack,setUndoStack]=useState<StockAction[]>([]),[redoStack,setRedoSta
 const [photoTarget,setPhotoTarget]=useState<PhotoTarget|null>(null),[photoSrc,setPhotoSrc]=useState<string|null>(null);
 const [newLayerType,setNewLayerType]=useState<"contrast"|"stencil"|"stencil_overlay"|"image">("contrast"),[newLayerName,setNewLayerName]=useState("Contraste");
 const finalInput=useRef<HTMLInputElement>(null),referenceInput=useRef<HTMLInputElement>(null),colorPhotoInput=useRef<HTMLInputElement>(null),layerImageInput=useRef<HTMLInputElement>(null),cockpitRoot=useRef<HTMLDivElement>(null);
+// Let long client/procedure names wrap while keeping the canvas and windows
+// below the measured header, including when the device changes orientation.
+const [chromeSize,setChromeSize]=useState<CSSProperties>({});
+useEffect(()=>{
+  const root=cockpitRoot.current;if(!root)return;
+  const header=root.querySelector<HTMLElement>(".cockpit-top"),footer=root.querySelector<HTMLElement>(".cockpit-bottom"),tray=root.querySelector<HTMLElement>(".session-glass-tray");
+  const measure=()=>setChromeSize(previous=>{
+    const next={"--cockpit-header-height":`${header?.offsetHeight||58}px`,"--cockpit-footer-height":`${footer?.offsetHeight||64}px`,"--cockpit-tray-height":`${tray?.offsetHeight||0}px`} as CSSProperties;
+    return JSON.stringify(previous)===JSON.stringify(next)?previous:next;
+  });
+  const observer=new ResizeObserver(measure);
+  if(header)observer.observe(header);if(footer)observer.observe(footer);if(tray)observer.observe(tray);measure();
+  return()=>observer.disconnect();
+},[proc?.id,focusMode]);
 // Fixed panels must follow the visual viewport inside Safari's in-app browser.
 const [viewport,setViewport]=useState<CSSProperties>({});
 useEffect(()=>{
@@ -205,7 +223,7 @@ useEffect(()=>{
 },[focusMode]);
 
 async function enterFocusMode(){
-  setSheet(null);
+  closeSheets();
   setFocusMode(true);
   setCleanMode(false);
   const node=cockpitRoot.current as any;
@@ -265,7 +283,7 @@ async function uploadVisualLayer(file:File){
     const uploaded=await uploadImage.mutateAsync({procedureId,imageBase64:b64,mimeType:file.type||"image/jpeg",imageType:"other",description:"Camada visual: "+newLayerName});
     await addVisualLayerMutation.mutateAsync({procedureId,name:newLayerName.trim()||"Nova camada",layerType:newLayerType,imageUrl:String(uploaded.imageUrl),imageKey:String(uploaded.imageKey),opacity:100});
     await utils.pod.session.listVisualLayers.invalidate({procedureId});
-    setSheet(null);toast.success("Camada adicionada à sessão.");
+    closeSheet("layerAdd");toast.success("Camada adicionada à sessão.");
   }catch(e:any){toast.error(e.message||"Não foi possível adicionar a camada.")}
 }
 async function removeLayer(layer:any){
@@ -277,7 +295,7 @@ const retryKeys=useRef(new Map<string,string>());
 function stockRequestId(key:string){const id=retryKeys.current.get(key)||crypto.randomUUID();retryKeys.current.set(key,id);return id}
 async function quickConsume(m:Material,quantity:string,label?:string){
   if(stockActionPending.current||props.finished)return;stockActionPending.current=true;
-  try{const key=JSON.stringify(["consume",procedureId,m.id,quantity]);const r=await consumeAuto.mutateAsync({procedureId,tenantMaterialId:Number(m.id),quantity,expectedUnit:m.unit,requestId:stockRequestId(key)});retryKeys.current.delete(key);pushAction({kind:"consumption",consumptionId:r.id,materialId:Number(m.id),quantity,label:label||m.name,unit:m.unit});setSheet(null);await refreshAll()}
+  try{const key=JSON.stringify(["consume",procedureId,m.id,quantity]);const r=await consumeAuto.mutateAsync({procedureId,tenantMaterialId:Number(m.id),quantity,expectedUnit:m.unit,requestId:stockRequestId(key)});retryKeys.current.delete(key);pushAction({kind:"consumption",consumptionId:r.id,materialId:Number(m.id),quantity,label:label||m.name,unit:m.unit});closeSheet("ink");await refreshAll()}
   catch(e:any){toast.error(e.message||"Falha ao consumir material.")}finally{stockActionPending.current=false}
 }
 function useMat(m:Material){
@@ -293,7 +311,7 @@ async function saveRecipe(){
   if(stockActionPending.current)return;
   const drops=ings.reduce((a,b)=>a+b.drops,0),ml=drops*DROP;if(!drops)return toast.error("Adicione tinta ou diluente.");if(cup&&ml>CUP[cup])return toast.error("Mistura maior que a capacidade do batoque.");
   const payload={procedureId,sampleId:sample?Number(sample.id):undefined,cupSize:cup,dropsPerMl:recipeDropsPerMl,cupTenantMaterialId:recipeCupMaterialId?Number(recipeCupMaterialId):undefined,ingredients:ings.map(i=>({tenantMaterialId:Number(i.materialId),drops:i.drops}))};
-  try{stockActionPending.current=true;const key=JSON.stringify(["recipe",payload]);const r=await saveRecipeMutation.mutateAsync({...payload,requestId:stockRequestId(key)});retryKeys.current.delete(key);pushAction({kind:"recipe",recipeId:r.id,label:r.code+" · "+drops+" gotas",payload});setSheet(null);await refreshAll();toast.success(r.code+" salva com baixa transacional no estoque.")}
+  try{stockActionPending.current=true;const key=JSON.stringify(["recipe",payload]);const r=await saveRecipeMutation.mutateAsync({...payload,requestId:stockRequestId(key)});retryKeys.current.delete(key);pushAction({kind:"recipe",recipeId:r.id,label:r.code+" · "+drops+" gotas",payload});closeSheet("recipe");await refreshAll();toast.success(r.code+" salva com baixa transacional no estoque.")}
   catch(e:any){toast.error(e.message||"Não foi possível salvar a mistura.")}finally{stockActionPending.current=false}
 }
 
@@ -393,20 +411,21 @@ function wheel(e:RW<HTMLDivElement>){if(isControl(e.target))return;e.preventDefa
 // Recolhe UI transitória sem bloquear o pointerdown que continua para a imagem.
 function dismissOutside(target:EventTarget|null){
   if(!(target instanceof Element))return;
-  if(target.closest(".cockpit-sheet,.appearance-sheet,.temp-sampler-panel,.session-material-tooltip"))return;
-  if(sheet)setSheet(null);
+  if(target.closest(".session-glass-window,.session-glass-tray,.cockpit-top,.cockpit-bottom,.focus-toolbar,.cockpit-dock,.cockpit-palette,.focus-palette-strip,.cockpit-sheet,.appearance-sheet,.temp-sampler-panel,.session-material-tooltip"))return;
+  if(sheet)closeSheets();
   if(!target.closest(".cockpit-dock.left")){if(!lmin)setLmin(true);if(lex)setLex(false)}
   if(!target.closest(".cockpit-dock.right")){if(!rmin)setRmin(true);if(rex)setRex(false)}
 }
 useEffect(()=>{
   const key=(event:KeyboardEvent)=>{
     if(event.key!=="Escape")return;
-    if(sheet){setSheet(null);return}
+    if(photoSrc)return;
+    if(sheet){closeSheet(sheet);return}
     if(!lmin||!rmin){setLmin(true);setRmin(true);setLex(false);setRex(false)}
   };
   document.addEventListener("keydown",key);
   return()=>document.removeEventListener("keydown",key);
-},[sheet,lmin,rmin]);
+},[sheet,lmin,rmin,photoSrc]);
 useEffect(()=>{
   const el=stage.current;if(!el)return;
   // Native GestureEvents remain available for Safari trackpads, without competing with touch pointers.
@@ -418,9 +437,9 @@ useEffect(()=>{
 },[proc?.id]);
 
 const timerLabel=props.running?"Pausar sessão":props.started?"Retomar sessão":"Iniciar sessão";
-const startSessionAction=!props.finished&&!props.running?<div className="sheet-actions"><button type="button" className="primary" disabled={props.timerBusy} onClick={()=>{toggleTimer();setSheet(null)}}><Play size={16}/> {props.timerBusy?"Aguarde…":timerLabel}</button></div>:null;
+const startSessionAction=(id:"preparation"|"finish")=>!props.finished&&!props.running?<div className="sheet-actions"><button type="button" className="primary" disabled={props.timerBusy} onClick={()=>{toggleTimer();closeSheet(id)}}><Play size={16}/> {props.timerBusy?"Aguarde…":timerLabel}</button></div>:null;
 function toggleTimer(){if(!props.finished&&!props.timerBusy)props.onTimer()}
-async function saveNotes(){try{await updateProcedure.mutateAsync({id:procedureId,notes:note});setSheet(null);toast.success("Notas salvas na sessão.")}catch(e:any){toast.error(e.message)}}
+async function saveNotes(){try{await updateProcedure.mutateAsync({id:procedureId,notes:note});closeSheet("notes");toast.success("Notas salvas na sessão.")}catch(e:any){toast.error(e.message)}}
 function openColorPhoto(target:PhotoTarget){setPhotoTarget(target);colorPhotoInput.current?.click()}
 function closeColorPhoto(){if(photoSrc)URL.revokeObjectURL(photoSrc);setPhotoSrc(null);setPhotoTarget(null)}
 async function confirmTemporaryColor(color:ColorValue){
@@ -479,13 +498,13 @@ const stackLayers=visualLayerStack(visualLayers.length?visualLayers:[
 const panelLayers=layerOrder?layerOrder.map(key=>stackLayers.find(layer=>layer.layerKey===key)).filter(Boolean):stackLayers;
 const orderedLayers=[...panelLayers].reverse();
 
-return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opacity,"--tools-size":toolAppearance.size,"--palette-alpha":paletteAppearance.opacity,"--palette-size":paletteAppearance.size} as CSSProperties} ref={cockpitRoot} onPointerDownCapture={event=>dismissOutside(event.target)} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
+return createPortal(<div style={{...viewport,...chromeSize,"--tools-alpha":toolAppearance.opacity,"--tools-size":toolAppearance.size,"--palette-alpha":paletteAppearance.opacity,"--palette-size":paletteAppearance.size} as CSSProperties} ref={cockpitRoot} onPointerDownCapture={event=>dismissOutside(event.target)} className={"cockpit-lab "+(focusMode?"focus-mode ":"")+(cleanMode?"clean-mode ":"")+(sampler?"sampling-mode":"")}>
 <header className="cockpit-top">
 <button type="button" aria-label="Voltar à sessão" className="cockpit-icon" onClick={props.onClose}><ArrowLeft size={18}/></button>
 <button className="cockpit-icon" onClick={vundo} disabled={!vu.length} title="Desfazer imagem"><Undo2 size={18}/></button><button className="cockpit-icon" onClick={vred} disabled={!vredo.length} title="Refazer imagem"><Redo2 size={18}/></button>
 <div className="cockpit-client"><strong>{client.data?.name||"Cliente"}</strong><small>{props.title} {proc.bodyLocation?"· "+proc.bodyLocation:""}</small></div>
 <button type="button" className="cockpit-icon" aria-label="Preferências visuais" title="Preferências visuais" onClick={()=>setSheet("appearance")}><Settings2 size={18}/></button>
-<button className="cockpit-icon desktop-only" onClick={()=>{setNote(String(proc.notes||""));setSheet("notes")}}><StickyNote size={17}/></button><div className="cockpit-status"><i/><b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.running?"EM ANDAMENTO":props.started?"PAUSADA":"NÃO INICIADA"}</span></div>
+<button className="cockpit-icon desktop-only" aria-label="Notas rápidas" onClick={()=>{if(!openWindows.includes("notes"))setNote(String(proc.notes||""));setSheet("notes")}}><StickyNote size={17}/></button><div className="cockpit-status"><i/><b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.running?"EM ANDAMENTO":props.started?"PAUSADA":"NÃO INICIADA"}</span></div>
 </header>
 {focusMode&&<><div className="focus-timer"><span className="cockpit-status"><i/><b>{props.elapsed}</b><span>{props.finished?"CONCLUÍDA":props.running?"EM ANDAMENTO":props.started?"PAUSADA":"NÃO INICIADA"}</span></span></div><div className="focus-toolbar">
   <button type="button" aria-label="Preferências visuais" title="Preferências visuais" onClick={()=>setSheet("appearance")}><Settings2 size={17}/></button>
@@ -580,8 +599,8 @@ return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opac
 <input ref={finalInput} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void finalPhoto(f);e.currentTarget.value=""}}/>
 <footer className="cockpit-bottom"><button type="button" aria-label={timerLabel} disabled={props.finished||props.timerBusy} onClick={()=>void toggleTimer()}>{props.running?<Pause size={18}/>:<Play size={18}/>}<span className="button-label">{props.running?"PAUSAR":props.started?"RETOMAR":"INICIAR"}</span></button><button type="button" aria-label="Buscar materiais no estoque" onClick={()=>setSheet("materials")}><Package size={18}/><span className="button-label">ESTOQUE</span></button><button type="button" aria-label="Adicionar foto da sessão" onClick={()=>finalInput.current?.click()}><Camera size={18}/><span className="button-label">FOTO</span></button><button type="button" aria-label="Revisar conclusão da sessão" className="finish" onClick={()=>setSheet("finish")}><Square size={17}/><span className="button-label">CONCLUIR</span></button></footer>
 
-{sheet==="appearance"&&<SessionGlassWindow title="Preferências visuais" onClose={()=>setSheet(null)}><SessionAppearancePanel value={appearance.value} onChange={appearance.change} artistName={appearance.artistName} canSave={appearance.canSave} busy={appearance.busy} dirty={appearance.dirty} onSave={()=>void appearance.save()} onReload={()=>void appearance.reload()} onReset={appearance.reset} onClose={()=>setSheet(null)}/></SessionGlassWindow>}
-{sheet==="layerAdd"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Nova camada visual</h3><p>Adicione uma imagem independente. O arquivo será exibido como enviado, sem filtros. Você controla a ordem, a opacidade e a visibilidade.</p>
+{openWindows.includes("appearance")&&<SessionGlassWindow title="Preferências visuais" {...windowProps("appearance")}><SessionAppearancePanel value={appearance.value} onChange={appearance.change} artistName={appearance.artistName} canSave={appearance.canSave} busy={appearance.busy} dirty={appearance.dirty} onSave={()=>void appearance.save()} onReload={()=>void appearance.reload()} onReset={appearance.reset} onClose={()=>closeSheet("appearance")}/></SessionGlassWindow>}
+{openWindows.includes("layerAdd")&&<SessionGlassWindow title="Nova camada visual" {...windowProps("layerAdd")}><section className="cockpit-sheet"><p>Adicione uma imagem independente. O arquivo será exibido como enviado, sem filtros. Você controla a ordem, a opacidade e a visibilidade.</p>
 <div className="sheet-grid">{[
   {type:"contrast",name:"Contraste",desc:"Versão preparada para leitura de contraste"},
   {type:"stencil",name:"Decalque",desc:"Decalque isolado"},
@@ -589,22 +608,22 @@ return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opac
   {type:"image",name:"Camada de imagem",desc:"Qualquer outra imagem de apoio"},
 ].map((item:any)=><button key={item.type} className={"sheet-option "+(newLayerType===item.type?"selected":"")} onClick={()=>{setNewLayerType(item.type);setNewLayerName(item.name)}}><b>{item.name}</b><small>{item.desc}</small></button>)}</div>
 <label className="layer-name-label">Nome da camada</label><input className="search-input" value={newLayerName} onChange={e=>setNewLayerName(e.target.value)} placeholder="Ex.: Contraste PB, Decalque 2..."/>
-<div className="sheet-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={!newLayerName.trim()||addVisualLayerMutation.isPending||uploadImage.isPending} onClick={()=>layerImageInput.current?.click()}><Plus size={15}/> Selecionar imagem</button></div>
-</section>}
-{sheet==="preparation"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar preparação" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Preparação da sessão</h3>{startSessionAction}<SessionPreparationSummary preparation={preparationQuery.data?.preparation} onMaterial={props.finished?undefined:(id,quantity,unit)=>{
+<div className="sheet-actions"><button onClick={()=>closeSheet("layerAdd")}>Cancelar</button><button className="primary" disabled={!newLayerName.trim()||addVisualLayerMutation.isPending||uploadImage.isPending} onClick={()=>layerImageInput.current?.click()}><Plus size={15}/> Selecionar imagem</button></div>
+</section></SessionGlassWindow>}
+{openWindows.includes("preparation")&&<SessionGlassWindow title="Preparação da sessão" {...windowProps("preparation")}><section className="cockpit-sheet">{startSessionAction("preparation")}<SessionPreparationSummary preparation={preparationQuery.data?.preparation} onMaterial={props.finished?undefined:(id,quantity,unit)=>{
   const m=stock.find(x=>Number(x.id)===id&&x.unit===unit);if(!m)return toast.error("Material indisponível para este artista.");setInk(m);setDirectQuantity(quantity);setSheet("ink");
 }} onRecipe={props.finished?undefined:index=>{
   const color=preparationQuery.data?.preparation?.colors[index];if(!color)return;
   if(color.ingredients.some(i=>!stock.some(m=>Number(m.id)===i.tenantMaterialId)))return toast.error("Uma tinta está indisponível. Atualize o estoque antes de reutilizar a receita.");
   setSample(samples.find(s=>s.code===`P${String(index+1).padStart(2,"0")}`)||null);setCup(color.cupSize);setRecipeCupMaterialId("");setRecipeDropsPerMl(color.dropsPerMl);setIngs(color.ingredients.map(i=>({materialId:String(i.tenantMaterialId),drops:i.drops})));setFamilyFilter(null);setReferenceDraft(null);setSheet("recipe");
-}}/></section>}
-{sheet==="materials"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Adicionar material ativo</h3>{preparationQuery.data?.preparation&&<button className="dock-add" onClick={()=>setSheet("preparation")}>Ver materiais e receitas preparados</button>}<p>Adicionar inclui o material nesta sessão. A baixa acontece ao confirmar a quantidade utilizada.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><details className="session-costs"><summary>Consumo e custos desta sessão</summary><p>Valores registrados no consumo. Cadastros de teste ou preços estimados não comprovam gasto real.</p><p>Total registrado: {new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format((session.data?.consumptions||[]).filter(c=>c.status==='consumido').reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0))}</p>{(session.data?.consumptions||[]).filter(c=>c.status==='consumido').map(c=><article key={c.id}><b>{c.nameSnapshot}</b><p>{Number(c.quantity).toLocaleString('pt-BR')} {c.unitSnapshot} · Lote: {c.lotSnapshot||'não informado'} · {new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(c.totalCostSnapshot))}</p>{Number(c.unitCostSnapshot)===0&&<p>Custo registrado como zero; confira o cadastro do lote.</p>}</article>)}</details><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} disabled={addMaterial.isPending} onClick={async()=>{try{await addMaterial.mutateAsync({procedureId,tenantMaterialId:Number(m.id)});await refreshAll();setSheet(null);setSearch("")}catch(e:any){toast.error(e.message)}}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section>}
+}}/></section></SessionGlassWindow>}
+{openWindows.includes("materials")&&<SessionGlassWindow title="Adicionar material ativo" {...windowProps("materials")}><section className="cockpit-sheet">{preparationQuery.data?.preparation&&<button className="dock-add" onClick={()=>setSheet("preparation")}>Ver materiais e receitas preparados</button>}<p>Adicionar inclui o material nesta sessão. A baixa acontece ao confirmar a quantidade utilizada.</p><div style={{position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:14,color:"#71717a"}}/><input className="search-input" style={{paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cartucho, tinta, marca..."/></div><details className="session-costs"><summary>Consumo e custos desta sessão</summary><p>Valores registrados no consumo. Cadastros de teste ou preços estimados não comprovam gasto real.</p><p>Total registrado: {new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format((session.data?.consumptions||[]).filter(c=>c.status==='consumido').reduce((sum,c)=>sum+Number(c.totalCostSnapshot),0))}</p>{(session.data?.consumptions||[]).filter(c=>c.status==='consumido').map(c=><article key={c.id}><b>{c.nameSnapshot}</b><p>{Number(c.quantity).toLocaleString('pt-BR')} {c.unitSnapshot} · Lote: {c.lotSnapshot||'não informado'} · {new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(c.totalCostSnapshot))}</p>{Number(c.unitCostSnapshot)===0&&<p>Custo registrado como zero; confira o cadastro do lote.</p>}</article>)}</details><div className="sheet-grid">{found.map(m=><button className="sheet-option" key={m.id} disabled={addMaterial.isPending} onClick={async()=>{try{await addMaterial.mutateAsync({procedureId,tenantMaterialId:Number(m.id)});await refreshAll();closeSheet("materials");setSearch("")}catch(e:any){toast.error(e.message)}}}><b>{m.name}</b><small>{m.detail} · saldo {(inventory.data as any[])?.find(x=>String(x.id)===m.id)?.currentQuantity} {m.unit}</small></button>)}</div></section></SessionGlassWindow>}
 
-{sheet==="ink"&&ink&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{ink.name}</h3>{(readTestMetadata(ink.notes).testStock||readTestMetadata(ink.notes).marketEstimate)&&<p>Este cadastro contém saldo de teste ou preço estimado. Confira a contagem e o custo de compra no estoque antes do uso real.</p>}
+{openWindows.includes("ink")&&ink&&<SessionGlassWindow title={ink.name} {...windowProps("ink")}><section className="cockpit-sheet">{(readTestMetadata(ink.notes).testStock||readTestMetadata(ink.notes).marketEstimate)&&<p>Este cadastro contém saldo de teste ou preço estimado. Confira a contagem e o custo de compra no estoque antes do uso real.</p>}
 <SessionMaterialQuantity key={ink.id} material={ink} value={directQuantity} onChange={setDirectQuantity} materials={stock} onMaterialChange={id=>{const m=stock.find(m=>m.id===id);if(m){setInk(m);setDirectQuantity("1")}}} disabled={consumeAuto.isPending}/>
-<div className="sheet-actions">{(ink.kind==="ink"||ink.kind==="diluent")&&<button onClick={()=>recipe(ink)}>Criar mistura</button>}<button className="primary" disabled={consumeAuto.isPending||!Number.isFinite(Number(directQuantity))||Number(directQuantity)<=0} onClick={()=>void quickConsume(ink,directQuantity,ink.name)}>Confirmar uso</button></div></section>}
+<div className="sheet-actions">{(ink.kind==="ink"||ink.kind==="diluent")&&<button onClick={()=>recipe(ink)}>Criar mistura</button>}<button className="primary" disabled={consumeAuto.isPending||!Number.isFinite(Number(directQuantity))||Number(directQuantity)<=0} onClick={()=>void quickConsume(ink,directQuantity,ink.name)}>Confirmar uso</button></div></section></SessionGlassWindow>}
 
-{sheet==="recipe"&&<section className="cockpit-sheet recipe-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Receita {sample?"· "+sample.code:""}</h3><p>Será gravada junto da sessão e das baixas de cada pigmento. Conversão: {recipeDropsPerMl} gotas/ml.</p>
+{openWindows.includes("recipe")&&<SessionGlassWindow title={`Receita${sample?" · "+sample.code:""}`} {...windowProps("recipe")}><section className="cockpit-sheet recipe-sheet"><p>Será gravada junto da sessão e das baixas de cada pigmento. Conversão: {recipeDropsPerMl} gotas/ml.</p>
 {sample&&<div className="recipe-sample-card">
   <div className="sample-crop" style={{background:sample.hex}}/>
   <div className="recipe-sample-swatch" style={{background:sample.hex}}/>
@@ -628,12 +647,13 @@ return createPortal(<div style={{...viewport,"--tools-alpha":toolAppearance.opac
 </div>})}
 </div>
 <div className={"mix-summary mix-summary-sticky "+(drops>cupDropCapacity?"over":"")}><div>Total: {drops}{cup?` / ${cupDropCapacity}`:""} gotas · ~{ml.toFixed(2)} ml</div>{cup?<div>Batoque {cup}: {CUP[cup].toFixed(2)} ml · ocupação ~{pct}%</div>:<div>Composição sem recipiente definido</div>}{drops>cupDropCapacity&&<div className="mix-over-warning">Mistura acima da capacidade do batoque.</div>}{ings.map(i=>{const m=stock.find(x=>x.id===i.materialId);return <div key={i.materialId}>{m?.short}: {i.drops}gt · {drops?((i.drops/drops)*100).toFixed(1):0}%</div>})}</div>
-<div className="sheet-actions recipe-actions"><button onClick={()=>setSheet(null)}>Cancelar</button><button className="primary" disabled={saveRecipeMutation.isPending||drops===0||drops>cupDropCapacity} onClick={()=>void saveRecipe()}>Salvar receita + baixar estoque</button></div></section>}
+<div className="sheet-actions recipe-actions"><button onClick={()=>closeSheet("recipe")}>Cancelar</button><button className="primary" disabled={saveRecipeMutation.isPending||drops===0||drops>cupDropCapacity} onClick={()=>void saveRecipe()}>Salvar receita + baixar estoque</button></div></section></SessionGlassWindow>}
 
-{sheet==="sample"&&sample&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>{sample.code} · {sample.code.startsWith("P")?"Cor preparada":"Amostra 5×5 px"}</h3>{!sample.code.startsWith("P")&&<p>Camada de origem: {sample.source?.layerName||"não registrada nesta amostra antiga"}</p>}<div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{setSheet(null);startSampling()}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button>{sample.code.startsWith("P")&&<button onClick={()=>setSheet("preparation")}>Ver receita preparada</button>}</div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · {r.cupSize?`Batoque ${r.cupSize}`:"Sem recipiente"}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section>}
+{openWindows.includes("sample")&&sample&&<SessionGlassWindow title={`${sample.code} · ${sample.code.startsWith("P")?"Cor preparada":"Amostra 5×5 px"}`} {...windowProps("sample")}><section className="cockpit-sheet">{!sample.code.startsWith("P")&&<p>Camada de origem: {sample.source?.layerName||"não registrada nesta amostra antiga"}</p>}<div className="sample-detail sample-detail-expanded"><div className="sample-crop large" style={{background:sample.hex}}/><div><div className="sample-swatch compact" style={{background:sample.hex}}/><div className="sample-data"><div>HEX {sample.hex.toUpperCase()}</div><div>RGB {sample.rgb.join(" · ")}</div><div>CMYK {sample.cmyk.map(v=>v+"%").join(" · ")}</div></div></div></div><div className="sheet-actions"><button onClick={()=>{closeSheet("sample");startSampling()}}>Nova amostra</button><button className="primary" onClick={()=>recipe()}>Criar mistura</button>{sample.code.startsWith("P")&&<button onClick={()=>setSheet("preparation")}>Ver receita preparada</button>}</div>{recipes.filter((r:any)=>String(r.sampleId||"")===sample.id).map((r:any)=><div className="mix-summary" key={r.id}><b>{r.code} · {r.cupSize?`Batoque ${r.cupSize}`:"Sem recipiente"}</b><br/>{r.items?.map((i:any)=>i.nameSnapshot+" "+i.drops+"gt").join(" + ")}<br/>~{Number(r.estimatedMl).toFixed(2)} ml · {r.status==="reverted"?"DESFEITA":"ATIVA"}<div className="recipe-result-line">{r.result?<><span className="result-swatch" style={{background:r.result.hex}}/><span>Resultado {String(r.result.hex).toUpperCase()}<br/>LAB {Number(r.result.labL).toFixed(1)} {Number(r.result.labA).toFixed(1)} {Number(r.result.labB).toFixed(1)}</span></>:<span>Resultado ainda não registrado</span>}<button onClick={()=>openColorPhoto({kind:"recipe",recipeId:r.id,code:r.code})}><Camera size={13}/> {r.result?"Atualizar":"Registrar resultado"}</button></div></div>)}</section></SessionGlassWindow>}
 
-{sheet==="notes"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Notas rápidas</h3><textarea className="cockpit-note" value={note} onChange={e=>setNote(e.target.value)}/><div className="sheet-actions"><button className="primary" disabled={updateProcedure.isPending} onClick={()=>void saveNotes()}>Salvar na sessão</button></div></section>}
-{sheet==="finish"&&<section className="cockpit-sheet"><button type="button" aria-label="Fechar ferramenta" className="close" onClick={()=>setSheet(null)}><X size={17}/></button><h3>Revisão antes de concluir</h3>{startSessionAction}<p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {recipes.filter((r:any)=>r.status!=="reverted").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>setSheet(null)}>Voltar</button><button className="primary" onClick={()=>{setSheet(null);props.onFinish()}}>Ir para conclusão da sessão</button></div></section>}
+{openWindows.includes("notes")&&<SessionGlassWindow title="Notas rápidas" {...windowProps("notes")}><section className="cockpit-sheet"><textarea className="cockpit-note" value={note} onChange={e=>setNote(e.target.value)}/><div className="sheet-actions"><button className="primary" disabled={updateProcedure.isPending} onClick={()=>void saveNotes()}>Salvar na sessão</button></div></section></SessionGlassWindow>}
+{openWindows.includes("finish")&&<SessionGlassWindow title="Revisão antes de concluir" {...windowProps("finish")}><section className="cockpit-sheet">{startSessionAction("finish")}<p>A conclusão continua usando o fluxo financeiro já existente da sessão.</p><div className="mix-summary"><div>Tempo: {props.elapsed}</div><div>Consumos ativos: {(session.data?.consumptions||[]).filter((x:any)=>x.status==="consumido").length}</div><div>Misturas: {recipes.filter((r:any)=>r.status!=="reverted").length}</div><div>Amostras: {samples.length}</div><div>Foto final: {proc.finalImageUrl?"✓ anexada":"não anexada"}</div></div><div className="sheet-actions"><button onClick={()=>closeSheet("finish")}>Voltar</button><button className="primary" onClick={()=>{closeSheet("finish");props.onFinish()}}>Ir para conclusão da sessão</button></div></section></SessionGlassWindow>}
+<div className="session-glass-tray" ref={setMinimizedTray} aria-label="Janelas minimizadas"/>
 {photoTarget&&photoSrc&&<TemporaryColorSampler src={photoSrc} title={photoTarget.kind==="material"?"Calibrar "+photoTarget.name:"Resultado da mistura "+photoTarget.code} subtitle="Pressione e arraste o ponto. O quadrado superior mostra a cor em tempo real." onCancel={closeColorPhoto} onConfirm={confirmTemporaryColor}/>}
 </div>,document.body);
 }
