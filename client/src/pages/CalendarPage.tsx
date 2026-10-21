@@ -877,7 +877,7 @@ export default function CalendarPage() {
 
     return (
       <Dialog open={detailsOpen && Boolean(selectedApt)} onOpenChange={(open) => { if (!open) dismissDetails(); }}>
-        <DialogContent className="!flex w-[calc(100vw-1rem)] max-w-md min-w-0 max-h-[calc(100dvh-1rem)] flex-col gap-3 overflow-hidden border-white/10 bg-[#2c2c2e] p-3 text-gray-100 sm:max-h-[90dvh] sm:p-6">
+        <DialogContent className="!fixed !left-1/2 !top-1/2 !flex !h-[calc(100dvh-1rem)] !max-h-[calc(100dvh-1rem)] !w-[calc(100vw-1rem)] !max-w-md !-translate-x-1/2 !-translate-y-1/2 min-w-0 flex-col gap-3 overflow-hidden overscroll-contain border-white/10 bg-[#2c2c2e] p-3 text-gray-100 sm:!h-auto sm:!max-h-[90dvh] sm:p-6">
           <DialogHeader className="min-w-0 shrink-0 pr-6">
             <DialogTitle className="flex min-w-0 items-center gap-2 break-words text-left leading-snug text-gray-100">
               <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: calColor }} />
@@ -887,7 +887,7 @@ export default function CalendarPage() {
               {alertUnderReview ? "Confira os dados. Só o botão OK registra a leitura da notificação." : calName}
             </DialogDescription>
           </DialogHeader>
-          <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overscroll-contain break-words py-2 pr-1 [overflow-wrap:anywhere]">
+          <div className="min-h-0 min-w-0 flex-1 touch-pan-y space-y-4 overflow-x-hidden overflow-y-auto overscroll-contain break-words py-2 pr-1 [-webkit-overflow-scrolling:touch] [overflow-wrap:anywhere]">
             {alertUnderReview && (
               <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 p-3 text-sm text-blue-100" role="status">
                 Ação do cliente: <strong>{reviewedLabel || "Nova ação do cliente"}</strong>
