@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import { timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { demoRead, demoMime } from './demoStorage';
 import { verifyStorageAccessToken } from './storage';
 export function assertDemoScope(){
@@ -17,7 +17,14 @@ export function registerDemoMode(app:Express){
   const expected=Buffer.from('demo:'+process.env.LOCAL_ADMIN_PASSWORD);
   const auth=req.get('authorization')||'';let actual=Buffer.alloc(0);
   if(auth.startsWith('Basic '))actual=Buffer.from(auth.slice(6),'base64');
-  if(actual.length!==expected.length||!timingSafeEqual(actual,expected)){res.setHeader('WWW-Authenticate','Basic realm="Tatuei Teste - somente dados ficticios"');return res.status(401).send('Acesso restrito ao ambiente ficticio de teste.');}
+  const basicValid=actual.length===expected.length&&timingSafeEqual(actual,expected);
+  const cookie=req.headers.cookie?.split(';').map(v=>v.trim()).find(v=>v.startsWith('tatuei_demo_gate='))?.slice('tatuei_demo_gate='.length);
+  if(basicValid){
+   res.cookie('tatuei_demo_gate',createDemoGateToken(),{httpOnly:true,secure:true,sameSite:'strict',path:'/',maxAge:8*60*60*1000});
+  }else if(!verifyDemoGateToken(cookie)){
+   if(req.path.startsWith('/api/'))return res.status(401).json({error:'Acesso de teste expirado. Recarregue a pagina e entre com o usuario demo.'});
+   res.setHeader('WWW-Authenticate','Basic realm="Tatuei Teste - somente dados ficticios"');return res.status(401).send('Acesso restrito ao ambiente ficticio de teste.');
+  }
   if(/webhook|heartbeat|oauth|native-bot\/meta/i.test(req.path))return res.status(403).json({error:'Integracao desativada na demonstracao.'});
   next();
  });
@@ -25,4 +32,19 @@ export function registerDemoMode(app:Express){
   const key=String(req.query.key||'');if(!verifyStorageAccessToken(key,String(req.query.token||'')))return res.sendStatus(403);
   const [bytes,mime]=await Promise.all([demoRead(key),demoMime(key)]);res.type(mime).setHeader('X-Content-Type-Options','nosniff');res.send(bytes);
  }catch{res.sendStatus(404);}});
+}
+
+// Establish the same demo access for fetch requests without depending on the
+// browser forwarding its cached HTTP Basic header to every API request.
+function gateSignature(value:string){
+ return createHmac('sha256',process.env.AUTH_SECURITY_KEY||'').update('tatuei-demo-gate:'+value+':'+process.env.LOCAL_ADMIN_PASSWORD).digest('hex');
+}
+export function createDemoGateToken(now=Date.now()){
+ if(!process.env.AUTH_SECURITY_KEY||!process.env.LOCAL_ADMIN_PASSWORD)throw new Error('DEMO_GATE_SECRET_REQUIRED');
+ const expires=String(now+8*60*60*1000);return expires+'.'+gateSignature(expires);
+}
+export function verifyDemoGateToken(token:string|undefined,now=Date.now()){
+ if(!process.env.AUTH_SECURITY_KEY||!process.env.LOCAL_ADMIN_PASSWORD||!token||!/^\d{13}\.[a-f0-9]{64}$/.test(token))return false;
+ const [expires,signature]=token.split('.');const remaining=Number(expires)-now;
+ return remaining>0&&remaining<=8*60*60*1000&&timingSafeEqual(Buffer.from(signature),Buffer.from(gateSignature(expires)));
 }
