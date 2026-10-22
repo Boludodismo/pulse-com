@@ -1,3 +1,4 @@
+import { assertDemoScope, registerDemoMode } from "../demoMode";
 import { ensureMinorConsentSchema } from "../minorConsent/database";
 import { startMinorConsentWorker } from "../minorConsent/worker";
 import { registerPrivateColorLab } from "../privateColorLab/route";
@@ -48,6 +49,7 @@ import { storageGet, verifyStorageAccessToken, checkS3Storage } from "../storage
 import {ensureAttendanceSchema} from '../attendance/schema';
 
 async function startServer() {
+  assertDemoScope();
   // Keep schema synchronized on controlled standalone deployments.
   // Disabled by default so existing Manus/production behavior is unchanged.
   if (ENV.authMode === "local" && Buffer.byteLength(ENV.authSecurityKey) < 32) throw new Error("AUTH_SECURITY_KEY deve ter pelo menos 32 bytes.");
@@ -79,6 +81,7 @@ async function startServer() {
     console.log("[Storage] S3 write/read/delete check passed");
   }
   const app = express();
+  registerDemoMode(app);
   app.use('/atendimento',(_req,res,next)=>{res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Robots-Tag','noindex, nofollow');next();});
   registerGoogleCallback(app);
   app.set("trust proxy", 1);
@@ -86,8 +89,8 @@ async function startServer() {
   app.use(securityHeaders);
   app.use("/api/auth/local", express.json({ limit: "16kb" }));
   const server = createServer(app);
-  startNativeBotWorker();
-  startMinorConsentWorker();
+  if (process.env.DEMO_MODE !== "true") startNativeBotWorker();
+  if (process.env.DEMO_MODE !== "true") startMinorConsentWorker();
   app.use("/api/native-bot/webhook", express.json({ limit: "256kb" }));
   app.use("/api/native-bot/meta/webhook", express.json({
     limit: "256kb",
@@ -361,8 +364,8 @@ async function startServer() {
     console.log(`Server running on http://0.0.0.0:${port}`);
     // A entrega da fila não depende do Heartbeat externo. O claim atômico no
     // banco permite execução segura mesmo com mais de uma instância.
-    startIntegrationJobWorker();
-    if (ENV.schedulerMode === "local") {
+    if (process.env.DEMO_MODE !== "true") startIntegrationJobWorker();
+    if (process.env.DEMO_MODE !== "true" && ENV.schedulerMode === "local") {
       startScheduler();
     } else {
       console.log("[Scheduler] Processamento periódico configurado para Heartbeat externo.");

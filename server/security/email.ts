@@ -1,5 +1,5 @@
 export function emailAvailable() {
-  return Boolean(process.env.AUTH_EMAIL_API_KEY && process.env.AUTH_EMAIL_FROM);
+  return process.env.DEMO_MODE !== "true" && Boolean(process.env.AUTH_EMAIL_API_KEY && process.env.AUTH_EMAIL_FROM);
 }
 export async function sendSecurityEmail(
   to: string,

@@ -1,3 +1,4 @@
+import { demoPut, demoRead, demoDelete } from "./demoStorage";
 // Storage helpers for Manus proxy and standalone S3-compatible providers.
 
 import { createHmac, timingSafeEqual, randomUUID } from "crypto";
@@ -144,6 +145,11 @@ export async function storagePut(
 ): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
 
+  if (ENV.storageProvider === "demo" && process.env.DEMO_MODE === "true") {
+    await demoPut(key, data, contentType);
+    return { key, url: buildStableProxyUrl(key) };
+  }
+
   if (ENV.storageProvider === "disabled") {
     console.warn("[Storage] Upload skipped - storage is disabled");
     return { key, url: "" };
@@ -189,6 +195,7 @@ export async function storageGet(
   relKey: string
 ): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
+  if (ENV.storageProvider === "demo" && process.env.DEMO_MODE === "true") return { key, url: "/api/demo-file?key=" + encodeURIComponent(key) + "&token=" + storageToken(key) };
 
   if (ENV.storageProvider === "disabled") {
     console.warn("[Storage] Download skipped - storage is disabled");
@@ -218,6 +225,7 @@ export async function storageGet(
 
 export async function storageDelete(relKey: string): Promise<void> {
   const key = normalizeKey(relKey);
+  if (ENV.storageProvider === "demo" && process.env.DEMO_MODE === "true") return demoDelete(key);
   if (!key || ENV.storageProvider === "disabled") return;
 
   if (ENV.storageProvider === "s3") {
@@ -237,6 +245,7 @@ export async function storageReadBuffer(
   maxBytes: number
 ): Promise<Buffer> {
   const key = normalizeKey(relKey);
+  if (ENV.storageProvider === "demo" && process.env.DEMO_MODE === "true") return demoRead(key,maxBytes);
   if (ENV.storageProvider === "s3") {
     const { client, bucket } = getS3Config();
     const response = await client.send(
