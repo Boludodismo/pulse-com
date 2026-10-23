@@ -27,7 +27,10 @@ export async function initialize(connection, password) {
     await connection.execute('INSERT INTO appointments (clientId,calendarId,date,duration,service,artist,artistId,studioId,attendanceEnabled) VALUES (?,1,?,60,?,?,1,1,0)', [i,date,'Tatuagem de Teste','Artista Ficticio 1']);
   }
   for (const [name,category,unit,quantity,cost] of [['Cartucho ficticio','Cartuchos','unidade',20,4],['Tinta preta ficticia','Tintas','ml',30,2],['Batoque ficticio','Descartaveis','unidade',100,0.2]]) {
-    await connection.execute('INSERT INTO tenant_materials (studioId,name,category,unit,currentQuantity,minimumQuantity,unitCost,createdByUserId) VALUES (1,?,?,?,?,5,?,1)',[name,category,unit,quantity,cost]);
+    const [material] = await connection.execute('INSERT INTO tenant_materials (studioId,name,category,unit,currentQuantity,minimumQuantity,unitCost,createdByUserId) VALUES (1,?,?,?,?,5,?,1)',[name,category,unit,quantity,cost]);
+    // Explicit fictional studio-stock allocations, using the existing permission model.
+    // Real materials are never modified or implicitly shared by this demo bootstrap.
+    for (const artistId of [1,2]) await connection.execute('INSERT INTO studio_material_artists(studioId,tenantMaterialId,artistId) VALUES(1,?,?)',[material.insertId,artistId]);
   }
   console.log('[Demo] Esquema novo e dados sinteticos preparados.');
 }
