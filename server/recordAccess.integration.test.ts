@@ -373,4 +373,13 @@ describe.skipIf(!enabled)("Stage 1A: actual tRPC HTTP + disposable MySQL (synthe
     expect(Number((await database.query<RowDataPacket[]>("SELECT currentStock FROM materials WHERE id=901"))[0][0].currentStock)).toBe(0);
   });
 
+  it("audit persistence failure rolls back transaction create, edit and delete with loyalty",async()=>{
+    const db=await import('./db');const actor={userId:1,userName:'F'.repeat(1000)};
+    const before=await snapshot();
+    await expect(db.createTransaction({studioId:1,clientId:101,type:'entrada',category:'Fiction',amount:100,paymentMethod:'pix',date:'2030-01-01'},actor)).rejects.toThrow();expect(await snapshot()).toBe(before);
+    await expect(db.updateTransaction(8001,{amount:60000},actor)).rejects.toThrow();expect(await snapshot()).toBe(before);
+    await expect(db.deleteTransaction(8001,actor)).rejects.toThrow();expect(await snapshot()).toBe(before);
+  });
+
+
 });

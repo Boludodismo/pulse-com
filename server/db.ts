@@ -804,9 +804,17 @@ export async function createTransactionIn(tx:DatabaseExecutor,data:InsertTransac
   const [result]=await tx.insert(transactions).values(data);
   return (await tx.select().from(transactions).where(eq(transactions.id,Number(result.insertId))).limit(1))[0];
 }
-export async function createTransaction(data: InsertTransaction) {
+export type TransactionAuditActor = Pick<Parameters<typeof createAuditLog>[0],"userId"|"userName"|"ipAddress"|"userAgent">;
+async function transactionAudit(tx:DatabaseExecutor,actor:TransactionAuditActor|undefined,action:'create'|'update'|'delete',before:typeof transactions.$inferSelect|null,after:typeof transactions.$inferSelect|null,changes?:Partial<InsertTransaction>){
+  if(!actor)return;
+  const row=(after??before)!;
+  const [client]=row.clientId?await tx.select({name:clients.name}).from(clients).where(eq(clients.id,row.clientId)).limit(1):[];
+  const details=action==='create'?{...row,clientName:client?.name}:action==='delete'?{deletedTransaction:before,clientName:client?.name}:{before,after,changes,clientName:client?.name};
+  await createAuditLog({...actor,action,entity:'transaction',entityId:row.id,entityName:`${row.type==='entrada'?'Entrada':'Saída'} - ${row.category}`,details},tx);
+}
+export async function createTransaction(data: InsertTransaction, audit?:TransactionAuditActor) {
   const db=await getDb();if(!db)throw new Error("Database not available");
-  return atomicDatabase(db,tx=>createTransactionIn(tx,data));
+  return atomicDatabase(db,async tx=>{const row=await createTransactionIn(tx,data);await transactionAudit(tx,audit,'create',null,row);return row;});
 }
 
 export async function getTransactionById(id: number) {
@@ -822,7 +830,7 @@ export async function getTransactionById(id: number) {
   return result[0];
 }
 
-export async function updateTransaction(id: number, data: Partial<InsertTransaction>) {
+export async function updateTransaction(id: number, data: Partial<InsertTransaction>, audit?:TransactionAuditActor) {
   const db=await getDb();if(!db)throw new Error("Database not available");
   return atomicDatabase(db,async transaction=>{
     const tx=transaction as unknown as DatabaseExecutor;
@@ -835,10 +843,11 @@ export async function updateTransaction(id: number, data: Partial<InsertTransact
     if(before.type==='entrada'&&before.clientId)deltas.set(before.clientId,-before.amount);
     if(after.type==='entrada'&&after.clientId)deltas.set(after.clientId,(deltas.get(after.clientId)??0)+after.amount);
     await applySpendingDeltas(tx,before.studioId!,deltas);
-    await tx.update(transactions).set(data).where(eq(transactions.id,id));return {success:true};
+    await tx.update(transactions).set(data).where(eq(transactions.id,id));
+    await transactionAudit(tx,audit,"update",before,after,data);return {success:true};
   });
 }
-export async function deleteTransaction(id: number) {
+export async function deleteTransaction(id: number, audit?:TransactionAuditActor) {
   const db=await getDb();if(!db)throw new Error("Database not available");
   return atomicDatabase(db,async transaction=>{
     const tx=transaction as unknown as DatabaseExecutor;
@@ -846,7 +855,8 @@ export async function deleteTransaction(id: number) {
     if(!before)return true;
     await requireUnallocatedReceipt(tx,before);
     if(before.type==='entrada'&&before.clientId)await applySpendingDeltas(tx,before.studioId!,new Map([[before.clientId,-before.amount]]));
-    await tx.delete(transactions).where(eq(transactions.id,id));return true;
+    await tx.delete(transactions).where(eq(transactions.id,id));
+    await transactionAudit(tx,audit,"delete",before,null);return true;
   });
 }
 

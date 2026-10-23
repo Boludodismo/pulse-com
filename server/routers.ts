@@ -1450,29 +1450,7 @@ export const appRouter = router({
           appointmentId: input.appointmentId || null,
           description: input.description || null,
         };
-        const result = await db.createTransaction(transactionData);
-        
-        // Buscar nome do cliente se houver
-        const client = input.clientId 
-          ? await db.getClientById(input.clientId)
-          : null;
-        
-        // Registrar auditoria
-        await db.createAuditLog({
-          userId: ctx.user.id,
-          userName: ctx.user.name || "Usuário sem nome",
-          action: "create",
-          entity: "transaction",
-          entityName: `${input.type === "entrada" ? "Entrada" : "Saída"} - ${input.category} - R$ ${input.amount.toFixed(2)}`,
-          details: {
-            ...transactionData,
-            clientName: client?.name,
-          },
-          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
-          userAgent: ctx.req.headers?.["user-agent"],
-        });
-        
-        return result;
+        return db.createTransaction(transactionData,{userId:ctx.user.id,userName:ctx.user.name||"Usuário sem nome",ipAddress:ctx.req.ip||ctx.req.socket?.remoteAddress,userAgent:ctx.req.headers?.["user-agent"]});
       }),
 
     update: protectedProcedure
@@ -1490,70 +1468,13 @@ export const appRouter = router({
         })
       }))
       .mutation(async ({ ctx, input }) => {
-        // Buscar dados antes da atualização
-        const transactionBefore = await db.getTransactionById(input.id);
-        
-        const result = await db.updateTransaction(input.id, input.data);
-        
-        // Buscar dados depois da atualização
-        const transactionAfter = await db.getTransactionById(input.id);
-        
-        // Buscar nome do cliente se houver
-        const client = transactionAfter?.clientId 
-          ? await db.getClientById(transactionAfter.clientId)
-          : null;
-        
-        // Registrar auditoria
-        await db.createAuditLog({
-          userId: ctx.user.id,
-          userName: ctx.user.name || "Usuário sem nome",
-          action: "update",
-          entity: "transaction",
-          entityId: input.id,
-          entityName: `${transactionAfter?.type === "entrada" ? "Entrada" : "Saída"} - ${transactionAfter?.category || transactionBefore?.category || "Transação"}`,
-          details: {
-            before: transactionBefore,
-            after: transactionAfter,
-            changes: input.data,
-            clientName: client?.name,
-          },
-          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
-          userAgent: ctx.req.headers?.["user-agent"],
-        });
-        
-        return result;
+        return db.updateTransaction(input.id,input.data,{userId:ctx.user.id,userName:ctx.user.name||"Usuário sem nome",ipAddress:ctx.req.ip||ctx.req.socket?.remoteAddress,userAgent:ctx.req.headers?.["user-agent"]});
       }),
 
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        // Buscar dados antes da exclusão
-        const transactionBefore = await db.getTransactionById(input.id);
-        
-        const result = await db.deleteTransaction(input.id);
-        
-        // Buscar nome do cliente se houver
-        const client = transactionBefore?.clientId 
-          ? await db.getClientById(transactionBefore.clientId)
-          : null;
-        
-        // Registrar auditoria
-        await db.createAuditLog({
-          userId: ctx.user.id,
-          userName: ctx.user.name || "Usuário sem nome",
-          action: "delete",
-          entity: "transaction",
-          entityId: input.id,
-          entityName: `${transactionBefore?.type === "entrada" ? "Entrada" : "Saída"} - ${transactionBefore?.category || "Transação"}`,
-          details: {
-            deletedTransaction: transactionBefore,
-            clientName: client?.name,
-          },
-          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
-          userAgent: ctx.req.headers?.["user-agent"],
-        });
-        
-        return result;
+        return db.deleteTransaction(input.id,{userId:ctx.user.id,userName:ctx.user.name||"Usuário sem nome",ipAddress:ctx.req.ip||ctx.req.socket?.remoteAddress,userAgent:ctx.req.headers?.["user-agent"]});
       }),
 
     // Criar transação com baixa automática de materiais do estoque
