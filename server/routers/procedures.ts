@@ -35,7 +35,7 @@ import {
   transactions,
 } from "../../drizzle/schema";
 import { eq, and, desc, inArray, isNotNull, gte, lte, sql, type InferSelectModel } from "drizzle-orm";
-import { storagePut, storageDelete, storageGet } from "../storage";
+import { storagePut, storageDelete, storageReadObject } from "../storage";
 // notifyOwner é importado dinamicamente para compatibilidade com o bundler Vite ESM
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -220,13 +220,10 @@ export const proceduresRouter = router({
         } else if (input.referenceFromProcedureId) {
           const source = (await tx.select().from(technicalProcedures).where(and(eq(technicalProcedures.id, input.referenceFromProcedureId), eq(technicalProcedures.studioId, studioId), eq(technicalProcedures.clientId, input.clientId))).limit(1))[0];
           if (!source?.referenceImageKey) throw new TRPCError({ code: "BAD_REQUEST", message: "A referência anterior não está disponível. Selecione uma imagem." });
-          const { url } = await storageGet(source.referenceImageKey);
-          const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
-          if (!response.ok) throw new TRPCError({ code: "BAD_REQUEST", message: "Não foi possível recuperar a referência anterior." });
-          const mime = response.headers.get("content-type")?.split(";")[0];
-          if (!["image/jpeg", "image/png", "image/webp"].includes(mime || "")) throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione a referência em JPG, PNG ou WebP." });
-          imageMime = mime as typeof imageMime;
-          imageBuffer = Buffer.from(await response.arrayBuffer());
+          const stored = await storageReadObject(source.referenceImageKey, 16 * 1024 * 1024);
+          if (!["image/jpeg", "image/png", "image/webp"].includes(stored.mime)) throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione a referência em JPG, PNG ou WebP." });
+          imageMime = stored.mime as typeof imageMime;
+          imageBuffer = stored.bytes;
         }
         if (imageBuffer) {
           if (!imageBuffer.length || imageBuffer.length > 16 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "A referência deve ter até 16 MB." });

@@ -1,3 +1,4 @@
+import { storageReadObject } from "../storage";
 import { assertDemoScope, registerDemoMode } from "../demoMode";
 import { ensureMinorConsentSchema } from "../minorConsent/database";
 import { startMinorConsentWorker } from "../minorConsent/worker";
@@ -154,14 +155,7 @@ async function startServer() {
       if (!key || key.startsWith("minor-consents/") || key.startsWith("_backups/minor-consents/") || !token || !verifyStorageAccessToken(key, token)) {
         return res.status(403).json({ error: "Acesso ao arquivo não autorizado." });
       }
-      const { url } = await storageGet(key);
-      if (!url) return res.status(404).json({ error: "Arquivo indisponível." });
-      const upstream = await fetch(url);
-      if (!upstream.ok) {
-        return res.status(upstream.status).json({ error: "Imagem indisponível." });
-      }
-      const contentType = upstream.headers.get("content-type") || "application/octet-stream";
-      const bytes = Buffer.from(await upstream.arrayBuffer());
+      const { bytes, mime: contentType } = await storageReadObject(key, 10 * 1024 * 1024);
       res.setHeader("Content-Type", contentType);
       res.setHeader("Cache-Control", "private, max-age=300");
       res.setHeader("X-Content-Type-Options", "nosniff");

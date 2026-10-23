@@ -65,7 +65,9 @@ export async function prepareProtectedQuoteArtwork(payload: QuoteStoredPayload, 
     try {
       const { url } = await storageGet(image.key);
       if (!url) throw new Error("Armazenamento indisponível.");
-      const buffer = await readLimitedImage(url);
+      const buffer = process.env.DEMO_MODE === "true"
+        ? await (await import("./storage")).storageReadBuffer(image.key, MAX_BYTES)
+        : await readLimitedImage(url);
       const customerCopy = await watermarkQuoteArtwork(buffer, payload.artist.name, quoteNumber, payload.editor.watermarkOpacity);
       const uploaded = await storagePut(`quotes/${studioId}/${artistId}/protected/${randomUUID()}.jpg`, customerCopy, "image/jpeg");
       if (!uploaded.url) throw new Error("Armazenamento indisponível.");

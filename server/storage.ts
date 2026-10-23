@@ -1,4 +1,4 @@
-import { demoPut, demoRead, demoDelete } from "./demoStorage";
+import { demoPut, demoRead, demoDelete, demoMime } from "./demoStorage";
 // Storage helpers for Manus proxy and standalone S3-compatible providers.
 
 import { createHmac, timingSafeEqual, randomUUID } from "crypto";
@@ -237,6 +237,27 @@ export async function storageDelete(relKey: string): Promise<void> {
   // The legacy Manus proxy does not expose a delete helper in this CRM.
   // Keep this operation explicit instead of silently pretending deletion occurred.
   throw new Error("Storage delete is not supported by the configured provider");
+}
+
+// Internal reads never follow the demo's relative authenticated URL over HTTP.
+// Callers must first authorize the parent record or verify its storage token.
+export async function storageReadObject(key: string, maxBytes: number): Promise<{ bytes: Buffer; mime: string }> {
+  if (ENV.storageProvider === "demo" && process.env.DEMO_MODE === "true") {
+    const [bytes, mime] = await Promise.all([demoRead(normalizeKey(key), maxBytes), demoMime(normalizeKey(key))]);
+    return { bytes, mime };
+  }
+  const { url } = await storageGet(key);
+  if (!url) throw new Error("Arquivo indisponível.");
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!response.ok || !response.body || Number(response.headers.get("content-length") || 0) > maxBytes) throw new Error("Arquivo indisponível ou maior que o limite.");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const part of response.body as any as AsyncIterable<Uint8Array>) {
+    size += part.length;
+    if (size > maxBytes) throw new Error("Arquivo maior que o limite.");
+    chunks.push(Buffer.from(part));
+  }
+  return { bytes: Buffer.concat(chunks), mime: response.headers.get("content-type")?.split(";")[0] || "application/octet-stream" };
 }
 
 // Called only after a tenant/artist ownership check. No client-supplied URL is fetched.
