@@ -494,7 +494,7 @@ export async function createAppointment(data: InsertAppointment, depositMethod: 
   return atomicDatabase(db,async transaction=>{
     const tx=transaction as unknown as typeof db;
     await lockAppointmentStudio(tx,data.studioId);
-    if(data.status!=="cancelado" && (await checkAppointmentConflicts(data.artist,data.date,data.duration??60,undefined,data.studioId!,tx)).hasConflict)
+    if(data.status!=="cancelado" && (await checkAppointmentConflicts(data.artist,data.date,data.duration??60,undefined,data.studioId!,tx,data.artistId)).hasConflict)
       throw new TRPCError({code:"CONFLICT",message:"Horário indisponível para este artista."});
     const [client]=await tx.select().from(clients).where(and(eq(clients.id,data.clientId),eq(clients.studioId,data.studioId!))).limit(1).for("update");
     if(!client)throw new TRPCError({code:"FORBIDDEN"});
@@ -525,7 +525,7 @@ export async function updateAppointment(id: number, data: Partial<InsertAppointm
       if(record||before.status==='concluido')throw new TRPCError({code:'BAD_REQUEST',message:APPOINTMENT_HISTORY_MESSAGE});
     }
     const after={...before,...data};
-    if(after.status!=="cancelado" && (slotChanged||changed||before.status==='cancelado') && (await checkAppointmentConflicts(after.artist,after.date,after.duration,id,after.studioId!,tx)).hasConflict)
+    if(after.status!=="cancelado" && (slotChanged||changed||before.status==='cancelado') && (await checkAppointmentConflicts(after.artist,after.date,after.duration,id,after.studioId!,tx,after.artistId)).hasConflict)
       throw new TRPCError({code:"CONFLICT",message:"Horário indisponível para este artista."});
     await tx.update(appointments).set(data).where(eq(appointments.id,id));
     if(!before.depositPaid && after.depositPaid && after.depositAmount && after.depositAmount>0)await createTransactionIn(tx,{
@@ -549,7 +549,8 @@ export async function checkAppointmentConflicts(
   duration: number,
   excludeId?: number,
   studioId?: number,
-  executor?: NonNullable<Awaited<ReturnType<typeof getDb>>>
+  executor?: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  artistId?: number | null
 ) {
   const db = executor ?? await getDb();
   if (!db) return { hasConflict: false, conflicts: [] };
@@ -572,7 +573,7 @@ export async function checkAppointmentConflicts(
     .leftJoin(clients, and(eq(clients.id, appointments.clientId), eq(clients.studioId, appointments.studioId)))
     .where(
       and(
-        eq(appointments.artist, artist),
+        or(eq(appointments.artist, artist), artistId != null ? eq(appointments.artistId,artistId) : undefined),
         eq(appointments.studioId, studioId),
         lte(appointments.date, toDateStr(endTime)),
         sql`DATE_ADD(${appointments.date}, INTERVAL ${appointments.duration} MINUTE) > ${toDateStr(startTime)}`,

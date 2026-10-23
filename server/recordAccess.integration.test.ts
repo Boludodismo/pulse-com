@@ -390,4 +390,15 @@ describe.skipIf(!enabled)("Stage 1A: actual tRPC HTTP + disposable MySQL (synthe
     expect((await request(user,"procedures.create",{clientId:101,artistId:12,appointmentId:1008,title:"Explicit existing appointment link"},true)).status).toBe(200);
   });
 
+  it("agenda conflict follows the existing artist ID even when the saved name differs",async()=>{
+    await database.query("UPDATE appointments SET artist='Earlier fictional artist name' WHERE id=1001");
+    const before=await snapshot();
+    const result=await request(1,"appointments.create",{clientId:101,artistId:11,artist:"Fiction Artist 11",date:"2030-01-01 10:30:00",duration:60,service:"Fiction",attendanceEnabled:0},true);
+    expect(result.status,JSON.stringify(result)).toBe(409);expect(await snapshot()).toBe(before);
+    const input={clientId:101,artistId:11,artist:"Fiction Artist 11",date:"2030-01-05 10:00:00",duration:60,service:"Fiction",attendanceEnabled:0};
+    const pair=await Promise.all([request(1,"appointments.create",input,true),request(1,"appointments.create",{...input,artist:"Alternative textual label"},true)]);
+    expect(pair.map(r=>r.status).sort(),JSON.stringify(pair)).toEqual([200,409]);
+    expect((await request(1,"appointments.create",{clientId:102,artistId:12,artist:"Fiction Artist 12",date:"2030-01-01 11:00:00",duration:60,service:"Fiction",attendanceEnabled:0},true)).status).toBe(200);
+  });
+
 });
