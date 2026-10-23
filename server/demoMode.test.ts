@@ -1,5 +1,5 @@
 import {describe,it,expect,vi,afterEach} from 'vitest';
-import {assertDemoScope,createDemoGateToken,verifyDemoGateToken} from './demoMode';
+import {assertDemoScope,createDemoGateToken,verifyDemoGateToken,registerDemoMode} from './demoMode';
 import {demoPath} from './demoStorage';
 afterEach(()=>vi.unstubAllEnvs());
 function demo(){vi.stubEnv('DEMO_MODE','true');vi.stubEnv('DEMO_UPLOAD_DIR','/tmp/tatuei-demo-test/uploads');vi.stubEnv('DATABASE_URL','mysql://test:test@127.0.0.1:3307/tatuei_demo');vi.stubEnv('OUTBOUND_MESSAGING_DISABLED','true');vi.stubEnv('RUN_DB_MIGRATIONS','false');}
@@ -17,4 +17,16 @@ describe('Demo browser access cookie',()=>{
  it('rejects missing, malformed, tampered and expired tokens',()=>{secrets();const at=1800000000000;const token=createDemoGateToken(at);expect(verifyDemoGateToken(undefined,at)).toBe(false);expect(verifyDemoGateToken('invalid',at)).toBe(false);expect(verifyDemoGateToken(token.slice(0,-1)+(token.endsWith('0')?'1':'0'),at)).toBe(false);expect(verifyDemoGateToken(token,at+8*60*60*1000)).toBe(false);});
  it('invalidates access after changing the demo password',()=>{secrets();const token=createDemoGateToken();vi.stubEnv('LOCAL_ADMIN_PASSWORD','another-synthetic-password');expect(verifyDemoGateToken(token)).toBe(false);});
  it('refuses tokens without configured signing secrets',()=>{secrets();const token=createDemoGateToken();vi.stubEnv('AUTH_SECURITY_KEY','');expect(verifyDemoGateToken(token)).toBe(false);expect(()=>createDemoGateToken()).toThrow('DEMO_GATE_SECRET_REQUIRED');});
+});
+
+describe('Demo PDF frame isolation',()=>{
+ it('allows only local blob previews while external connections remain restricted',()=>{
+  vi.stubEnv('DEMO_MODE','true');let middleware:any;
+  const app:any={use:(fn:any)=>{middleware=fn;},get:()=>{}};registerDemoMode(app);
+  const headers:Record<string,string>={};let next=false;
+  middleware({path:'/api/health',method:'GET'},{setHeader:(name:string,value:string)=>{headers[name]=value;}},()=>{next=true;});
+  expect(next).toBe(true);expect(headers['Content-Security-Policy']).toContain('frame-src blob:;');
+  expect(headers['Content-Security-Policy']).toContain("connect-src 'self';");
+  expect(headers['Content-Security-Policy']).not.toContain('frame-src https:');
+ });
 });

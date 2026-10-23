@@ -12,7 +12,7 @@ export function registerDemoMode(app:Express){
  if(process.env.DEMO_MODE!=='true')return;
  app.use((req,res,next)=>{
   res.setHeader('X-Robots-Tag','noindex, nofollow');res.setHeader('Cache-Control','no-store');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob:; frame-src 'none'; form-action 'self'");
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob:; frame-src blob:; form-action 'self'");
   if(req.path==='/api/health'&&req.method==='GET')return next();
   const expected=Buffer.from('demo:'+process.env.LOCAL_ADMIN_PASSWORD);
   const auth=req.get('authorization')||'';let actual=Buffer.alloc(0);

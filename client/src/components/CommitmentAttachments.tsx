@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -22,6 +22,14 @@ function FileCard({
 }) {
   const [preview, setPreview] = useState(false);
   const src = `data:${file.mime};base64,${file.data}`;
+  const [pdfSource,setPdfSource]=useState<string>();
+  useEffect(()=>{
+    if(!preview||file.mime!=="application/pdf"){setPdfSource(undefined);return;}
+    const bytes=Uint8Array.from(atob(file.data),character=>character.charCodeAt(0));
+    const url=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
+    setPdfSource(url);
+    return ()=>URL.revokeObjectURL(url);
+  },[preview,file.mime,file.data]);
   return (
     <div className="min-w-0 rounded border p-2 space-y-2">
       <button
@@ -69,7 +77,7 @@ function FileCard({
             />
           ) : (
             <iframe
-              src={src}
+              src={pdfSource}
               title={file.name}
               className="w-full h-[60dvh] rounded border"
             />
