@@ -1429,13 +1429,13 @@ export const appRouter = router({
   transactions: router({
     list: protectedProcedure.query(async ({ ctx }) => {
       // Bug 8: filtrar por studioId do usuário
-      return await db.listTransactions(ctx.user.studioId ?? null);
+      return await db.listTransactions(ctx.user.studioId!, ctx.user.role === "collaborator" ? ctx.user.artistId : null);
     }),
 
     getByClientId: protectedProcedure
       .input(z.object({ clientId: z.number() }))
-      .query(async ({ input }) => {
-        return await db.getTransactionsByClientId(input.clientId);
+      .query(async ({ ctx, input }) => {
+        return await db.getTransactionsByClientId(input.clientId, ctx.user.studioId!, ctx.user.role === "collaborator" ? ctx.user.artistId : null);
       }),
 
     getByDateRange: tenantProcedure
@@ -1447,7 +1447,7 @@ export const appRouter = router({
         if (ctx.user!.role === "collaborator" && (!ctx.studioId || !(await hasModulePermission({ userId: ctx.user!.id, studioId: ctx.studioId, module: "finance" })))) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Sem permissão para consultar dados financeiros." });
         }
-        return await db.getTransactionsByDateRange(input.startDate, input.endDate, ctx.studioId);
+        return await db.getTransactionsByDateRange(input.startDate, input.endDate, ctx.studioId, ctx.user.role === "collaborator" ? ctx.user.artistId : null);
       }),
 
     create: protectedProcedure
@@ -1766,8 +1766,8 @@ export const appRouter = router({
   gallery: router({
     getByClientId: protectedProcedure
       .input(z.object({ clientId: z.number() }))
-      .query(async ({ input }) => {
-        return await db.getGalleryByClientId(input.clientId);
+      .query(async ({ ctx, input }) => {
+        return await db.getGalleryByClientId(input.clientId, ctx.user.studioId!, ctx.user.role === "collaborator" ? ctx.user.artistId : null);
       }),
 
     uploadImage: protectedProcedure

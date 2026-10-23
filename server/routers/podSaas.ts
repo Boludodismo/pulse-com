@@ -1,3 +1,4 @@
+import { assertSessionLinks, sessionReview, sessionAccessScope } from "../recordAccess";
 import type { SampleSource } from "../../shared/sessionColorSampling";
 import { completeVisualLayerOrder, visualLayerStack, validateVisualLayerOrder } from "../../shared/sessionVisualLayers";
 import { readSessionMaterials, snapshotSessionMaterials } from "../sessionMaterials";
@@ -5,7 +6,6 @@ import { defaultSessionQuantity } from "../../shared/sessionMaterialDefaults";
 import { validateRecipeMaterial } from "../../shared/sessionPreparation";
 import { SESSION_CUP_ML, SESSION_DROPS_PER_ML, sessionCupSize, isSessionCup, validateSessionUnit, validateSessionConsumption } from "../../shared/sessionInkQuantity";
 import { importTestInventory } from "../inventoryTestImport";
-import { resolveProcedureArtist } from "../procedureArtist";
 import { appointmentKitsRouter } from "./appointmentKits";
 import { createHash, randomUUID } from "node:crypto";
 import { inventoryMaterialRegistrations } from "../../drizzle/appointmentKitSchema";
@@ -207,9 +207,9 @@ async function requireProcedure(database: Awaited<ReturnType<typeof requireDatab
     eq(technicalProcedures.studioId, ctx.studioId),
   )).limit(1).for("update"))[0];
   if (!procedure) throw new TRPCError({ code: "NOT_FOUND", message: "Sessão POD não encontrada nesta empresa." });
-  const resolved = await resolveProcedureArtist(database, procedure);
-  assertOwnArtist(ctx, resolved.artistId ?? null);
-  return { ...procedure, ...resolved };
+  await assertSessionLinks(database, { ...ctx.user, studioId: ctx.studioId, artistId: ctx.artistId }, procedure);
+  assertOwnArtist(ctx, procedure.artistId ?? null);
+  return sessionReview(procedure);
 }
 
 function calculateTiming(startedAt: string | null, finishedAt: string | null, pauses: Array<{ startedAt: string; endedAt: string | null }>) {
@@ -879,7 +879,7 @@ export const podSaasRouter = router({
       const client=(await d.select({id:clients.id}).from(clients).where(and(eq(clients.id,input.clientId),eq(clients.studioId,ctx.studioId))).limit(1))[0];
       if(!client)throw new TRPCError({code:"NOT_FOUND",message:"Cliente não encontrado."});
       if(!isInventoryManager(ctx)&&!ctx.artistId)throw new TRPCError({code:"FORBIDDEN",message:"Artista não vinculado."});
-      return d.select({...getTableColumns(procedureInventoryConsumptions),artistName:artists.name,loanId:inventoryLoans.id,lenderArtistId:inventoryLoans.lenderArtistId}).from(procedureInventoryConsumptions).leftJoin(inventoryLoans,and(eq(inventoryLoans.receivedMaterialId,procedureInventoryConsumptions.tenantMaterialId),eq(inventoryLoans.studioId,ctx.studioId))).leftJoin(artists,and(eq(artists.id,procedureInventoryConsumptions.artistId),eq(artists.studioId,ctx.studioId))).where(and(eq(procedureInventoryConsumptions.studioId,ctx.studioId),eq(procedureInventoryConsumptions.clientId,input.clientId),isInventoryManager(ctx)?undefined:eq(procedureInventoryConsumptions.artistId,ctx.artistId!))).orderBy(desc(procedureInventoryConsumptions.consumedAt));
+      return d.select({...getTableColumns(procedureInventoryConsumptions),artistName:artists.name,loanId:inventoryLoans.id,lenderArtistId:inventoryLoans.lenderArtistId}).from(procedureInventoryConsumptions).innerJoin(technicalProcedures,and(eq(technicalProcedures.id,procedureInventoryConsumptions.procedureId),eq(technicalProcedures.clientId,procedureInventoryConsumptions.clientId),sessionAccessScope(ctx.user))).leftJoin(inventoryLoans,and(eq(inventoryLoans.receivedMaterialId,procedureInventoryConsumptions.tenantMaterialId),eq(inventoryLoans.studioId,ctx.studioId))).leftJoin(artists,and(eq(artists.id,procedureInventoryConsumptions.artistId),eq(artists.studioId,ctx.studioId))).where(and(eq(procedureInventoryConsumptions.studioId,ctx.studioId),eq(procedureInventoryConsumptions.clientId,input.clientId),isInventoryManager(ctx)?undefined:eq(procedureInventoryConsumptions.artistId,ctx.artistId!))).orderBy(desc(procedureInventoryConsumptions.consumedAt));
     }),
 
     create: tenantProcedure.input(z.object({
@@ -910,7 +910,7 @@ export const podSaasRouter = router({
       if (appointment && appointment.clientId !== input.clientId) throw new TRPCError({ code: "BAD_REQUEST", message: "O agendamento selecionado pertence a outro cliente." });
       if (appointment?.artistId && input.artistId && appointment.artistId !== input.artistId) throw new TRPCError({ code: "BAD_REQUEST", message: "O artista informado não corresponde ao agendamento." });
 
-      const resolvedArtistId = input.artistId ?? appointment?.artistId ?? ctx.artistId ?? null;
+      const resolvedArtistId = input.artistId ?? null;
       assertOwnArtist(ctx, resolvedArtistId);
       const artist = resolvedArtistId ? (await database.select().from(artists).where(and(
         eq(artists.id, resolvedArtistId), eq(artists.studioId, ctx.studioId),
@@ -1442,7 +1442,8 @@ export const podSaasRouter = router({
         const database = await requireDatabase();
         const artistId = input?.artistId ?? ctx.artistId ?? null;
         assertOwnArtist(ctx, artistId);
-        const recipes = await database.select().from(procedureInkRecipes)
+        const recipes = await database.select(getTableColumns(procedureInkRecipes)).from(procedureInkRecipes)
+          .innerJoin(technicalProcedures, and(eq(technicalProcedures.id, procedureInkRecipes.procedureId), eq(technicalProcedures.clientId, procedureInkRecipes.clientId), sessionAccessScope(ctx.user)))
           .where(and(
             eq(procedureInkRecipes.studioId, ctx.studioId),
             artistId == null ? undefined : eq(procedureInkRecipes.artistId, artistId),

@@ -253,6 +253,9 @@ function ClientProcedureCard({
                 <div key={p.id} className="flex items-center gap-2 group">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">{p.title}</p>
+                    {p.requiresArtistReview && (
+                      <p className="text-xs text-amber-600" role="status">Sem artista vinculado — revisão administrativa necessária</p>
+                    )}
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <Badge
                         variant="outline"

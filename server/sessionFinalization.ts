@@ -29,7 +29,7 @@ import {
   type InventoryContext,
   assertOwnArtist,
 } from "./inventoryAccess";
-import { resolveProcedureArtist } from "./procedureArtist";
+import { sessionReview } from "./recordAccess";
 import {
   finalizeSessionInput,
   settlement,
@@ -60,7 +60,7 @@ export async function finalizationPreview(
       code: "NOT_FOUND",
       message: "Sessão não encontrada.",
     });
-  const procedure = { ...proc, ...(await resolveProcedureArtist(db, proc)) };
+  const procedure = sessionReview(proc);
   assertOwnArtist(ctx, procedure.artistId ?? null);
   const appointment = procedure.appointmentId
     ? (

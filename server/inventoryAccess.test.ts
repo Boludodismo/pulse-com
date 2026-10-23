@@ -35,11 +35,20 @@ const material = {
 };
 // Mock I/O only: real router validation, authorization, decimal arithmetic and Drizzle predicates run.
 function database(reads: any[][]) {
+  // Session authorization now also reads its linked client and artist. Keep the
+  // business-operation fixtures and assertions, supplying consistent parents.
+  const queue = reads.flatMap(rows => {
+    const proc = rows[0];
+    if (!proc || !["em_andamento", "pausado", "finalizado"].includes(proc.status) || !proc.studioId) return [rows];
+    const linked = { clientId: 30, appointmentId: null, ...proc };
+    return [[linked], [{ id: linked.clientId, studioId: linked.studioId, artistId: linked.artistId }],
+      ...(linked.artistId == null ? [] : [[{ id: linked.artistId, studioId: linked.studioId }]])];
+  });
   const writes: Array<{ table: unknown; values: any; where?: any }> = [];
   const predicates: any[] = [];
   const db: any = {
     select: vi.fn(() => {
-      const rows = reads.shift() ?? [];
+      const rows = queue.shift() ?? [];
       const chain: any = {
         from: () => chain,
         where: (predicate: any) => {

@@ -678,14 +678,28 @@ export async function createAnamnesis(data: InsertAnamnesisRecord) {
 
 // ============ TRANSACTION HELPERS ============
 
-export async function listTransactions(studioId?: number | null) {
+function transactionRecordCondition(studioId: number | null | undefined, artistId?: number | null) {
+  if (studioId == null) return undefined;
+  return and(
+    sql`(${transactions.clientId} IS NULL OR EXISTS (SELECT 1 FROM clients c WHERE c.id = ${transactions.clientId} AND c.studioId = ${studioId}))`,
+    sql`(${transactions.appointmentId} IS NULL OR EXISTS (SELECT 1 FROM appointments ap WHERE ap.id = ${transactions.appointmentId}
+      AND ap.clientId = ${transactions.clientId} AND ap.studioId = ${studioId}))`,
+    artistId == null ? undefined : sql`EXISTS (SELECT 1 FROM clients c WHERE c.id = ${transactions.clientId}
+      AND c.studioId = ${studioId} AND
+      ((${transactions.appointmentId} IS NULL AND c.artistId = ${artistId}) OR EXISTS
+        (SELECT 1 FROM appointments a WHERE a.id = ${transactions.appointmentId}
+         AND a.clientId = c.id AND a.studioId = ${studioId} AND a.artistId = ${artistId})))`,
+  );
+}
+
+export async function listTransactions(studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
   
   // Bug 8: filtrar por studioId quando fornecido
   if (studioId != null) {
     const result = await db.select().from(transactions)
-      .where(eq(transactions.studioId, studioId))
+      .where(and(eq(transactions.studioId, studioId), transactionRecordCondition(studioId, artistId)))
       .orderBy(desc(transactions.date));
     return result;
   }
@@ -693,20 +707,20 @@ export async function listTransactions(studioId?: number | null) {
   return result;
 }
 
-export async function getTransactionsByClientId(clientId: number) {
+export async function getTransactionsByClientId(clientId: number, studioId?: number, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
   
   const result = await db
     .select()
     .from(transactions)
-    .where(eq(transactions.clientId, clientId))
+    .where(and(eq(transactions.clientId, clientId), studioId == null ? undefined : eq(transactions.studioId, studioId), transactionRecordCondition(studioId, artistId)))
     .orderBy(desc(transactions.date));
   
   return result;
 }
 
-export async function getTransactionsByDateRange(startDate: string, endDate: string, studioId?: number | null) {
+export async function getTransactionsByDateRange(startDate: string, endDate: string, studioId?: number | null, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
   
@@ -720,6 +734,7 @@ export async function getTransactionsByDateRange(startDate: string, endDate: str
       gte(transactions.date, startStr),
       lte(transactions.date, endStr),
       ...(studioId ? [eq(transactions.studioId, studioId)] : []),
+      transactionRecordCondition(studioId, artistId),
     ))
     .orderBy(desc(transactions.date));
   
@@ -815,14 +830,17 @@ export async function deleteNote(id: number) {
 
 // ============ GALLERY HELPERS ============
 
-export async function getGalleryByClientId(clientId: number) {
+export async function getGalleryByClientId(clientId: number, studioId?: number, artistId?: number | null) {
   const db = await getDb();
   if (!db) return [];
   
   const result = await db
     .select()
     .from(galleryImages)
-    .where(eq(galleryImages.clientId, clientId))
+    .where(and(eq(galleryImages.clientId, clientId), studioId == null ? undefined : sql`(${galleryImages.appointmentId} IS NULL OR EXISTS
+      (SELECT 1 FROM appointments ap WHERE ap.id = ${galleryImages.appointmentId}
+       AND ap.clientId = ${galleryImages.clientId} AND ap.studioId = ${studioId}
+       ${artistId == null ? sql`` : sql`AND ap.artistId = ${artistId}`}))`))
     .orderBy(desc(galleryImages.createdAt));
   
   return result;

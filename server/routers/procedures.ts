@@ -1,10 +1,10 @@
+import { sessionAccessScope, sessionReview, requireSessionRecord } from "../recordAccess";
 import { snapshotSessionMaterials } from "../sessionMaterials";
 import { sessionMaterialName } from "../../shared/sessionInkQuantity";
 import { finalizationPreview, finalizeSession } from "../sessionFinalization";
 import { finalizeSessionInput, readFinalization } from "../../shared/sessionFinalization";
 import { preparationSchema, preparationRgb, readPreparation, validatePreparationMaterial, validateRecipeMaterial } from "../../shared/sessionPreparation";
 import { assertOwnArtist, requireMaterialForArtist } from "../inventoryAccess";
-import { resolveProcedureArtist } from "../procedureArtist";
 /**
  * POD Session — Módulo de Execução Técnica da Tatuagem
  * Router tRPC isolado. Não altera nenhum router existente.
@@ -105,11 +105,12 @@ export const proceduresRouter = router({
         .where(
           and(
             eq(technicalProcedures.clientId, input.clientId),
-            eq(technicalProcedures.studioId, studioId)
+            eq(technicalProcedures.studioId, studioId),
+            sessionAccessScope(ctx.user)
           )
         )
         .orderBy(desc(technicalProcedures.createdAt));
-      return rows;
+      return rows.map(sessionReview);
     }),
 
   // ── Buscar procedimento por ID ───────────────────────────────────────────
@@ -141,7 +142,7 @@ export const proceduresRouter = router({
         .where(and(eq(procedureEvents.procedureId, input.id), sql`${procedureEvents.eventType} LIKE 'prepared:%'`)).limit(1))[0];
       const closure = (await db.select({ payload: procedureEvents.payload }).from(procedureEvents).where(and(eq(procedureEvents.procedureId, input.id), eq(procedureEvents.eventType, "finalization"))).limit(1))[0];
       const inventoryConsumptions = await db.select().from(procedureInventoryConsumptions).where(and(eq(procedureInventoryConsumptions.studioId,studioId),eq(procedureInventoryConsumptions.procedureId,input.id),eq(procedureInventoryConsumptions.status,"consumido")));
-      return { inventoryConsumptions, procedure: { ...procedure, ...await resolveProcedureArtist(db, procedure) }, consumables, images, preparation: readPreparation(preparationEvent?.payload), finalization: readFinalization(closure?.payload) };
+      return { inventoryConsumptions, procedure: sessionReview(procedure), consumables, images, preparation: readPreparation(preparationEvent?.payload), finalization: readFinalization(closure?.payload) };
     }),
 
   // ── Criar novo procedimento ──────────────────────────────────────────────
@@ -179,11 +180,14 @@ export const proceduresRouter = router({
           const replay = (await tx.select({ procedure: technicalProcedures }).from(technicalProcedures)
             .innerJoin(procedureEvents, eq(procedureEvents.procedureId, technicalProcedures.id))
             .where(and(eq(technicalProcedures.studioId, studioId), eq(technicalProcedures.clientId, input.clientId), eq(procedureEvents.eventType, eventType))).limit(1))[0];
-          if (replay) return replay.procedure;
+          if (replay) {
+            await requireSessionRecord(tx as unknown as Awaited<ReturnType<typeof requireDb>>, ctx.user, replay.procedure.id);
+            return replay.procedure;
+          }
         }
         const database = tx as unknown as Awaited<ReturnType<typeof requireDb>>;
         await assertProcedureLinks(database, { studioId, clientId: input.clientId, appointmentId: input.appointmentId, artistId: input.artistId });
-        const resolvedArtist = await resolveProcedureArtist(database, { ...input, studioId });
+        const resolvedArtist = input;
         if (input.preparation) assertOwnArtist(ctx, resolvedArtist.artistId ?? null);
         const preparation = input.preparation ? preparationSchema.parse(input.preparation) : null;
         if (preparation) {
@@ -652,11 +656,12 @@ export const proceduresRouter = router({
         .where(
           and(
             eq(technicalProcedures.appointmentId, input.appointmentId),
-            eq(technicalProcedures.studioId, studioId)
+            eq(technicalProcedures.studioId, studioId),
+            sessionAccessScope(ctx.user)
           )
         )
         .orderBy(desc(technicalProcedures.createdAt));
-      return rows;
+      return rows.map(sessionReview);
     }),
   // Resumo financeiro do procedimento
   getSummary: tenantProcedure
@@ -697,7 +702,7 @@ export const proceduresRouter = router({
       const grossMargin = chargedAmount - totalMaterialCost;
 
       return {
-        procedure,
+        procedure: sessionReview(procedure),
         consumables,
         byCategory,
         inventoryConsumptions,
@@ -734,7 +739,7 @@ export const proceduresRouter = router({
       const db = await requireDb();
 
       // Buscar procedimentos finalizados no período
-      const procWhere = [eq(technicalProcedures.studioId, studioId)];
+      const procWhere = [eq(technicalProcedures.studioId, studioId), sessionAccessScope(ctx.user)];
       if (input.startDate) procWhere.push(gte(technicalProcedures.createdAt, `${input.startDate} 00:00:00`));
       if (input.endDate) procWhere.push(lte(technicalProcedures.createdAt, `${input.endDate} 23:59:59`));
 
@@ -829,6 +834,7 @@ export const proceduresRouter = router({
           .from(technicalProcedures)
           .where(and(
             eq(technicalProcedures.studioId, studioId),
+            sessionAccessScope(ctx.user),
             gte(technicalProcedures.createdAt, start),
             lte(technicalProcedures.createdAt, end),
           ));
@@ -880,15 +886,17 @@ export const proceduresRouter = router({
       const db = await requireDb();
       const filters = [
         eq(technicalProcedures.studioId, studioId),
+        sessionAccessScope(ctx.user),
         isNotNull(technicalProcedures.appointmentId),
       ];
-      if (ctx.artistId != null) filters.push(eq(appointments.artistId, ctx.artistId));
+      if (ctx.artistId != null) filters.push(eq(technicalProcedures.artistId, ctx.artistId));
       const rows = await db
         .select({ appointmentId: technicalProcedures.appointmentId, id: technicalProcedures.id })
         .from(technicalProcedures)
         .innerJoin(appointments, and(
           eq(appointments.id, technicalProcedures.appointmentId),
           eq(appointments.studioId, studioId),
+          eq(appointments.clientId, technicalProcedures.clientId),
         ))
         .where(and(...filters));
       // Retorna mapa appointmentId -> procedureId, já restrito ao próprio artista quando colaborador.

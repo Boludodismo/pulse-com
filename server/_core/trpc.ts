@@ -1,3 +1,4 @@
+import { assertRecordAccess } from "../recordAccess";
 import {assertInvitedArtistAccess} from '../invitedArtistAccess';
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
@@ -23,7 +24,11 @@ const requireUser = t.middleware(async opts => {
     throw new TRPCError({ code: "FORBIDDEN", message: "Acesso suspenso ou expirado." });
   }
 
-  await assertInvitedArtistAccess(ctx.user, opts.path, opts.type, await opts.getRawInput());
+  const rawInput = await opts.getRawInput();
+  // Stage 1A uses one policy for regular and invited collaborators alike.
+  if (!(await assertRecordAccess(ctx.user, opts.path, opts.type, rawInput))) {
+    await assertInvitedArtistAccess(ctx.user, opts.path, opts.type, rawInput);
+  }
 
   return next({
     ctx: {
