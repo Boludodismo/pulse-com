@@ -6,7 +6,7 @@ import {
   settlement,
   effectiveMinutes,
 } from "../shared/sessionFinalization";
-vi.mock("./db", () => ({ getDb: vi.fn() }));
+vi.mock("./db", async importOriginal => ({...await importOriginal<typeof import("./db")>(),getDb:vi.fn()}));
 import { finalizationPreview, finalizeSession } from "./sessionFinalization";
 
 const ctx = { studioId: 7, artistId: null, user: { id: 1, role: "admin" } };
@@ -48,7 +48,7 @@ function database(failTable?: string) {
         status: "confirmado",
       },
     ],
-    clients: [{ id: 9, name: "Cliente Teste", phone: null }],
+    clients: [{ id: 9, studioId:7, name: "Cliente Teste", phone: null, totalSpent:30000,appointmentCount:1,loyaltyLevel:"Bronze" }],
     transactions: [
       {
         id: 4,

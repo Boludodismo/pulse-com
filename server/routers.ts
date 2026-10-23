@@ -706,7 +706,7 @@ export const appRouter = router({
           paymentStatus: input.paymentStatus || "pendente" as const,
           paymentMethod: input.paymentMethod ?? null,
         };
-        const result = await db.createAppointment(appointmentData);
+        const result = await db.createAppointment(appointmentData,input.depositPaymentMethod||"pix");
 
         const automaticReminder: { scheduled: boolean; scheduledAt: string | null; reason: string | null } = {
           scheduled: false,
@@ -748,21 +748,6 @@ export const appRouter = router({
           console.warn("[Appointments] Saved appointment; WhatsApp follow-up unavailable.");
         }
 
-        // Bug 3: Se sinal já está pago ao criar, gerar transação no caixa
-        if (input.depositPaid && input.depositAmount && input.depositAmount > 0) {
-          await db.createTransaction({
-            studioId,
-            clientId: input.clientId,
-            appointmentId: result.id,
-            type: "entrada",
-            category: "Sinal de Agendamento",
-            description: `Sinal pago - ${input.service} com ${input.artist}`,
-            amount: input.depositAmount,
-            paymentMethod: input.depositPaymentMethod || "pix",
-            date: new Date().toISOString().slice(0, 10),
-          });
-        }
-        
         // Registrar auditoria
         await db.createAuditLog({
           userId: ctx.user.id,
@@ -897,25 +882,7 @@ export const appRouter = router({
           if (ctx.user.role === "collaborator" && (!ctx.user.artistId || !await hasModulePermission({userId:ctx.user.id,studioId:activeStudioId,module:"quotes",write:true}))) throw new TRPCError({code:"FORBIDDEN"});
           await validateAppointmentQuote({quoteId:updateData.quoteId,studioId:activeStudioId,clientId:input.data.clientId ?? appointmentBefore.clientId,artistId:resolvedArtistId ?? appointmentBefore.artistId,userArtistId:ctx.user.role === "collaborator" ? ctx.user.artistId : null});
         }
-        const result = await db.updateAppointment(input.id, updateData);
-
-        // Bug 3: Gerar transação no caixa quando sinal muda de não-pago para pago
-        const wasNotPaid = !appointmentBefore?.depositPaid || appointmentBefore.depositPaid === 0;
-        const isNowPaid = input.data.depositPaid === true;
-        const depositValue = input.data.depositAmount ?? appointmentBefore?.depositAmount ?? 0;
-        if (wasNotPaid && isNowPaid && depositValue > 0) {
-          await db.createTransaction({
-            studioId: appointmentBefore.studioId,
-            clientId: appointmentBefore?.clientId ?? null,
-            appointmentId: input.id,
-            type: "entrada",
-            category: "Sinal de Agendamento",
-            description: `Sinal pago - ${appointmentBefore?.service || "Serviço"} com ${appointmentBefore?.artist || "Artista"}`,
-            amount: depositValue,
-            paymentMethod: input.data.depositPaymentMethod || "pix",
-            date: new Date().toISOString().slice(0, 10),
-          });
-        }
+        const result = await db.updateAppointment(input.id, updateData,input.data.depositPaymentMethod||"pix");
 
         // Buscar dados depois da atualização
         const appointmentAfter = await db.getAppointmentById(input.id);
@@ -1634,41 +1601,11 @@ export const appRouter = router({
           appointmentId: transactionInput.appointmentId || null,
           description: transactionInput.description || null,
         };
-        const transaction = await db.createTransaction(transactionData);
-
-        // Dar baixa nos materiais selecionados
-        const stockResults: Array<{ materialId: number; materialName: string; previousStock: number; newStock: number }> = [];
-        for (const item of materialItems) {
-          const mat = await db.getMaterialById(item.materialId, studioId);
-          if (!mat) continue;
-          const result = await db.addStockMovement({
-            materialId: item.materialId,
-            type: 'saida',
-            quantity: item.quantity,
-            reason: item.reason || `Baixa via transação financeira - ${transactionInput.category}`,
-            createdBy: ctx.user.id,
-          }, studioId);
-          stockResults.push({
-            materialId: item.materialId,
-            materialName: mat.name,
-            previousStock: result.previousStock,
-            newStock: result.newStock,
-          });
-        }
-
-        // Registrar auditoria
-        await db.createAuditLog({
-          userId: ctx.user.id,
-          userName: ctx.user.name || "Usuário sem nome",
-          action: "create",
-          entity: "transaction",
-          entityName: `${input.type === "entrada" ? "Entrada" : "Saída"} - ${input.category} - R$ ${(input.amount / 100).toFixed(2)}`,
-          details: { ...transactionData, stockMovements: stockResults },
-          ipAddress: ctx.req.ip || ctx.req.socket?.remoteAddress,
-          userAgent: ctx.req.headers?.["user-agent"],
+        return db.createTransactionWithMaterials(transactionData,materialItems,ctx.user.id,{
+          userId:ctx.user.id,userName:ctx.user.name||"Usuário sem nome",action:"create",entity:"transaction",
+          entityName:`${input.type === "entrada" ? "Entrada" : "Saída"} - ${input.category} - R$ ${(input.amount / 100).toFixed(2)}`,
+          ipAddress:ctx.req.ip||ctx.req.socket?.remoteAddress,userAgent:ctx.req.headers?.["user-agent"],
         });
-
-        return { transaction, stockMovements: stockResults };
       }),
   }),
 

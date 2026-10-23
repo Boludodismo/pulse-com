@@ -10,7 +10,7 @@ import superjson from "superjson";
 const url = process.env.STAGE1A_TEST_DATABASE_URL;
 const enabled = !!url && /^mysql:\/\/[^@]+@127\.0\.0\.1:33181\/stage1a_test$/.test(url);
 if (url && !enabled) throw new Error("Stage 1A tests require the dedicated loopback database on port 33181.");
-const tables = ["procedure_ink_recipe_items", "procedure_ink_recipe_results", "procedure_pauses", "procedure_color_samples", "procedure_visual_layers", "tenant_inventory_movements", "tenant_materials", "artist_session_appearance", "appointment_planned_materials", "procedure_ink_recipes", "procedure_inventory_consumptions", "procedure_consumables", "procedure_images", "procedure_events", "technical_procedures", "galleryImages", "clientNotes", "transactions", "appointments", "calendars", "materials", "user_module_permissions", "clients", "users", "artists", "studios", "auditLogs"];
+const tables = ["stock_movements","procedure_ink_recipe_items", "procedure_ink_recipe_results", "procedure_pauses", "procedure_color_samples", "procedure_visual_layers", "tenant_inventory_movements", "tenant_materials", "artist_session_appearance", "appointment_planned_materials", "procedure_ink_recipes", "procedure_inventory_consumptions", "procedure_consumables", "procedure_images", "procedure_events", "technical_procedures", "galleryImages", "clientNotes", "transactions", "appointments", "calendars", "materials", "user_module_permissions", "clients", "users", "artists", "studios", "auditLogs"];
 let database: Connection;
 let http: Server;
 let base: string;
@@ -116,6 +116,7 @@ describe.skipIf(!enabled)("Stage 1A: actual tRPC HTTP + disposable MySQL (synthe
     await database.query("INSERT INTO clientNotes(id,clientId,authorId,content) VALUES(5001,101,1,'Fiction own'),(5002,201,2,'Fiction foreign'),(5003,102,1,'Fiction other artist')");
     await database.query("INSERT INTO galleryImages(id,clientId,appointmentId,imageUrl,imageKey) VALUES(6001,101,1001,'/fiction','client-101/gallery/fiction'),(6002,201,2001,'/fiction','client-201/gallery/fiction')");
     await database.query("INSERT INTO transactions(id,studioId,clientId,appointmentId,type,category,amount,paymentMethod,date) VALUES(8001,1,101,1001,'entrada','Fiction',100,'pix','2030-01-01'),(8002,2,201,2001,'entrada','Fiction',100,'pix','2030-01-01'),(8003,1,102,1002,'entrada','Fiction',100,'pix','2030-01-01')");
+    await database.query("UPDATE clients SET totalSpent=100 WHERE id IN (101,102,201)");
     await database.query("INSERT INTO procedure_consumables(id,procedureId,category,name,unit,quantity) VALUES(7001,1001,'ink','Fiction','ml','1'),(7002,2001,'ink','Fiction','ml','1'),(7003,1002,'ink','Fiction','ml','1')");
     await database.query("INSERT INTO procedure_inventory_consumptions(id,procedureId,studioId,clientId,artistId,tenantMaterialId,nameSnapshot,unitSnapshot,quantity,unitCostSnapshot,totalCostSnapshot,consumedAt,status) VALUES(7101,2001,2,201,11,1,'Fiction','ml',1,1,1,'2030-01-01','revertido'),(7102,1002,1,102,11,1,'Fiction','ml',1,1,1,'2030-01-01','revertido')");
     await database.query("INSERT INTO procedure_ink_recipes(id,studioId,procedureId,clientId,artistId,code,dropsPerMl,totalDrops,estimatedMl,createdByUserId) VALUES(7201,2,2001,201,21,'M1',20,1,0.05,2),(7202,1,1002,102,11,'M2',20,1,0.05,1)");
@@ -325,5 +326,51 @@ describe.skipIf(!enabled)("Stage 1A: actual tRPC HTTP + disposable MySQL (synthe
     expect(pair.map(r=>r.status).sort(),JSON.stringify(pair)).toEqual([200,409]);
   });
 
+  it("financial edits, ownership changes, repeat updates and deletes maintain existing loyalty formula",async()=>{
+    expect((await request(1,"transactions.update",{id:8001,data:{amount:60000}},true)).status).toBe(200);
+    const client=async(id:number)=>(await database.query<RowDataPacket[]>("SELECT totalSpent,loyaltyLevel FROM clients WHERE id=?",[id]))[0][0];
+    expect(await client(101)).toMatchObject({totalSpent:60000,loyaltyLevel:"Prata"});
+    expect((await request(1,"transactions.update",{id:8001,data:{amount:60000}},true)).status).toBe(200);
+    expect((await client(101)).totalSpent).toBe(60000);
+    expect((await request(1,"transactions.update",{id:8001,data:{clientId:102,appointmentId:1002}},true)).status).toBe(200);
+    expect(await client(101)).toMatchObject({totalSpent:0,loyaltyLevel:"Bronze"});
+    expect((await client(102)).totalSpent).toBe(60100);
+    expect((await request(1,"transactions.delete",{id:8001},true)).status).toBe(200);
+    expect((await client(102)).totalSpent).toBe(100);
+  });
+  it("financial material failure rolls back every row and concurrent consumers cannot overspend",async()=>{
+    await database.query("INSERT INTO materials(id,studioId,name,currentStock) VALUES(901,1,'Fiction',5),(902,1,'Fiction empty',0)");
+    const input={clientId:101,appointmentId:1001,type:"entrada",category:"Fiction",amount:100,paymentMethod:"pix",date:"2030-01-01",materials:[{materialId:901,quantity:3},{materialId:902,quantity:1}]};
+    const before=await snapshot();expect((await request(1,"transactions.createWithMaterials",input,true)).status).toBe(409);expect(await snapshot()).toBe(before);
+    const pair=await Promise.all([request(1,"transactions.createWithMaterials",{...input,materials:[{materialId:901,quantity:3}]},true),request(1,"transactions.createWithMaterials",{...input,materials:[{materialId:901,quantity:3}]},true)]);
+    expect(pair.map(r=>r.status).sort(),JSON.stringify(pair)).toEqual([200,409]);
+    const [mat]=await database.query<RowDataPacket[]>("SELECT currentStock FROM materials WHERE id=901");expect(Number(mat[0].currentStock)).toBe(2);
+    const [mov]=await database.query<RowDataPacket[]>("SELECT * FROM stock_movements WHERE materialId=901");expect(mov).toHaveLength(1);
+    const transaction=pair.find(r=>r.status===200)!.data.transaction;
+    expect((await request(1,"transactions.delete",{id:transaction.id},true)).status).toBe(200);
+    expect((await database.query<RowDataPacket[]>("SELECT currentStock FROM materials WHERE id=901"))[0][0].currentStock).toBe(mat[0].currentStock);
+  });
+  it("repeated simultaneous deposit confirmation records exactly one receipt",async()=>{
+    const input={id:1001,data:{depositPaid:true,depositAmount:500}};
+    const pair=await Promise.all([request(1,"appointments.update",input,true),request(1,"appointments.update",input,true)]);
+    expect(pair.map(r=>r.status),JSON.stringify(pair)).toEqual([200,200]);
+    const [rows]=await database.query<RowDataPacket[]>("SELECT * FROM transactions WHERE appointmentId=1001 AND category='Sinal de Agendamento'");expect(rows).toHaveLength(1);
+    expect((await database.query<RowDataPacket[]>("SELECT totalSpent FROM clients WHERE id=101"))[0][0].totalSpent).toBe(600);
+  });
+
+  it("allocated receipts and inconsistent historical totals are refused without reconciliation",async()=>{
+    await database.query("INSERT INTO procedure_events(procedureId,eventType,payload) VALUES(1001,'finalization',?)",[JSON.stringify({version:1,allocatedReceiptIds:[8001]})]);
+    const before=await snapshot();expect((await request(1,"transactions.update",{id:8001,data:{amount:200}},true)).status).toBe(412);expect(await snapshot()).toBe(before);
+    expect((await request(1,"transactions.delete",{id:8001},true)).status).toBe(412);expect(await snapshot()).toBe(before);
+    await database.query("UPDATE clients SET totalSpent=0 WHERE id=102");
+    const inconsistent=await snapshot();expect((await request(1,"transactions.delete",{id:8003},true)).status).toBe(409);expect(await snapshot()).toBe(inconsistent);
+  });
+  it("legacy stock API serializes consumers and keeps decimal quantities exact",async()=>{
+    await database.query("INSERT INTO materials(id,studioId,name,currentStock) VALUES(901,1,'Fiction',0.30)");
+    expect((await request(1,"stock.addMovement",{materialId:901,type:"saida",quantity:0.1},true)).status).toBe(200);
+    const pair=await Promise.all([request(1,"stock.addMovement",{materialId:901,type:"saida",quantity:0.2},true),request(1,"stock.addMovement",{materialId:901,type:"saida",quantity:0.2},true)]);
+    expect(pair.map(r=>r.status).sort(),JSON.stringify(pair)).toEqual([200,409]);
+    expect(Number((await database.query<RowDataPacket[]>("SELECT currentStock FROM materials WHERE id=901"))[0][0].currentStock)).toBe(0);
+  });
 
 });

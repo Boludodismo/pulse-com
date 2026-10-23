@@ -1,3 +1,4 @@
+import { applyTransactionSpending } from "./db";
 import { normalizeBrazilianPhone } from "./messaging/phone";
 import { readPreparation } from "../shared/sessionPreparation";
 import { createHash } from "node:crypto";
@@ -452,6 +453,10 @@ export async function finalizeSession(
         );
     let transactionId: number | null = null;
     if (input.receivedCents > 0) {
+      await applyTransactionSpending(tx as unknown as NonNullable<Awaited<ReturnType<typeof import('./db').getDb>>>,{
+        studioId:ctx.studioId,clientId:proc.clientId,appointmentId:proc.appointmentId,type:"entrada",category:"servico",
+        amount:input.receivedCents,paymentMethod:input.paymentMethod,date:now,
+      });
       const [r] = await tx
         .insert(transactions)
         .values({

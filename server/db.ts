@@ -12,6 +12,8 @@ import {
   InsertUser, 
   users, 
   clients, 
+  technicalProcedures,
+  procedureEvents,
   appointments, 
   anamnesisRecords, 
   transactions, 
@@ -487,9 +489,9 @@ async function lockAppointmentStudio(tx: NonNullable<Awaited<ReturnType<typeof g
   const [studio] = await tx.select({id:studios.id}).from(studios).where(eq(studios.id,studioId)).limit(1).for("update");
   if(!studio) throw new TRPCError({code:"FORBIDDEN"});
 }
-export async function createAppointment(data: InsertAppointment) {
+export async function createAppointment(data: InsertAppointment, depositMethod: InsertTransaction["paymentMethod"] = "pix") {
   const db=await getDb(); if(!db)throw new Error("Database not available");
-  return db.transaction(async transaction=>{
+  return atomicDatabase(db,async transaction=>{
     const tx=transaction as unknown as typeof db;
     await lockAppointmentStudio(tx,data.studioId);
     if(data.status!=="cancelado" && (await checkAppointmentConflicts(data.artist,data.date,data.duration??60,undefined,data.studioId!,tx)).hasConflict)
@@ -499,14 +501,19 @@ export async function createAppointment(data: InsertAppointment) {
     const [result]=await tx.insert(appointments).values(data);
     await tx.update(clients).set({appointmentCount:sql`${clients.appointmentCount} + 1`}).where(eq(clients.id,data.clientId));
     await updateClientLoyaltyLevel(data.clientId,tx);
-    return (await tx.select().from(appointments).where(eq(appointments.id,Number(result.insertId))).limit(1))[0];
+    const appointment=(await tx.select().from(appointments).where(eq(appointments.id,Number(result.insertId))).limit(1))[0];
+    if(data.depositPaid && data.depositAmount && data.depositAmount>0)await createTransactionIn(tx,{
+      studioId:data.studioId,clientId:data.clientId,appointmentId:appointment.id,type:"entrada",category:"Sinal de Agendamento",
+      description:`Sinal pago - ${data.service} com ${data.artist}`,amount:data.depositAmount,paymentMethod:depositMethod,date:new Date().toISOString().slice(0,10),
+    });
+    return appointment;
   });
 }
-export async function updateAppointment(id: number, data: Partial<InsertAppointment>) {
+export async function updateAppointment(id: number, data: Partial<InsertAppointment>, depositMethod: InsertTransaction["paymentMethod"] = "pix") {
   const db=await getDb();if(!db)throw new Error("Database not available");
   const [hint]=await db.select().from(appointments).where(eq(appointments.id,id)).limit(1);
   if(!hint)throw new TRPCError({code:"NOT_FOUND"});
-  return db.transaction(async transaction=>{
+  return atomicDatabase(db,async transaction=>{
     const tx=transaction as unknown as typeof db;
     await lockAppointmentStudio(tx,hint.studioId);
     const [before]=await tx.select().from(appointments).where(eq(appointments.id,id)).limit(1).for("update");
@@ -521,6 +528,10 @@ export async function updateAppointment(id: number, data: Partial<InsertAppointm
     if(after.status!=="cancelado" && (slotChanged||changed||before.status==='cancelado') && (await checkAppointmentConflicts(after.artist,after.date,after.duration,id,after.studioId!,tx)).hasConflict)
       throw new TRPCError({code:"CONFLICT",message:"Horário indisponível para este artista."});
     await tx.update(appointments).set(data).where(eq(appointments.id,id));
+    if(!before.depositPaid && after.depositPaid && after.depositAmount && after.depositAmount>0)await createTransactionIn(tx,{
+      studioId:after.studioId,clientId:after.clientId,appointmentId:id,type:"entrada",category:"Sinal de Agendamento",
+      description:`Sinal pago - ${before.service} com ${before.artist}`,amount:after.depositAmount,paymentMethod:depositMethod,date:new Date().toISOString().slice(0,10),
+    });
     return {success:true};
   });
 }
@@ -745,27 +756,57 @@ export async function getTransactionsByDateRange(startDate: string, endDate: str
   return result;
 }
 
-export async function createTransaction(data: InsertTransaction) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  const result = await db.insert(transactions).values(data);
-  const insertId = Number(result[0].insertId);
-  
-  // Se for entrada e tiver clientId, atualizar totalSpent
-  if (data.type === "entrada" && data.clientId) {
-    await db
-      .update(clients)
-      .set({ totalSpent: sql`${clients.totalSpent} + ${data.amount}` })
-      .where(eq(clients.id, data.clientId));
-    
-    // Atualizar nível de fidelidade
-    await updateClientLoyaltyLevel(data.clientId);
+type DatabaseExecutor = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+async function atomicDatabase<T>(db:DatabaseExecutor,work:(tx:DatabaseExecutor)=>Promise<T>):Promise<T>{
+  for(let attempt=0;;attempt++){
+    try{return await db.transaction(tx=>work(tx as unknown as DatabaseExecutor));}
+    catch(error:any){const code=error.cause?.code??error.code;if(attempt>=2||!['ER_LOCK_DEADLOCK','ER_LOCK_WAIT_TIMEOUT'].includes(code))throw error;}
   }
-  
-  // Retornar a transação criada
-  const transaction = await db.select().from(transactions).where(eq(transactions.id, insertId)).limit(1);
-  return transaction[0];
+}
+async function requireUnallocatedReceipt(tx:DatabaseExecutor,record:typeof transactions.$inferSelect){
+  const rows=await tx.select({payload:procedureEvents.payload}).from(procedureEvents)
+    .innerJoin(technicalProcedures,eq(technicalProcedures.id,procedureEvents.procedureId))
+    .where(and(eq(technicalProcedures.studioId,record.studioId!),eq(procedureEvents.eventType,'finalization'))).for('update');
+  for(const row of rows){
+    let payload:any;try{payload=JSON.parse(row.payload??'null');}catch{continue;}
+    if(Array.isArray(payload?.allocatedReceiptIds)&&payload.allocatedReceiptIds.includes(record.id))
+      throw new TRPCError({code:'PRECONDITION_FAILED',message:'Recebimento vinculado a uma sessão encerrada. É necessária uma regra específica de estorno; o histórico foi preservado.'});
+  }
+}
+
+async function applySpendingDeltas(tx: DatabaseExecutor, studioId: number, deltas: Map<number,number>) {
+  for(const [id,delta] of [...deltas].sort(([a],[b])=>a-b)) {
+    const [client]=await tx.select().from(clients).where(and(eq(clients.id,id),eq(clients.studioId,studioId))).limit(1).for("update");
+    if(!client)throw new TRPCError({code:"FORBIDDEN"});
+    if(!Number.isSafeInteger(delta)||client.totalSpent+delta<0)throw new TRPCError({code:"CONFLICT",message:"Total histórico inconsistente; revisão manual necessária."});
+    await tx.update(clients).set({totalSpent:client.totalSpent+delta}).where(eq(clients.id,id));
+    await updateClientLoyaltyLevel(id,tx);
+  }
+}
+async function validateTransactionLinks(tx:DatabaseExecutor,data:InsertTransaction){
+  if(!data.studioId)throw new TRPCError({code:"FORBIDDEN"});
+  if(data.appointmentId){
+    const [appointment]=await tx.select().from(appointments).where(and(eq(appointments.id,data.appointmentId),eq(appointments.studioId,data.studioId))).limit(1);
+    if(!appointment||appointment.clientId!==data.clientId)throw new TRPCError({code:"FORBIDDEN"});
+  }
+  if(data.clientId){
+    const [client]=await tx.select({id:clients.id}).from(clients).where(and(eq(clients.id,data.clientId),eq(clients.studioId,data.studioId))).limit(1);
+    if(!client)throw new TRPCError({code:"FORBIDDEN"});
+  }
+  if(!Number.isSafeInteger(data.amount)||data.amount<0)throw new TRPCError({code:"BAD_REQUEST",message:"Valor deve ser expresso em centavos inteiros."});
+}
+export async function applyTransactionSpending(tx:DatabaseExecutor,data:InsertTransaction){
+  await validateTransactionLinks(tx,data);
+  if(data.clientId&&data.type==='entrada')await applySpendingDeltas(tx,data.studioId!,new Map([[data.clientId,data.amount]]));
+}
+export async function createTransactionIn(tx:DatabaseExecutor,data:InsertTransaction){
+  await applyTransactionSpending(tx,data);
+  const [result]=await tx.insert(transactions).values(data);
+  return (await tx.select().from(transactions).where(eq(transactions.id,Number(result.insertId))).limit(1))[0];
+}
+export async function createTransaction(data: InsertTransaction) {
+  const db=await getDb();if(!db)throw new Error("Database not available");
+  return atomicDatabase(db,tx=>createTransactionIn(tx,data));
 }
 
 export async function getTransactionById(id: number) {
@@ -782,19 +823,31 @@ export async function getTransactionById(id: number) {
 }
 
 export async function updateTransaction(id: number, data: Partial<InsertTransaction>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  await db.update(transactions).set(data).where(eq(transactions.id, id));
-  return { success: true };
+  const db=await getDb();if(!db)throw new Error("Database not available");
+  return atomicDatabase(db,async transaction=>{
+    const tx=transaction as unknown as DatabaseExecutor;
+    const [before]=await tx.select().from(transactions).where(eq(transactions.id,id)).limit(1).for("update");
+    if(!before)throw new TRPCError({code:"NOT_FOUND"});
+    if(data.studioId!==undefined&&data.studioId!==before.studioId)throw new TRPCError({code:"FORBIDDEN"});
+    await requireUnallocatedReceipt(tx,before);
+    const after={...before,...data};await validateTransactionLinks(tx,after);
+    const deltas=new Map<number,number>();
+    if(before.type==='entrada'&&before.clientId)deltas.set(before.clientId,-before.amount);
+    if(after.type==='entrada'&&after.clientId)deltas.set(after.clientId,(deltas.get(after.clientId)??0)+after.amount);
+    await applySpendingDeltas(tx,before.studioId!,deltas);
+    await tx.update(transactions).set(data).where(eq(transactions.id,id));return {success:true};
+  });
 }
-
 export async function deleteTransaction(id: number) {
-  const db = await getDb();
-  if (!db) return false;
-  
-  await db.delete(transactions).where(eq(transactions.id, id));
-  return true;
+  const db=await getDb();if(!db)throw new Error("Database not available");
+  return atomicDatabase(db,async transaction=>{
+    const tx=transaction as unknown as DatabaseExecutor;
+    const [before]=await tx.select().from(transactions).where(eq(transactions.id,id)).limit(1).for("update");
+    if(!before)return true;
+    await requireUnallocatedReceipt(tx,before);
+    if(before.type==='entrada'&&before.clientId)await applySpendingDeltas(tx,before.studioId!,new Map([[before.clientId,-before.amount]]));
+    await tx.delete(transactions).where(eq(transactions.id,id));return true;
+  });
 }
 
 // ============ CLIENT NOTES HELPERS ============
@@ -1650,8 +1703,8 @@ export async function createAuditLog(data: {
   details?: any;
   ipAddress?: string;
   userAgent?: string;
-}) {
-  const db = await getDb();
+}, executor?: DatabaseExecutor) {
+  const db = executor ?? await getDb();
   if (!db) {
     console.warn("[Database] Cannot create audit log: database not available");
     return undefined;
@@ -2626,44 +2679,37 @@ export async function addStockMovement(data: {
   notes?: string;
   createdBy?: number;
 }, studioId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  // Buscar estoque atual
-  const mat = await getMaterialById(data.materialId, studioId);
-  if (!mat) throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado neste estúdio." });
-
-  const previousStock = parseFloat(String(mat.currentStock)) || 0;
-  let newStock: number;
-
-  if (data.type === 'entrada') {
-    newStock = previousStock + data.quantity;
-  } else if (data.type === 'saida') {
-    newStock = Math.max(0, previousStock - data.quantity);
-  } else {
-    // ajuste: quantity é o novo valor absoluto
-    newStock = data.quantity;
-  }
-
-  // Inserir movimentação
-  await db.insert(stockMovements).values({
-    materialId: data.materialId,
-    type: data.type,
-    quantity: String(data.quantity),
-    previousStock: String(previousStock),
-    newStock: String(newStock),
-    reason: data.reason,
-    notes: data.notes,
-    createdBy: data.createdBy,
-    createdAt: Date.now(),
+  const db=await getDb();if(!db)throw new Error("Database not available");
+  return atomicDatabase(db,tx=>addStockMovementIn(tx,data,studioId));
+}
+export async function addStockMovementIn(tx:DatabaseExecutor,data:{materialId:number;type:'entrada'|'saida'|'ajuste';quantity:number;reason?:string;notes?:string;createdBy?:number},studioId:number){
+  const [mat]=await tx.select().from(materials).where(and(eq(materials.id,data.materialId),eq(materials.studioId,requireStockStudio(studioId)))).limit(1).for("update");
+  if(!mat)throw new TRPCError({code:"NOT_FOUND",message:"Material não encontrado neste estúdio."});
+  if(!Number.isFinite(data.quantity)||data.quantity<0||(data.type!=='ajuste'&&data.quantity===0))throw new TRPCError({code:"BAD_REQUEST"});
+  // This legacy table stores two decimal places; calculate in its integer base unit.
+  const quantity=Math.round(data.quantity*100),previous=Math.round(Number(mat.currentStock)*100);
+  if(Math.abs(quantity/100-data.quantity)>1e-9)throw new TRPCError({code:'BAD_REQUEST',message:'Este estoque aceita até duas casas decimais.'});
+  const previousStock=previous/100;
+  const newStock=(data.type==='entrada'?previous+quantity:data.type==='saida'?previous-quantity:quantity)/100;
+  if(!Number.isFinite(newStock)||newStock<0)throw new TRPCError({code:"CONFLICT",message:"Saldo de estoque insuficiente."});
+  await tx.insert(stockMovements).values({...data,quantity:String(data.quantity),previousStock:String(previousStock),newStock:String(newStock),createdAt:Date.now()});
+  await tx.update(materials).set({currentStock:String(newStock)}).where(and(eq(materials.id,data.materialId),eq(materials.studioId,studioId)));
+  return {previousStock,newStock};
+}
+export async function createTransactionWithMaterials(data:InsertTransaction,items:Array<{materialId:number;quantity:number;reason?:string}>,userId:number,audit:Parameters<typeof createAuditLog>[0]){
+  const db=await getDb();if(!db)throw new Error("Database not available");
+  return atomicDatabase(db,async transaction=>{
+    const tx=transaction as unknown as DatabaseExecutor;
+    const transactionRecord=await createTransactionIn(tx,data);
+    const stockResults=[];
+    for(const item of [...items].sort((a,b)=>a.materialId-b.materialId)){
+      const result=await addStockMovementIn(tx,{...item,type:'saida',reason:item.reason||`Baixa via transação financeira - ${data.category}`,createdBy:userId},data.studioId!);
+      const [mat]=await tx.select({name:materials.name}).from(materials).where(eq(materials.id,item.materialId)).limit(1);
+      stockResults.push({materialId:item.materialId,materialName:mat.name,...result});
+    }
+    await createAuditLog({...audit,details:{...data,stockMovements:stockResults}},tx);
+    return {transaction:transactionRecord,stockMovements:stockResults};
   });
-
-  // Atualizar estoque atual do material
-  await db.update(materials)
-    .set({ currentStock: String(newStock) })
-    .where(and(eq(materials.id, data.materialId), eq(materials.studioId, requireStockStudio(studioId))));
-
-  return { previousStock, newStock };
 }
 
 // ============ PEDIDOS DE ORÇAMENTO ============
