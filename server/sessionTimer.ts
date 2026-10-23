@@ -59,7 +59,8 @@ export async function transitionSessionTimer(database: Database, actor: Actor, i
     }
     await tx.update(technicalProcedures).set(updates).where(eq(technicalProcedures.id,id));
     await tx.insert(procedureEvents).values({procedureId:id,eventType:action,payload:JSON.stringify({at:now})});
-    return { procedure:{...procedure,...updates}, pause, replayed:false };
+    const [updated] = await tx.select().from(technicalProcedures).where(eq(technicalProcedures.id,id)).limit(1);
+    return { procedure:updated, pause, replayed:false };
   });
 }
 
