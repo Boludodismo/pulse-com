@@ -1,3 +1,4 @@
+import { latestRiskRecords } from "./latestRiskRecords";
 import { minorConsentRouter } from "./minorConsent/router";
 import { attendanceRouter } from './attendance/router';
 import { artistDashboardRouter } from "./artistDashboard";
@@ -1332,8 +1333,7 @@ export const appRouter = router({
         }
 
         // A prioridade atual de cada cliente é calculada pela ficha mais recente.
-        alerts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        return Array.from(new Map(alerts.map(alert => [alert.clientId, alert])).values());
+        return latestRiskRecords(alerts);
       }),
 
     getAll: protectedProcedure
