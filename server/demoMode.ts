@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { demoRead, demoMime } from './demoStorage';
+import { demoReadObject } from './demoStorage';
 import { verifyStorageAccessToken } from './storage';
 export function assertDemoScope(){
  if(process.env.DEMO_MODE!=='true')return;
@@ -30,7 +30,7 @@ export function registerDemoMode(app:Express){
  });
  app.get('/api/demo-file',async(req,res)=>{try{
   const key=String(req.query.key||'');if(!verifyStorageAccessToken(key,String(req.query.token||'')))return res.sendStatus(403);
-  const [bytes,mime]=await Promise.all([demoRead(key),demoMime(key)]);res.type(mime).setHeader('X-Content-Type-Options','nosniff');res.send(bytes);
+  const {bytes,mime}=await demoReadObject(key);res.type(mime).setHeader('X-Content-Type-Options','nosniff');res.send(bytes);
  }catch{res.sendStatus(404);}});
 }
 

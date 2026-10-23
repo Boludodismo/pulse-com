@@ -1,4 +1,4 @@
-import { demoPut, demoRead, demoDelete, demoMime } from "./demoStorage";
+import { demoPut, demoRead, demoDelete, demoReadObject } from "./demoStorage";
 // Storage helpers for Manus proxy and standalone S3-compatible providers.
 
 import { createHmac, timingSafeEqual, randomUUID } from "crypto";
@@ -243,8 +243,7 @@ export async function storageDelete(relKey: string): Promise<void> {
 // Callers must first authorize the parent record or verify its storage token.
 export async function storageReadObject(key: string, maxBytes: number): Promise<{ bytes: Buffer; mime: string }> {
   if (ENV.storageProvider === "demo" && process.env.DEMO_MODE === "true") {
-    const [bytes, mime] = await Promise.all([demoRead(normalizeKey(key), maxBytes), demoMime(normalizeKey(key))]);
-    return { bytes, mime };
+    return demoReadObject(normalizeKey(key), maxBytes);
   }
   const { url } = await storageGet(key);
   if (!url) throw new Error("Arquivo indisponível.");
