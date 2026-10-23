@@ -280,10 +280,33 @@ describe.skipIf(!enabled)("Stage 1A: actual tRPC HTTP + disposable MySQL (synthe
   it("admin can mutate own records; artist can mutate own session dependents", async () => {
     expect((await request(1, "notes.create", { clientId: 101, content: "New fiction" }, true)).status).toBe(200);
     expect((await request(1, "transactions.update", { id: 8001, data: { amount: 200 } }, true)).status).toBe(200);
+    expect((await request(11,"procedures.timerAction",{id:1001,action:"start"},true)).status).toBe(200);
     for (const user of [11, 111]) {
       expect((await request(user, "procedures.addConsumable", { procedureId: 1001, category: "ink", name: "Fiction", unit: "ml", quantity: 1 }, true)).status).toBe(200);
       expect((await request(user, "procedures.timerAction", { id: 1001, action: "pause" }, true)).status).toBe(200);
     }
     expect((await request(2, "notes.create", { clientId: 201, content: "Other tenant fiction" }, true)).status).toBe(200);
   });
+  it("timer requests serialize, repeat safely and retain the original start and pauses", async()=>{
+    const start=await request(11,"procedures.timerAction",{id:1001,action:"start"},true);
+    expect(start.status).toBe(200);
+    const again=await request(11,"procedures.timerAction",{id:1001,action:"start"},true);
+    expect(again.data.startedAt).toBe(start.data.startedAt);
+    const results=await Promise.all([request(11,"pod.session.startPause",{procedureId:1001},true),request(111,"pod.session.startPause",{procedureId:1001},true)]);
+    expect(results.map(r=>r.status)).toEqual([200,200]);expect(results[0].data.id).toBe(results[1].data.id);
+    const [open]=await database.query<RowDataPacket[]>("SELECT * FROM procedure_pauses WHERE procedureId=1001 AND endedAt IS NULL");expect(open).toHaveLength(1);
+    const resumed=await Promise.all([request(11,"pod.session.resumePause",{procedureId:1001},true),request(111,"pod.session.resumePause",{procedureId:1001},true)]);
+    expect(resumed.map(r=>r.status)).toEqual([200,200]);
+    const finished=await request(11,"procedures.timerAction",{id:1001,action:"finish"},true);expect(finished.status).toBe(200);
+    const before=await snapshot();expect((await request(11,"procedures.timerAction",{id:1001,action:"finish"},true)).data).toEqual(finished.data);expect(await snapshot()).toBe(before);
+    expect((await request(11,"procedures.timerAction",{id:1001,action:"start"},true)).status).toBe(409);expect(await snapshot()).toBe(before);
+    expect((await request(11,"procedures.update",{id:1001,status:"em_andamento"},true)).status).toBe(409);expect(await snapshot()).toBe(before);
+  });
+  it("timer refuses pause before start without writes and subtracts recorded pauses",async()=>{
+    const before=await snapshot();expect((await request(11,"pod.session.startPause",{procedureId:1001},true)).status).toBe(409);expect(await snapshot()).toBe(before);
+    await database.query("UPDATE technical_procedures SET startedAt=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 60 MINUTE) WHERE id=1001");
+    await database.query("INSERT INTO procedure_pauses(studioId,procedureId,artistId,startedAt,endedAt) VALUES(1,1001,11,DATE_SUB(UTC_TIMESTAMP(),INTERVAL 50 MINUTE),DATE_SUB(UTC_TIMESTAMP(),INTERVAL 30 MINUTE))");
+    const result=await request(11,"procedures.timerAction",{id:1001,action:"finish"},true);expect(result.status).toBe(200);expect(result.data.totalDurationMinutes).toBe(40);
+  });
+
 });

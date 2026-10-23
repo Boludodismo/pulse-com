@@ -273,22 +273,22 @@ export default function PodSession() {
   useEffect(() => {
     if (!procedure) return;
 
-    const persistedEffectiveSeconds = (podSessionQuery.data?.timing.effectiveMinutes ?? 0) * 60;
+    const persistedEffectiveSeconds = podSessionQuery.data?.timing.effectiveSeconds;
     if (procedure.status === "em_andamento" && procedure.startedAt) {
       const now = Date.now();
-      const originalElapsed = Math.floor((now - new Date(procedure.startedAt).getTime()) / 1000);
-      const initialElapsed = persistedEffectiveSeconds > 0 ? persistedEffectiveSeconds : originalElapsed;
+      const originalElapsed = Math.floor((now - Date.parse(procedure.startedAt.replace(" ", "T") + "Z")) / 1000);
+      const initialElapsed = persistedEffectiveSeconds ?? originalElapsed;
       setElapsed(initialElapsed > 0 ? initialElapsed : 0);
       setIsRunning(true);
       startTimeRef.current = now - Math.max(0, initialElapsed) * 1000;
     } else if (procedure.status === "pausado") {
-      setElapsed(persistedEffectiveSeconds || (procedure.totalDurationMinutes ?? 0) * 60);
+      setElapsed(persistedEffectiveSeconds ?? (procedure.totalDurationMinutes ?? 0) * 60);
       setIsRunning(false);
     } else if (procedure.status === "finalizado") {
-      setElapsed(persistedEffectiveSeconds || (procedure.totalDurationMinutes ?? 0) * 60);
+      setElapsed(persistedEffectiveSeconds ?? (procedure.totalDurationMinutes ?? 0) * 60);
       setIsRunning(false);
     }
-  }, [procedure?.status, procedure?.startedAt, procedure?.totalDurationMinutes, podSessionQuery.data?.timing.effectiveMinutes]);
+  }, [procedure?.status, procedure?.startedAt, procedure?.totalDurationMinutes, podSessionQuery.data?.timing.effectiveSeconds]);
 
   // ── Timer: incrementar a cada segundo ───────────────────────────────────
   useEffect(() => {

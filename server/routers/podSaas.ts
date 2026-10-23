@@ -1,3 +1,4 @@
+import { transitionSessionTimer, technicalTiming } from "../sessionTimer";
 import { assertSessionLinks, sessionReview, sessionAccessScope } from "../recordAccess";
 import type { SampleSource } from "../../shared/sessionColorSampling";
 import { completeVisualLayerOrder, visualLayerStack, validateVisualLayerOrder } from "../../shared/sessionVisualLayers";
@@ -212,21 +213,7 @@ async function requireProcedure(database: Awaited<ReturnType<typeof requireDatab
   return sessionReview(procedure);
 }
 
-function calculateTiming(startedAt: string | null, finishedAt: string | null, pauses: Array<{ startedAt: string; endedAt: string | null }>) {
-  const start = startedAt ? new Date(startedAt).getTime() : Date.now();
-  const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
-  const pausedMilliseconds = pauses.reduce((total, pause) => {
-    const pauseStart = new Date(pause.startedAt).getTime();
-    const pauseEnd = pause.endedAt ? new Date(pause.endedAt).getTime() : Date.now();
-    return total + Math.max(0, pauseEnd - pauseStart);
-  }, 0);
-  const totalMinutes = Math.max(0, Math.floor((end - start) / 60_000));
-  return {
-    totalMinutes,
-    pausedMinutes: Math.floor(pausedMilliseconds / 60_000),
-    effectiveMinutes: Math.max(0, Math.floor((end - start - pausedMilliseconds) / 60_000)),
-  };
-}
+const calculateTiming = technicalTiming;
 
 export const podSaasRouter = router({
   catalog: router({
@@ -1916,30 +1903,15 @@ export const podSaasRouter = router({
     startPause: tenantProcedure.input(z.object({ procedureId: z.number().int().positive(), reason: z.string().trim().max(120).optional() })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "pod", true);
       const database = await requireDatabase();
-      const procedure = await requireProcedure(database, input.procedureId, ctx);
-      if (procedure.status === "finalizado") throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível pausar uma sessão finalizada." });
-      const openPause = (await database.select({ id: procedurePauses.id }).from(procedurePauses).where(and(
-        eq(procedurePauses.procedureId, procedure.id), eq(procedurePauses.studioId, ctx.studioId), isNull(procedurePauses.endedAt),
-      )).limit(1))[0];
-      if (openPause) throw new TRPCError({ code: "CONFLICT", message: "Já existe uma pausa aberta nesta sessão." });
-      const startedAt = nowSql();
-      const inserted = await database.insert(procedurePauses).values({ studioId: ctx.studioId, procedureId: procedure.id, artistId: procedure.artistId, startedAt, reason: input.reason ?? null });
-      await database.update(technicalProcedures).set({ status: "pausado", pausedAt: startedAt }).where(and(eq(technicalProcedures.id, procedure.id), eq(technicalProcedures.studioId, ctx.studioId)));
-      return { id: insertId(inserted), startedAt };
+      const result = await transitionSessionTimer(database, ctx.user, input.procedureId, "pause", input.reason);
+      return {id: result.pause!.id, startedAt:result.pause!.startedAt};
     }),
 
     resumePause: tenantProcedure.input(z.object({ procedureId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       await requireModule(ctx, "pod", true);
       const database = await requireDatabase();
-      const procedure = await requireProcedure(database, input.procedureId, ctx);
-      const openPause = (await database.select().from(procedurePauses).where(and(
-        eq(procedurePauses.procedureId, procedure.id), eq(procedurePauses.studioId, ctx.studioId), isNull(procedurePauses.endedAt),
-      )).limit(1))[0];
-      if (!openPause) throw new TRPCError({ code: "NOT_FOUND", message: "Não há pausa aberta nesta sessão." });
-      const endedAt = nowSql();
-      await database.update(procedurePauses).set({ endedAt }).where(and(eq(procedurePauses.id, openPause.id), eq(procedurePauses.studioId, ctx.studioId), isNull(procedurePauses.endedAt)));
-      await database.update(technicalProcedures).set({ status: "em_andamento", pausedAt: null }).where(and(eq(technicalProcedures.id, procedure.id), eq(technicalProcedures.studioId, ctx.studioId)));
-      return { id: openPause.id, endedAt };
+      const result = await transitionSessionTimer(database, ctx.user, input.procedureId, "resume");
+      return {id:result.pause!.id, endedAt:result.pause!.endedAt!};
     }),
 
     consumeAuto: tenantProcedure.input(z.object({

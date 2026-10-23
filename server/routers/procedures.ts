@@ -1,3 +1,4 @@
+import { transitionSessionTimer } from "../sessionTimer";
 import { sessionAccessScope, sessionReview, requireSessionRecord } from "../recordAccess";
 import { snapshotSessionMaterials } from "../sessionMaterials";
 import { sessionMaterialName } from "../../shared/sessionInkQuantity";
@@ -279,6 +280,7 @@ export const proceduresRouter = router({
           clientId: technicalProcedures.clientId,
           appointmentId: technicalProcedures.appointmentId,
           artistId: technicalProcedures.artistId,
+          status: technicalProcedures.status,
         })
         .from(technicalProcedures)
         .where(eq(technicalProcedures.id, input.id))
@@ -291,6 +293,9 @@ export const proceduresRouter = router({
         artistId: input.artistId !== undefined ? input.artistId : existing.artistId,
       });
 
+      if (input.status !== undefined && input.status !== existing.status) {
+        throw new TRPCError({code:"CONFLICT", message:"Use os controles do cronômetro. Reabertura exige autorização específica."});
+      }
       const { id, ...fields } = input;
       await db
         .update(technicalProcedures)
@@ -312,60 +317,8 @@ export const proceduresRouter = router({
       action: z.enum(['start', 'pause', 'resume', 'finish']),
     }))
     .mutation(async ({ ctx, input }) => {
-      const studioId = ctx.studioId;
-      const db = await requireDb();
-      const [existing] = await db
-        .select()
-        .from(technicalProcedures)
-        .where(eq(technicalProcedures.id, input.id))
-        .limit(1);
-      assertProcedureOwner(existing, studioId, input.id);
-
-      const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-      const updates: Record<string, any> = {};
-
-      if (input.action === "start") {
-        await db.transaction(async tx => {
-          await tx.select({ id: technicalProcedures.id }).from(technicalProcedures).where(eq(technicalProcedures.id, existing.id)).for("update");
-          await snapshotSessionMaterials(tx as unknown as typeof db, existing);
-        });
-        updates.startedAt = now;
-        updates.status = "em_andamento";
-      } else if (input.action === "pause") {
-        updates.pausedAt = now;
-        updates.status = "pausado";
-      } else if (input.action === "resume") {
-        updates.pausedAt = null;
-        updates.status = "em_andamento";
-      } else if (input.action === "finish") {
-        updates.finishedAt = now;
-        updates.status = "finalizado";
-        // Calcular duração total em minutos
-        if (existing.startedAt) {
-          const start = new Date(existing.startedAt).getTime();
-          const end = new Date(now).getTime();
-          updates.totalDurationMinutes = Math.round((end - start) / 60000);
-        }
-      }
-
-      await db
-        .update(technicalProcedures)
-        .set(updates)
-        .where(eq(technicalProcedures.id, input.id));
-
-      // Registrar evento
-      await db.insert(procedureEvents).values({
-        procedureId: input.id,
-        eventType: input.action,
-        payload: JSON.stringify({ at: now }),
-      });
-
-      const [updated] = await db
-        .select()
-        .from(technicalProcedures)
-        .where(eq(technicalProcedures.id, input.id))
-        .limit(1);
-      return updated;
+      const result = await transitionSessionTimer(await requireDb(), ctx.user, input.id, input.action);
+      return result.procedure;
     }),
 
   // ── Adicionar insumo ─────────────────────────────────────────────────────
