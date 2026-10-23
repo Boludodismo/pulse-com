@@ -21,7 +21,7 @@ describe("POD SaaS — cálculos determinísticos", () => {
       "2026-09-06 12:00:00",
       [{ startedAt: "2026-09-06 10:30:00", endedAt: "2026-09-06 10:45:00" }],
     );
-    expect(timing).toEqual({ totalMinutes: 120, pausedMinutes: 15, effectiveMinutes: 105 });
+    expect(timing).toEqual({ totalMinutes: 120, pausedMinutes: 15, effectiveMinutes: 105, effectiveSeconds:6300 });
   });
 
   it("nega acesso a um procedimento pertencente a outra empresa", () => {

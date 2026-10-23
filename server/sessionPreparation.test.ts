@@ -7,7 +7,7 @@ import {
   preparationRgb,
   validatePreparationMaterial,
 } from "../shared/sessionPreparation";
-const mocks = vi.hoisted(() => ({ db: vi.fn(), put: vi.fn(), get: vi.fn() }));
+const mocks = vi.hoisted(() => ({ db: vi.fn(), put: vi.fn(), get: vi.fn(), read: vi.fn() }));
 vi.mock("./db", () => ({ getDb: mocks.db }));
 vi.mock("./saas", () => ({ isUserAccessActive: async () => true }));
 vi.mock("./invitedArtistAccess", () => ({
@@ -16,6 +16,7 @@ vi.mock("./invitedArtistAccess", () => ({
 vi.mock("./storage", () => ({
   storagePut: mocks.put,
   storageGet: mocks.get,
+  storageReadObject: mocks.read,
   storageDelete: vi.fn(),
 }));
 import { proceduresRouter } from "./routers/procedures";
@@ -233,20 +234,14 @@ describe("preparação guiada", () => {
   });
   it("copia a referência anterior para uma nova chave sem alterar o arquivo original", async () => {
     const d = dbDouble();
-    mocks.get.mockResolvedValue({
-      url: "https://storage.example.test/reference",
-    });
+    mocks.read.mockResolvedValue({bytes:Buffer.from([1,2,3]),mime:"image/png"});
     mocks.put.mockResolvedValue({ url: "/api/storage?key=new-reference" });
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(new Uint8Array([1, 2, 3]), {
-          headers: { "content-type": "image/png" },
-        })
-      );
+    const fetchMock = vi.spyOn(globalThis,"fetch").mockRejectedValue(new Error("Unexpected network request"));
     try {
       await caller().create({ ...input, referenceFromProcedureId: 99 });
-      expect(mocks.get).toHaveBeenCalledWith("procedures/7/old.png");
+      expect(mocks.read).toHaveBeenCalledWith("procedures/7/old.png",16*1024*1024);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mocks.put.mock.calls[0][1]).toEqual(Buffer.from([1,2,3]));
       expect(mocks.put.mock.calls[0][0]).toMatch(
         /^procedures\/7\/ref-.+\.png$/
       );

@@ -207,6 +207,7 @@ describe("gravação da finalização", () => {
       previewHash: preview.hash,
     });
     expect(result.outstandingCents).toBe(90000);
+    expect(d.rows.clients[0]).toMatchObject({totalSpent:90000,loyaltyLevel:"Prata"});
     expect(d.rows.technical_procedures[0]).toMatchObject({
       status: "finalizado",
       chargedAmount: 180000,

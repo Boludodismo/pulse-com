@@ -27,7 +27,7 @@ describe("Falha do WhatsApp após salvar agendamento", () => {
     const original={...saved,status:'concluido'};const nextDate='2026-09-17 14:00:00';mock.getAppointmentById.mockResolvedValue(original);
     mock.createAppointment.mockImplementation(async data=>({...data,id:88}));
     const result=await appRouter.createCaller(ctx).appointments.create({clientId:1,artistId:2,artist:saved.artist,date:nextDate,duration:90,service:saved.service,continuationOfAppointmentId:77,status:'concluido'});
-    expect(result.id).toBe(88);expect(mock.createAppointment).toHaveBeenCalledWith(expect.objectContaining({continuationOfAppointmentId:77,date:nextDate,status:'agendado'}));
+    expect(result.id).toBe(88);expect(mock.createAppointment).toHaveBeenCalledWith(expect.objectContaining({continuationOfAppointmentId:77,date:nextDate,status:'agendado'}), 'pix');
     expect(mock.updateAppointment).not.toHaveBeenCalled();expect(original).toMatchObject({id:77,date:saved.date,status:'concluido'});
   });
   it('não aceita origem de outra empresa, cliente ou artista nem uma data anterior à origem',async()=>{
@@ -38,11 +38,11 @@ describe("Falha do WhatsApp após salvar agendamento", () => {
   });
   it("salva região e lado opcionais sem inferir ou alterar outros dados", async () => {
     await appRouter.createCaller(ctx).appointments.create({ clientId: 1, artistId: 2, artist: saved.artist, date: saved.date, duration: 60, service: "Teste", bodyRegion: " Antebraço ", bodySide: "esquerdo" });
-    expect(mock.createAppointment).toHaveBeenCalledWith(expect.objectContaining({ bodyRegion: "Antebraço", bodySide: "esquerdo", date: saved.date, duration: 60 }));
+    expect(mock.createAppointment).toHaveBeenCalledWith(expect.objectContaining({ bodyRegion: "Antebraço", bodySide: "esquerdo", date: saved.date, duration: 60 }), "pix");
   });
   it("permite apagar a região e o lado ao editar", async () => {
     await appRouter.createCaller(ctx).appointments.update({ id: 77, data: { bodyRegion: null, bodySide: null } });
-    expect(mock.updateAppointment).toHaveBeenCalledWith(77, { bodyRegion: null, bodySide: null });
+    expect(mock.updateAppointment).toHaveBeenCalledWith(77, { bodyRegion: null, bodySide: null }, "pix");
   });
   it("preserva campos anatômicos quando uma edição antiga não os envia", async () => {
     await appRouter.createCaller(ctx).appointments.update({ id: 77, data: { notes: "Teste" } });
