@@ -132,6 +132,8 @@ export async function assertRecordAccess(user: User, path: string, type: string,
     }
     if (path === "procedures.create" || path === "pod.session.create") {
       if (id(input.clientId) == null) throw denied();
+      // A new session must not turn self-assignment into an implicit client-sharing grant.
+      await clientRecord(database, user, id(input.clientId), id(input.appointmentId));
       await assertSessionLinks(database, user, { clientId: id(input.clientId)!, appointmentId: id(input.appointmentId), artistId: id(input.artistId) });
     } else {
       if (input.clientId != null) await clientInStudio(database, user, id(input.clientId)!);

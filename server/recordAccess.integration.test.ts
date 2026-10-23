@@ -381,5 +381,13 @@ describe.skipIf(!enabled)("Stage 1A: actual tRPC HTTP + disposable MySQL (synthe
     await expect(db.deleteTransaction(8001,actor)).rejects.toThrow();expect(await snapshot()).toBe(before);
   });
 
+  it.each([12,112])("artist %i cannot create client access by self-assigning a new session",async user=>{
+    await denied(user,"procedures.create",{clientId:101,artistId:12,title:"No implicit client sharing"},true);
+    await denied(user,"pod.session.create",{clientId:101,artistId:12,title:"No implicit client sharing"},true);
+    // The admin's existing explicit session assignment still authorizes that session only.
+    expect((await request(user,"procedures.getById",{id:1004})).status).toBe(200);
+    await database.query("INSERT INTO appointments(id,studioId,clientId,artistId,artist,date,duration,service) VALUES(1008,1,101,12,'Fiction Artist 12','2030-01-04 10:00:00',60,'Explicit appointment')");
+    expect((await request(user,"procedures.create",{clientId:101,artistId:12,appointmentId:1008,title:"Explicit existing appointment link"},true)).status).toBe(200);
+  });
 
 });
