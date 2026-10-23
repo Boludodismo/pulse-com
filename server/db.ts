@@ -368,11 +368,11 @@ export async function deleteClient(id: number) {
   return { success: true };
 }
 
-export async function updateClientLoyaltyLevel(id: number) {
-  const db = await getDb();
+export async function updateClientLoyaltyLevel(id: number, executor?: NonNullable<Awaited<ReturnType<typeof getDb>>>) {
+  const db = executor ?? await getDb();
   if (!db) return;
   
-  const client = await getClientById(id);
+  const [client] = await db.select().from(clients).where(eq(clients.id,id)).limit(1);
   if (!client) return;
   
   let newLevel: "Bronze" | "Prata" | "Ouro" = "Bronze";
@@ -481,45 +481,48 @@ export async function getAppointmentById(id: number) {
   return result[0];
 }
 
-export async function createAppointment(data: InsertAppointment) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  const result = await db.insert(appointments).values(data);
-  const insertId = Number(result[0].insertId);
-  
-  // Incrementar appointmentCount do cliente
-  await db
-    .update(clients)
-    .set({ appointmentCount: sql`${clients.appointmentCount} + 1` })
-    .where(eq(clients.id, data.clientId));
-  
-  // Atualizar nível de fidelidade
-  await updateClientLoyaltyLevel(data.clientId);
-  
-  // Retornar o agendamento criado
-  const appointment = await db.select().from(appointments).where(eq(appointments.id, insertId)).limit(1);
-  return appointment[0];
+// Serialize reservations on the existing tenant row; the conflict query runs after this lock.
+async function lockAppointmentStudio(tx: NonNullable<Awaited<ReturnType<typeof getDb>>>, studioId: number | null | undefined) {
+  if(!studioId) throw new TRPCError({code:"FORBIDDEN"});
+  const [studio] = await tx.select({id:studios.id}).from(studios).where(eq(studios.id,studioId)).limit(1).for("update");
+  if(!studio) throw new TRPCError({code:"FORBIDDEN"});
 }
-
+export async function createAppointment(data: InsertAppointment) {
+  const db=await getDb(); if(!db)throw new Error("Database not available");
+  return db.transaction(async transaction=>{
+    const tx=transaction as unknown as typeof db;
+    await lockAppointmentStudio(tx,data.studioId);
+    if(data.status!=="cancelado" && (await checkAppointmentConflicts(data.artist,data.date,data.duration??60,undefined,data.studioId!,tx)).hasConflict)
+      throw new TRPCError({code:"CONFLICT",message:"Horário indisponível para este artista."});
+    const [client]=await tx.select().from(clients).where(and(eq(clients.id,data.clientId),eq(clients.studioId,data.studioId!))).limit(1).for("update");
+    if(!client)throw new TRPCError({code:"FORBIDDEN"});
+    const [result]=await tx.insert(appointments).values(data);
+    await tx.update(clients).set({appointmentCount:sql`${clients.appointmentCount} + 1`}).where(eq(clients.id,data.clientId));
+    await updateClientLoyaltyLevel(data.clientId,tx);
+    return (await tx.select().from(appointments).where(eq(appointments.id,Number(result.insertId))).limit(1))[0];
+  });
+}
 export async function updateAppointment(id: number, data: Partial<InsertAppointment>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  if(data.clientId!==undefined||data.artistId!==undefined||data.artist!==undefined||data.date!==undefined||data.duration!==undefined||data.calendarId!==undefined) {
-    return db.transaction(async tx=>{
-      const [before]=await tx.select().from(appointments).where(eq(appointments.id,id)).limit(1).for('update');
-      const changed=before && ((data.clientId!==undefined&&data.clientId!==before.clientId)||(data.artistId!==undefined&&data.artistId!==before.artistId)||(data.artist!==undefined&&data.artist!==before.artist));
-      const slotChanged=before&&changesAppointmentSlot(before,data);
-      if(changed||slotChanged){
-        const [record]=await tx.select().from(appointmentAttendance).where(eq(appointmentAttendance.appointmentId,id)).limit(1);
-        if(record||before?.status==='concluido')throw new TRPCError({code:'BAD_REQUEST',message:APPOINTMENT_HISTORY_MESSAGE});
-      }
-      await tx.update(appointments).set(data).where(eq(appointments.id,id));
-      return {success:true};
-    });
-  }
-  await db.update(appointments).set(data).where(eq(appointments.id, id));
-  return { success: true };
+  const db=await getDb();if(!db)throw new Error("Database not available");
+  const [hint]=await db.select().from(appointments).where(eq(appointments.id,id)).limit(1);
+  if(!hint)throw new TRPCError({code:"NOT_FOUND"});
+  return db.transaction(async transaction=>{
+    const tx=transaction as unknown as typeof db;
+    await lockAppointmentStudio(tx,hint.studioId);
+    const [before]=await tx.select().from(appointments).where(eq(appointments.id,id)).limit(1).for("update");
+    if(!before||before.studioId!==hint.studioId||data.studioId!==undefined&&data.studioId!==before.studioId)throw new TRPCError({code:"CONFLICT"});
+    const changed=(data.clientId!==undefined&&data.clientId!==before.clientId)||(data.artistId!==undefined&&data.artistId!==before.artistId)||(data.artist!==undefined&&data.artist!==before.artist);
+    const slotChanged=changesAppointmentSlot(before,data);
+    if(changed||slotChanged){
+      const [record]=await tx.select().from(appointmentAttendance).where(eq(appointmentAttendance.appointmentId,id)).limit(1);
+      if(record||before.status==='concluido')throw new TRPCError({code:'BAD_REQUEST',message:APPOINTMENT_HISTORY_MESSAGE});
+    }
+    const after={...before,...data};
+    if(after.status!=="cancelado" && (slotChanged||changed||before.status==='cancelado') && (await checkAppointmentConflicts(after.artist,after.date,after.duration,id,after.studioId!,tx)).hasConflict)
+      throw new TRPCError({code:"CONFLICT",message:"Horário indisponível para este artista."});
+    await tx.update(appointments).set(data).where(eq(appointments.id,id));
+    return {success:true};
+  });
 }
 
 export async function deleteAppointment(id: number) {
@@ -534,9 +537,10 @@ export async function checkAppointmentConflicts(
   date: Date | string,
   duration: number,
   excludeId?: number,
-  studioId?: number
+  studioId?: number,
+  executor?: NonNullable<Awaited<ReturnType<typeof getDb>>>
 ) {
-  const db = await getDb();
+  const db = executor ?? await getDb();
   if (!db) return { hasConflict: false, conflicts: [] };
   if (!studioId) throw new Error("Estúdio obrigatório para verificar disponibilidade.");
   const startTime = appointmentInstant(date);

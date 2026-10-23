@@ -62,6 +62,8 @@ describe.skipIf(!enabled)("Stage 1A: actual tRPC HTTP + disposable MySQL (synthe
       const [studios] = await database.query<RowDataPacket[]>("SELECT name FROM studios");
       if (!studios.every(row => row.name.startsWith("STAGE1A FICTION"))) throw new Error("Not a disposable Stage 1A fixture");
     }
+    // Existing attendance schema is initialized by real app startup, outside reservation transactions.
+    await database.query("CREATE TABLE IF NOT EXISTS appointment_attendance (appointment_id INT PRIMARY KEY,studio_id INT NOT NULL,client_id INT NOT NULL,artist_id INT,attendance VARCHAR(12) NOT NULL,session VARCHAR(16) NOT NULL,needs_more TINYINT NOT NULL)");
     const { appRouter } = await import("./routers");
     const { getDb } = await import("./db");
     pool = (await getDb())!.$client;
@@ -308,5 +310,20 @@ describe.skipIf(!enabled)("Stage 1A: actual tRPC HTTP + disposable MySQL (synthe
     await database.query("INSERT INTO procedure_pauses(studioId,procedureId,artistId,startedAt,endedAt) VALUES(1,1001,11,DATE_SUB(UTC_TIMESTAMP(),INTERVAL 50 MINUTE),DATE_SUB(UTC_TIMESTAMP(),INTERVAL 30 MINUTE))");
     const result=await request(11,"procedures.timerAction",{id:1001,action:"finish"},true);expect(result.status).toBe(200);expect(result.data.totalDurationMinutes).toBe(40);
   });
+
+  it("concurrent HTTP reservations reject overlap, permit contiguity and other artists",async()=>{
+    const input={clientId:101,artistId:11,artist:"Fiction Artist 11",date:"2030-01-02 10:00:00",duration:60,service:"Fiction",attendanceEnabled:0};
+    const pair=await Promise.all([request(1,"appointments.create",input,true),request(1,"appointments.create",input,true)]);
+    expect(pair.map(r=>r.status).sort(),JSON.stringify(pair)).toEqual([200,409]);
+    expect((await request(1,"appointments.create",{...input,date:"2030-01-02 11:00:00"},true)).status).toBe(200);
+    expect((await request(1,"appointments.create",{...input,artistId:12,artist:"Fiction Artist 12",clientId:102},true)).status).toBe(200);
+    const [rows]=await database.query<RowDataPacket[]>("SELECT * FROM appointments WHERE studioId=1 AND date >= '2030-01-02'");expect(rows).toHaveLength(3);
+    const [client]=await database.query<RowDataPacket[]>("SELECT appointmentCount FROM clients WHERE id=101");expect(client[0].appointmentCount).toBe(2);
+  });
+  it("concurrent reschedules use the same lock as creation",async()=>{
+    const pair=await Promise.all([request(1,"appointments.update",{id:1001,data:{date:"2030-01-03 10:00:00"}},true),request(1,"appointments.create",{clientId:101,artistId:11,artist:"Fiction Artist 11",date:"2030-01-03 10:00:00",duration:60,service:"Fiction",attendanceEnabled:0},true)]);
+    expect(pair.map(r=>r.status).sort(),JSON.stringify(pair)).toEqual([200,409]);
+  });
+
 
 });

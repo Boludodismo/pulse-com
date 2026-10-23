@@ -9,7 +9,7 @@ beforeEach(()=>{
   vi.stubEnv('DATABASE_URL','mysql://test:test@localhost/test');vi.clearAllMocks();m.writes=[];m.record=[];
   m.before={id:55,studioId:1,clientId:3,artistId:7,artist:'Ana',date:'2026-10-19 14:00:00',duration:60,calendarId:9,status:'agendado'};
   m.db.transaction.mockImplementation(async fn=>fn(m.db));
-  m.db.select.mockImplementation(()=>{let table='';const q:any={from:(t:any)=>{table=getTableName(t);return q;},where:()=>q,limit:()=>q,for:()=>q,then:(resolve:any,reject:any)=>Promise.resolve(table==='appointments'?[m.before]:m.record).then(resolve,reject)};return q;});
+  m.db.select.mockImplementation(()=>{let table='';const q:any={from:(t:any)=>{table=getTableName(t);return q;},where:()=>q,limit:()=>q,for:()=>q,leftJoin:()=>q,then:(resolve:any,reject:any)=>Promise.resolve(table==='studios'?[{id:1}]:table==='appointments'?[m.before]:m.record).then(resolve,reject)};return q;});
   m.db.update.mockImplementation(()=>({set:(data:any)=>({where:async()=>{m.writes.push(data);}})}));
 });
 afterAll(()=>vi.unstubAllEnvs());
