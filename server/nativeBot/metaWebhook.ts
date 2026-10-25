@@ -1,3 +1,7 @@
+import { applyDeliveryStatus } from "./receipts";
+import { attachmentSchema } from "../../shared/botInbox";
+import { downloadMetaAttachment } from "./metaMedia";
+import { saveAttachment } from "./attachments";
 import { channelForWebhook } from "../messaging/channels";
 import type { Request, Response } from "express";
 import { z } from "zod";
@@ -27,6 +31,15 @@ const payloadSchema = z.object({
                       })
                     )
                     .optional(),
+                  statuses: z
+                    .array(
+                      z.object({
+                        id: z.string().max(160),
+                        status: z.enum(["sent", "delivered", "read", "failed"]),
+                      })
+                    )
+                    .max(100)
+                    .optional(),
                   messages: z
                     .array(
                       z.object({
@@ -34,6 +47,30 @@ const payloadSchema = z.object({
                         from: z.string(),
                         timestamp: z.string().regex(/^\d+$/),
                         type: z.string(),
+                        image: z
+                          .object({
+                            id: z.string(),
+                            mime_type: z.string(),
+                            caption: z.string().optional(),
+                          })
+                          .optional(),
+                        audio: z
+                          .object({ id: z.string(), mime_type: z.string() })
+                          .optional(),
+                        video: z
+                          .object({
+                            id: z.string(),
+                            mime_type: z.string(),
+                            caption: z.string().optional(),
+                          })
+                          .optional(),
+                        document: z
+                          .object({
+                            id: z.string(),
+                            mime_type: z.string(),
+                            filename: z.string().optional(),
+                          })
+                          .optional(),
                         text: z
                           .object({ body: z.string().max(12000) })
                           .optional(),
@@ -66,8 +103,11 @@ async function connection(req: Request) {
   assertBotSchema();
   const key = String(req.params.key || "");
   if (!/^[A-Za-z0-9_-]{43}$/.test(key)) return null;
-  const shared=await channelForWebhook(key);
-  if(shared) return isMetaBot(shared.settings)&&shared.settings.wa_secret?shared.settings:null;
+  const shared = await channelForWebhook(key);
+  if (shared)
+    return isMetaBot(shared.settings) && shared.settings.wa_secret
+      ? shared.settings
+      : null;
   const [s] = await rows<BotSettings>(
     "SELECT * FROM tatuei_bot_settings WHERE webhook_key=?",
     [key]
@@ -95,11 +135,16 @@ export async function verifyMetaWebhook(req: Request, res: Response) {
       !webhookKeyMatches(s.webhook_key, token)
     )
       return res.sendStatus(403);
-    if(s.wa_integration_id) await exec("UPDATE whatsapp_integrations SET webhook_ready=1 WHERE id=? AND studio_id=? AND connection_key=?",[s.wa_integration_id,s.studio_id,s.webhook_key]);
-    else await exec(
-      "UPDATE tatuei_bot_settings SET webhook_ready=1 WHERE studio_id=? AND webhook_key=?",
-      [s.studio_id, s.webhook_key]
-    );
+    if (s.wa_integration_id)
+      await exec(
+        "UPDATE whatsapp_integrations SET webhook_ready=1 WHERE id=? AND studio_id=? AND connection_key=?",
+        [s.wa_integration_id, s.studio_id, s.webhook_key]
+      );
+    else
+      await exec(
+        "UPDATE tatuei_bot_settings SET webhook_ready=1 WHERE studio_id=? AND webhook_key=?",
+        [s.studio_id, s.webhook_key]
+      );
     return res.status(200).type("text/plain").send(challenge);
   } catch {
     return res.sendStatus(503);
@@ -128,6 +173,8 @@ export async function receiveMetaWebhook(req: Request, res: Response) {
           value.metadata.phone_number_id !== credentials.phoneNumberId
         )
           continue;
+        for (const receipt of value.statuses || [])
+          await applyDeliveryStatus(s.studio_id, receipt.id, receipt.status);
         for (const message of value.messages || []) {
           const timestamp = Number(message.timestamp) * 1000;
           if (
@@ -169,11 +216,44 @@ export async function receiveMetaWebhook(req: Request, res: Response) {
               senderName: value.contacts
                 ?.find(c => c.wa_id === message.from)
                 ?.profile?.name?.slice(0, 255),
-              ...(text ? { text: { message: text } } : { document: true }),
+              ...(text
+                ? { text: { message: text } }
+                : {
+                    document: true,
+                    caption: message.image?.caption || message.video?.caption,
+                  }),
             },
             phone,
             utcSql(new Date(Math.min(timestamp, Date.now())))
           );
+          const file =
+            message.image || message.audio || message.video || message.document;
+          const mime = attachmentSchema.shape.mime.safeParse(file?.mime_type);
+          if (file && mime.success) {
+            try {
+              const [record] = await rows(
+                "SELECT id,conversation_id FROM tatuei_bot_messages WHERE studio_id=? AND external_id=? AND source_instance=?",
+                [s.studio_id, message.id, s.wa_instance]
+              );
+              if (record) {
+                const bytes = await downloadMetaAttachment(s, file.id);
+                await saveAttachment(
+                  record.id,
+                  s.studio_id,
+                  record.conversation_id,
+                  {
+                    name:
+                      message.document?.filename?.slice(0, 180) ||
+                      `${message.type}-${file.id}`,
+                    mime: mime.data,
+                    base64: bytes.toString("base64"),
+                  }
+                );
+              }
+            } catch {
+              /* Keep the persisted message even if the media has expired. */
+            }
+          }
         }
       }
     return res.json({ received: true });

@@ -11,6 +11,7 @@ import {
 import { getProfile, type BotSettings } from "./access";
 import {
   deliverBotMessage,
+  resumeExpiredConversations,
   processBotInbound,
   ensureBotConversation,
   queueScheduledBot,
@@ -153,6 +154,7 @@ export async function runNativeBotCycle() {
   if (running || !isNativeBotReady() || isOutboundMessagingBlocked()) return;
   running = true;
   try {
+    await resumeExpiredConversations();
     // Crashed in-flight requests are never resent automatically: delivery may have happened.
     await exec(
       "UPDATE tatuei_bot_messages SET status='uncertain',error='Processamento interrompido; verifique a conversa antes de reenviar.' WHERE status IN ('sending','processing') AND updated_at<UTC_TIMESTAMP()-INTERVAL 5 MINUTE"

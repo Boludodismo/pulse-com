@@ -1,3 +1,8 @@
+import {
+  BotInbox,
+  OwnWhatsAppConnection,
+  BotAssistants,
+} from "@/components/BotInbox";
 import { MessagingCenterContent } from "./MessagingCenter";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
@@ -53,7 +58,8 @@ import "./NativeBot.css";
 const sections = [
   ["overview", "Visão geral", Sparkles],
   ["conversations", "Conversas", MessageSquare],
-  ["assistant", "Assistente", Settings2],
+  ["assistant", "Assistente padrão", Settings2],
+  ["assistants", "Assistentes de IA", Sparkles],
   ["messages", "Mensagens", MessageSquare],
   ["rules", "Automações", Workflow],
   ["clients", "Clientes", Users],
@@ -217,7 +223,8 @@ export default function NativeBot() {
       utils.nativeBot.access.invalidate(),
     ]);
   };
-  const can = (s: Section) => !["team", "connections"].includes(s) || manager;
+  const can = (s: Section) =>
+    !["team", "connections", "assistants"].includes(s) || manager;
   const canEdit = (s: Section) =>
     manager ||
     !["assistant", "messages", "rules", "clients"].includes(s) ||
@@ -241,8 +248,8 @@ export default function NativeBot() {
         <TatueiBotIcon hero />
         <h1>Bot Tatuei</h1>
         <p>
-          O estúdio ainda não liberou o bot para seu perfil, ou o módulo está
-          pausado.
+          O estúdio ainda não liberou o bot para seu perfil, ou seu acesso está
+          suspenso.
         </p>
         <p>
           Peça ao gestor para conferir <strong>Equipe e acesso</strong>.
@@ -277,7 +284,7 @@ export default function NativeBot() {
           </div>
         </div>
         <Badge variant={s.enabled ? "default" : "secondary"}>
-          {s.enabled ? "Módulo ativo" : "Módulo pausado"}
+          {s.enabled ? "Automação ativa" : "Automação pausada"}
         </Badge>
       </header>
       <nav className="bot-tabs" aria-label="Áreas do Bot Tatuei">
@@ -357,13 +364,14 @@ export default function NativeBot() {
           {section === "team" && manager && (
             <Team enabled={s.enabled} done={refresh} />
           )}
+          {section === "assistants" && manager && <BotAssistants />}
           {section === "connections" && manager && (
             <Connections data={s} done={refresh} />
           )}
           {section === "history" && <BotHistory />}
           {section === "conversations" && (
-            <Conversations
-              data={s}
+            <BotInbox
+              manager={manager}
               selected={selectedThread}
               select={setSelectedThread}
             />
@@ -1353,8 +1361,12 @@ function Connections({
   };
   return (
     <div className="bot-stack">
+      <OwnWhatsAppConnection done={done} />
       <div className="bot-grid">
-        <div className="min-w-0">{s.connection?.lastError && <Notice>{s.connection.lastError}</Notice>}<MessagingCenterContent connectionsOnly /></div>
+        <div id="tatuei-official-channels" className="min-w-0">
+          {s.connection?.lastError && <Notice>{s.connection.lastError}</Notice>}
+          <MessagingCenterContent connectionsOnly />
+        </div>
         <Panel
           title="Assistente com IA"
           sub="Chave própria do estúdio · OpenAI API"
@@ -1449,7 +1461,6 @@ function Connections({
           </Notice>
         </Panel>
       </div>
-
     </div>
   );
 }
@@ -1691,293 +1702,6 @@ const statusLabels: Record<string, string> = {
   uncertain: "Envio não confirmado",
   canceled: "Cancelada",
 };
-function Conversations({
-  data: s,
-  selected,
-  select,
-}: {
-  data: Snapshot;
-  selected: number | null;
-  select: (n: number) => void;
-}) {
-  const utils = trpc.useUtils();
-  const [search, setSearch] = useState("");
-  const [offset, setOffset] = useState(0);
-  const [body, setBody] = useState("");
-  const [assigning, setAssigning] = useState(false);
-  const [clientSearch, setClientSearch] = useState("");
-  const [clientId, setClientId] = useState("");
-  const list = trpc.nativeBot.conversations.useQuery(
-    { search, offset },
-    { refetchInterval: 8000, retry: false }
-  );
-  const thread = trpc.nativeBot.thread.useQuery(
-    { id: selected || 0 },
-    { enabled: !!selected, refetchInterval: 8000, retry: false }
-  );
-  const clients = trpc.nativeBot.clients.useQuery(
-    { search: clientSearch, offset: 0 },
-    { enabled: assigning && s.manager }
-  );
-  const refresh = async () => {
-    await Promise.all([
-      utils.nativeBot.conversations.invalidate(),
-      utils.nativeBot.thread.invalidate(),
-      utils.nativeBot.snapshot.invalidate(),
-    ]);
-  };
-  const mode = trpc.nativeBot.setMode.useMutation({
-    onError: err,
-    onSuccess: refresh,
-  });
-  const send = trpc.nativeBot.send.useMutation({
-    onError: err,
-    onSuccess: async () => {
-      setBody("");
-      await refresh();
-      toast.success(
-        "Mensagem registrada na fila. Acompanhe a confirmação do provedor."
-      );
-    },
-  });
-  const assign = trpc.nativeBot.assignConversation.useMutation({
-    onError: err,
-    onSuccess: async () => {
-      setAssigning(false);
-      await refresh();
-      toast.success(
-        "Conversa vinculada. O atendimento ficou com a equipe para revisão."
-      );
-    },
-  });
-  useEffect(() => {
-    if (!selected && list.data?.length) select(list.data[0].id);
-  }, [list.data, selected]);
-  const cv = thread.data?.conversation;
-  return (
-    <div className="bot-conversations">
-      <Panel
-        title="Conversas"
-        sub="Atualização automática a cada 8 segundos."
-        className="bot-thread-list"
-      >
-        <Input
-          aria-label="Buscar conversas"
-          placeholder="Nome ou telefone"
-          value={search}
-          onChange={e => {
-            setSearch(e.target.value);
-            setOffset(0);
-          }}
-        />
-        {list.error && <p role="alert">{list.error.message}</p>}
-        <div className="bot-thread-items">
-          {list.data?.length ? (
-            list.data.map(t => (
-              <button
-                key={t.id}
-                className={selected === t.id ? "selected" : ""}
-                onClick={() => {
-                  select(t.id);
-                  setBody("");
-                }}
-              >
-                <div>
-                  <strong>{t.name}</strong>
-                  <span>{t.mode === "human" ? "Equipe" : "Bot"}</span>
-                </div>
-                <p>{t.lastBody?.slice(0, 95) || "Conversa iniciada no CRM"}</p>
-                <small>
-                  {t.artistName || "Geral do estúdio"} · {when(t.updated_at)}
-                </small>
-              </button>
-            ))
-          ) : (
-            <Empty title="Sem conversas">
-              <p>
-                As mensagens aparecerão aqui após conectar o WhatsApp. Você
-                também pode abrir uma conversa em Clientes.
-              </p>
-            </Empty>
-          )}
-        </div>
-        <Pager
-          offset={offset}
-          size={60}
-          count={list.data?.length || 0}
-          set={setOffset}
-        />
-      </Panel>
-      <Panel className="bot-chat-panel">
-        {thread.error ? (
-          <Notice>{thread.error.message}</Notice>
-        ) : !selected ? (
-          <Empty title="Escolha uma conversa" />
-        ) : !cv ? (
-          <p className="p-5">Carregando conversa…</p>
-        ) : (
-          <>
-            <header className="bot-chat-head">
-              <TatueiBotIcon />
-              <div>
-                <strong>{cv.name}</strong>
-                <p>
-                  {cv.phone} ·{" "}
-                  {cv.mode === "human"
-                    ? "Com a equipe"
-                    : "Bot ativo na conversa"}
-                </p>
-              </div>
-              <Badge variant="secondary">
-                {cv.opted_out
-                  ? "Interrompido pelo cliente"
-                  : cv.client_id
-                    ? "Cliente vinculado"
-                    : "Sem cadastro vinculado"}
-              </Badge>
-            </header>
-            <div className="bot-conversation-actions">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={mode.isPending || !!cv.opted_out}
-                onClick={() =>
-                  mode.mutate({
-                    id: selected,
-                    mode: cv.mode === "human" ? "bot" : "human",
-                  })
-                }
-              >
-                {cv.mode === "human" ? "Retomar bot" : "Assumir atendimento"}
-              </Button>
-              {s.manager && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setClientSearch(cv.phone.slice(-4));
-                    setClientId("");
-                    setAssigning(true);
-                  }}
-                >
-                  Vincular cadastro / artista
-                </Button>
-              )}
-            </div>
-            <div
-              className="bot-chat bot-live-chat"
-              aria-live="polite"
-              role="log"
-            >
-              {thread.data?.messages.length ? (
-                thread.data.messages.map(m => (
-                  <div key={m.id} className={"bot-bubble " + m.role}>
-                    <small>
-                      {m.role === "client"
-                        ? cv.name
-                        : m.role === "staff"
-                          ? "Equipe"
-                          : "Bot Tatuei"}{" "}
-                      · {when(m.created_at)}
-                    </small>
-                    <span>{m.body}</span>
-                    <small
-                      className={
-                        ["failed", "uncertain"].includes(m.status)
-                          ? "bot-error"
-                          : ""
-                      }
-                    >
-                      {statusLabels[m.status] || m.status}
-                      {m.status === "queued" ? " · " + when(m.due_at) : ""}
-                    </small>
-                    {m.error && <small>{m.error}</small>}
-                  </div>
-                ))
-              ) : (
-                <Empty title="Conversa pronta para atendimento">
-                  <p>Enviar uma mensagem coloca a equipe no controle.</p>
-                </Empty>
-              )}
-            </div>
-            <form
-              className="bot-composer"
-              onSubmit={e => {
-                e.preventDefault();
-                if (body.trim())
-                  send.mutate({
-                    id: selected,
-                    body,
-                    requestId: crypto.randomUUID(),
-                  });
-              }}
-            >
-              <Input
-                aria-label="Resposta da equipe"
-                placeholder="Resposta manual da equipe…"
-                value={body}
-                onChange={e => setBody(e.target.value)}
-                maxLength={4000}
-                required
-                disabled={!!cv.opted_out}
-              />
-              <Button
-                disabled={send.isPending || !!cv.opted_out}
-                aria-label="Enviar resposta da equipe"
-              >
-                <Send size={16} />
-              </Button>
-            </form>
-            <p className="bot-hint px-4 pb-4">
-              Responder manualmente pausa o bot. Mensagens já em envio podem
-              concluir antes da troca de atendimento.
-            </p>
-          </>
-        )}
-      </Panel>
-      <Dialog open={assigning} onOpenChange={setAssigning}>
-        <DialogContent className="bot-dialog">
-          <DialogHeader>
-            <DialogTitle>Vincular conversa ao cadastro</DialogTitle>
-            <DialogDescription>
-              Escolha um cliente com o mesmo telefone. O artista desse cadastro
-              passará a ter acesso ao histórico desta conversa.
-            </DialogDescription>
-          </DialogHeader>
-          <Field label="Buscar cliente" id="assign-search">
-            <Input
-              id="assign-search"
-              value={clientSearch}
-              onChange={e => setClientSearch(e.target.value)}
-            />
-          </Field>
-          <Field label="Cliente responsável pela conversa" id="assign-client">
-            <select
-              id="assign-client"
-              value={clientId}
-              onChange={e => setClientId(e.target.value)}
-            >
-              <option value="">Selecione</option>
-              {clients.data?.map(c => (
-                <option value={c.id} key={c.id}>
-                  {c.name} · {c.artistName || "Sem artista"} · {c.phone}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Button
-            disabled={!clientId || assign.isPending || !selected}
-            onClick={() =>
-              assign.mutate({ id: selected!, clientId: Number(clientId) })
-            }
-          >
-            Vincular e manter com a equipe
-          </Button>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
 function BotHistory() {
   const [offset, setOffset] = useState(0);
   const h = trpc.nativeBot.history.useQuery(

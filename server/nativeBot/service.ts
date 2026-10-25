@@ -1,4 +1,14 @@
-import { isMetaBot, sendMetaBot, metaWindowOpen, META_WINDOW_ERROR } from "./meta";
+import { reconcileDeliveryStatus } from "./receipts";
+import { automationBlocked, pauseExpired } from "../../shared/botInbox";
+import { isQrBot, sendQr, ownsQrSession } from "./qr";
+import { loadAttachment } from "./attachments";
+import { inboxChanged } from "./events";
+import {
+  isMetaBot,
+  sendMetaBot,
+  metaWindowOpen,
+  META_WINDOW_ERROR,
+} from "./meta";
 import { randomBytes } from "node:crypto";
 import {
   botConfigSchema,
@@ -111,16 +121,23 @@ export async function botThreadMode(
   c: BotConnection = botPool()
 ) {
   await exec(
-    "UPDATE tatuei_bot_conversations SET mode=?,revision=revision+1 WHERE id=? AND studio_id=?",
+    "UPDATE tatuei_bot_conversations SET mode=?,pause_until=NULL,paused_by=NULL,revision=revision+1 WHERE id=? AND studio_id=?",
     [mode, cv.id, cv.studio_id],
     c
   );
   await cancelBotQueue(cv, c);
-  return { ...cv, mode, revision: cv.revision + 1 };
+  return {
+    ...cv,
+    mode,
+    pause_until: null,
+    paused_by: null,
+    revision: cv.revision + 1,
+  };
 }
 export async function contextForConversation(
   cv: any,
-  c: BotConnection = botPool()
+  c: BotConnection = botPool(),
+  allowDisabledProfile = false
 ) {
   const [studio] = await rows(
     "SELECT name FROM studios WHERE id=? AND isActive=1",
@@ -136,7 +153,7 @@ export async function contextForConversation(
       [cv.artist_id, cv.studio_id],
       c
     );
-    if (!a || !profile.enabled) return null;
+    if (!a || (!profile.enabled && !allowDisabledProfile)) return null;
     artistName = a.name;
   }
   if (cv.client_id) {
@@ -146,6 +163,21 @@ export async function contextForConversation(
       c
     );
     if (!cl || Number(cl.artistId || 0) !== cv.artist_id) return null;
+  }
+  if (cv.assistant_id) {
+    const [assistant] = await rows(
+      "SELECT name,instructions,knowledge,enabled FROM tatuei_bot_assistants WHERE id=? AND studio_id=?",
+      [cv.assistant_id, cv.studio_id],
+      c
+    );
+    if (!assistant?.enabled) return null;
+    profile.config = {
+      ...profile.config,
+      name: assistant.name,
+      instructions: assistant.instructions,
+      knowledge: assistant.knowledge,
+      aiEnabled: true,
+    };
   }
   return {
     profile,
@@ -254,7 +286,7 @@ export async function processBotInbound(message: any, c: BotConnection) {
     );
   }
   const s = await settings(cv.studio_id, c);
-  if (!s.enabled || cv.mode === "human" || cv.opted_out) return;
+  if (!s.enabled || automationBlocked(cv)) return;
   const ctx = await contextForConversation(cv, c);
   if (!ctx) {
     await botThreadMode(cv, "human", c);
@@ -357,18 +389,36 @@ export async function validateBotDelivery(
   c: BotConnection
 ) {
   if (
-    !s.enabled ||
+    (m.role === "bot" && !s.enabled) ||
     !s.wa_secret ||
     s.wa_status !== "connected" ||
     !s.webhook_ready
   )
     return "Bot pausado ou WhatsApp não conectado.";
-  if(s.channelSandbox && (!s.channelTestPhone || nativeBotPhone(s.channelTestPhone) !== cv.phone)) return "Canal em homologação: envio permitido somente ao telefone de teste.";
+  if (
+    s.channelSandbox &&
+    (!s.channelTestPhone || nativeBotPhone(s.channelTestPhone) !== cv.phone)
+  )
+    return "Canal em homologação: envio permitido somente ao telefone de teste.";
   if (cv.opted_out) return "Cliente interrompeu as mensagens.";
-  if (isMetaBot(s) && !metaWindowOpen(cv.last_inbound_at)) return META_WINDOW_ERROR;
+  if (cv.closed_at) return "Atendimento encerrado.";
+  if (m.role === "bot" && cv.mode !== "bot" && m.after_mode !== "human")
+    return "Automação pausada nesta conversa.";
+  if (
+    m.role === "bot" &&
+    Date.now() - Date.parse(String(m.due_at).replace(" ", "T") + "Z") >
+      15 * 60000
+  )
+    return "Resposta automática expirada. Aguardando uma nova mensagem.";
+  if (isMetaBot(s) && !metaWindowOpen(cv.last_inbound_at))
+    return META_WINDOW_ERROR;
   if (m.expected_revision !== cv.revision)
     return "O responsável ou modo de atendimento mudou.";
-  const ctx = await contextForConversation(cv, c);
+  const ctx = await contextForConversation(
+    m.role === "staff" ? { ...cv, assistant_id: null } : cv,
+    c,
+    m.role === "staff"
+  );
   if (!ctx) return "O acesso do artista ou cadastro mudou.";
   if (m.role === "bot") {
     if (m.profile_version !== null && ctx.profile.version !== m.profile_version)
@@ -419,6 +469,7 @@ export async function deliverBotMessage(m: any, c: BotConnection) {
   );
   if (!cv) return;
   const s = await settings(m.studio_id, c);
+  if (isQrBot(s) && !ownsQrSession(s.studio_id)) return;
   const reason = await validateBotDelivery(m, cv, s, c);
   if (reason) {
     await exec(
@@ -435,12 +486,31 @@ export async function deliverBotMessage(m: any, c: BotConnection) {
   );
   if (claim.affectedRows !== 1) return;
   try {
-    const response = isMetaBot(s)
-      ? await sendMetaBot(s, cv.phone, m.body, cv.last_inbound_at)
-      : await zapi(s, "send-text", "POST", {
-          phone: cv.phone,
-          message: m.body,
-        });
+    const attachment = await loadAttachment(m.id, s.studio_id, c);
+    const response = isQrBot(s)
+      ? await sendQr(s, cv.phone, m.body, attachment)
+      : isMetaBot(s)
+        ? attachment
+          ? await (
+              await import("./metaMedia")
+            ).sendMetaAttachment(
+              s,
+              cv.phone,
+              m.body,
+              cv.last_inbound_at,
+              attachment
+            )
+          : await sendMetaBot(s, cv.phone, m.body, cv.last_inbound_at)
+        : attachment
+          ? (() => {
+              throw new BotProviderError(
+                "Anexos disponíveis nos conectores QR próprio e Meta."
+              );
+            })()
+          : await zapi(s, "send-text", "POST", {
+              phone: cv.phone,
+              message: m.body,
+            });
     const id = response?.messageId || response?.zaapId;
     if (typeof id !== "string" || !id)
       throw new BotProviderError(
@@ -452,6 +522,7 @@ export async function deliverBotMessage(m: any, c: BotConnection) {
       [id.slice(0, 160), m.id],
       c
     );
+    await reconcileDeliveryStatus(cv.studio_id, m.id, id.slice(0, 160));
     if (m.after_mode === "human" && cv.mode !== "human")
       await botThreadMode(cv, "human", c);
     await botAudit(
@@ -464,6 +535,7 @@ export async function deliverBotMessage(m: any, c: BotConnection) {
       null,
       c
     );
+    inboxChanged(cv.studio_id);
   } catch (e) {
     const uncertain = e instanceof BotProviderError ? e.uncertain : true;
     await exec(
@@ -490,7 +562,7 @@ export async function queueScheduledBot(
   appointment?: { id: number; date: string },
   c: BotConnection = botPool()
 ) {
-  if (cv.mode !== "bot" || cv.opted_out) return;
+  if (automationBlocked(cv)) return;
   const ctx = await contextForConversation(cv, c);
   if (!ctx) return;
   const vars = {
@@ -536,4 +608,50 @@ export async function queueScheduledBot(
     },
     c
   );
+}
+
+/** Expiration resumes future messages only; the paused backlog never produces delayed replies. */
+export async function resumeExpiredConversations() {
+  const candidates = await rows(
+    "SELECT id FROM tatuei_bot_conversations WHERE mode='human' AND pause_until<=UTC_TIMESTAMP() AND opted_out=0 AND closed_at IS NULL LIMIT 100"
+  );
+  for (const candidate of candidates) {
+    const { withBotLock } = await import("./database");
+    await withBotLock(
+      "tatuei_bot_thread_" + candidate.id,
+      async c => {
+        await c.beginTransaction();
+        try {
+          const [cv] = await rows(
+            "SELECT * FROM tatuei_bot_conversations WHERE id=? FOR UPDATE",
+            [candidate.id],
+            c
+          );
+          if (cv && pauseExpired(cv)) {
+            await exec(
+              "UPDATE tatuei_bot_messages SET status='processed' WHERE studio_id=? AND conversation_id=? AND role='client' AND status='received'",
+              [cv.studio_id, cv.id],
+              c
+            );
+            await botThreadMode(cv, "bot", c);
+            await botAudit(
+              cv.studio_id,
+              cv.artist_id,
+              "Pausa temporária encerrada",
+              "Retomada para novas mensagens.",
+              null,
+              c
+            );
+            inboxChanged(cv.studio_id);
+          }
+          await c.commit();
+        } catch (e) {
+          await c.rollback();
+          throw e;
+        }
+        return true;
+      },
+      0
+    );
+  }
 }

@@ -69,7 +69,7 @@ export async function settings(
       c
     )
   )[0];
-  return resolveBotChannel(result,c);
+  return resolveBotChannel(result, c);
 }
 export async function getProfile(
   studioId: number,
@@ -131,7 +131,7 @@ export async function accessBot(
   const s = await settings(studioId, c),
     p = await getProfile(studioId, artistId, c),
     manager = botRoleIsManager(actor.role);
-  if (!manager && (!s.enabled || !p.enabled || (area && !p.permissions[area])))
+  if (!manager && (!p.enabled || (area && !p.permissions[area])))
     throw forbidden();
   return {
     studioId,

@@ -10,6 +10,9 @@ import { securityHeaders } from '../security/http';
 import { receiveMetaWebhook, verifyMetaWebhook } from "../nativeBot/metaWebhook";
 import { ensureNativeBotSchema } from "../nativeBot/database";
 import { receiveNativeBotWebhook } from "../nativeBot/webhook";
+import { botEventStream } from "../nativeBot/events";
+import { botAttachmentDownload } from "../nativeBot/attachments";
+import { startQrSupervisor } from "../nativeBot/qr";
 import { startNativeBotWorker } from "../nativeBot/worker";
 import { INVENTORY_COLUMNS } from "../../shared/inventorySpreadsheet";
 import { ensureAppointmentKitSchema } from "./appointmentKitSchema";
@@ -87,6 +90,13 @@ async function startServer() {
   app.use("/api/auth/local", express.json({ limit: "16kb" }));
   const server = createServer(app);
   startNativeBotWorker();
+  const stopQr = startQrSupervisor();
+  if (stopQr) {
+    process.once("SIGTERM", stopQr);
+    process.once("SIGINT", stopQr);
+  }
+  app.get("/api/native-bot/events", botEventStream);
+  app.get("/api/native-bot/attachments/:id", botAttachmentDownload);
   startMinorConsentWorker();
   app.use("/api/native-bot/webhook", express.json({ limit: "256kb" }));
   app.use("/api/native-bot/meta/webhook", express.json({

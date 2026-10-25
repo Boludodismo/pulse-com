@@ -1,3 +1,4 @@
+import { inboxChanged } from "./events";
 import { channelForWebhook } from "../messaging/channels";
 import { z } from "zod";
 import { timingSafeEqual } from "node:crypto";
@@ -27,6 +28,7 @@ export const botWebhookSchema = z.object({
   broadcast: z.boolean().optional(),
   type: z.string().max(80).optional(),
   senderName: z.string().max(255).optional(),
+  caption: z.string().max(12000).optional(),
   text: z.object({ message: z.string().max(12000) }).optional(),
   image: z.unknown().optional(),
   audio: z.unknown().optional(),
@@ -45,12 +47,14 @@ export async function receiveNativeBotWebhook(req: Request, res: Response) {
     assertBotSchema();
     const key = String(req.params.key || "");
     if (!/^[A-Za-z0-9_-]{43}$/.test(key)) return res.sendStatus(404);
-    const shared=await channelForWebhook(key);
-    const [legacy] = shared?[]:await rows<BotSettings>(
-      "SELECT * FROM tatuei_bot_settings WHERE webhook_key=?",
-      [key]
-    );
-    const s=shared?.settings||legacy;
+    const shared = await channelForWebhook(key);
+    const [legacy] = shared
+      ? []
+      : await rows<BotSettings>(
+          "SELECT * FROM tatuei_bot_settings WHERE webhook_key=?",
+          [key]
+        );
+    const s = shared?.settings || legacy;
     if (
       !s ||
       !s.wa_secret ||
@@ -99,13 +103,15 @@ export async function persistBotInbound(
   event: z.infer<typeof botWebhookSchema>,
   phone: string,
   inboundAt?: string,
-  sharedDispatched=false,
-  handled=false
+  sharedDispatched = false,
+  handled = false
 ) {
-  if(s.wa_integration_id && !sharedDispatched) {
-    const {dispatchChannelInbound}=await import('../messaging/channelInbound');
-    return dispatchChannelInbound(s,event,phone,inboundAt);
+  if (s.wa_integration_id && !sharedDispatched) {
+    const { dispatchChannelInbound } =
+      await import("../messaging/channelInbound");
+    return dispatchChannelInbound(s, event, phone, inboundAt);
   }
+  let changed = false;
   await botTransaction(async c => {
     if (
       (
@@ -151,26 +157,34 @@ export async function persistBotInbound(
       );
     }
     const body =
-      event.text?.message ||
-      "[Mídia recebida pelo WhatsApp. Consulte o aplicativo para visualizar o arquivo.]";
+      event.text?.message || event.caption || "[Mídia recebida pelo WhatsApp.]";
     const inserted = await exec(
-      "INSERT IGNORE INTO tatuei_bot_messages(studio_id,conversation_id,role,body,status,external_id,origin,due_at) VALUES(?,?,?,?,?,?,?,?)",
+      "INSERT IGNORE INTO tatuei_bot_messages(studio_id,conversation_id,role,body,status,external_id,origin,due_at,source_instance) VALUES(?,?,?,?,?,?,?,?,?)",
       [
         s.studio_id,
         cv.id,
         event.fromMe ? "staff" : "client",
         body.slice(0, 12000),
-        event.fromMe ? "sent" : handled ? "processed" : "received",
+        event.fromMe
+          ? "sent"
+          : handled ||
+              (inboundAt &&
+                Date.parse(inboundAt.replace(" ", "T") + "Z") <
+                  Date.now() - 15 * 60000)
+            ? "processed"
+            : "received",
         event.messageId,
         event.text ? "reply" : "media",
         utcSql(),
+        s.wa_instance,
       ],
       c
     );
     if (!inserted.insertId) return;
+    changed = true;
     if (event.fromMe) {
       await exec(
-        "UPDATE tatuei_bot_conversations SET mode='human',revision=revision+1,updated_at=UTC_TIMESTAMP() WHERE id=?",
+        "UPDATE tatuei_bot_conversations SET mode='human',pause_until=NULL,paused_by=NULL,revision=revision+1,updated_at=UTC_TIMESTAMP() WHERE id=?",
         [cv.id],
         c
       );
@@ -186,10 +200,11 @@ export async function persistBotInbound(
     } else
       await exec(
         inboundAt
-          ? "UPDATE tatuei_bot_conversations SET last_inbound_at=GREATEST(COALESCE(last_inbound_at,?),?),updated_at=UTC_TIMESTAMP() WHERE id=?"
-          : "UPDATE tatuei_bot_conversations SET last_inbound_at=UTC_TIMESTAMP(),updated_at=UTC_TIMESTAMP() WHERE id=?",
+          ? "UPDATE tatuei_bot_conversations SET closed_at=NULL,last_inbound_at=GREATEST(COALESCE(last_inbound_at,?),?),updated_at=UTC_TIMESTAMP() WHERE id=?"
+          : "UPDATE tatuei_bot_conversations SET closed_at=NULL,last_inbound_at=UTC_TIMESTAMP(),updated_at=UTC_TIMESTAMP() WHERE id=?",
         inboundAt ? [inboundAt, inboundAt, cv.id] : [cv.id],
         c
       );
   });
+  if (changed) inboxChanged(s.studio_id);
 }

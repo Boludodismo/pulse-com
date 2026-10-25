@@ -86,6 +86,36 @@ export async function withBotLock<T>(
   }
 }
 export const BOT_DDL = [
+  `CREATE TABLE IF NOT EXISTS tatuei_bot_realtime (
+    studio_id INT PRIMARY KEY, version BIGINT NOT NULL DEFAULT 0
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tatuei_bot_receipts (
+    studio_id INT NOT NULL, external_id VARCHAR(160) NOT NULL, delivery_rank INT NOT NULL,
+    PRIMARY KEY(studio_id,external_id), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tatuei_bot_qr_auth (
+    studio_id INT PRIMARY KEY, state MEDIUMTEXT NOT NULL, qr_image TEXT NULL, qr_expires DATETIME NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tatuei_bot_assistants (
+    id INT AUTO_INCREMENT PRIMARY KEY, studio_id INT NOT NULL, name VARCHAR(100) NOT NULL,
+    instructions TEXT NOT NULL, knowledge MEDIUMTEXT NOT NULL, enabled TINYINT NOT NULL DEFAULT 0,
+    version INT NOT NULL DEFAULT 1, KEY bot_assistant_scope(studio_id,id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tatuei_bot_reads (
+    studio_id INT NOT NULL, conversation_id INT NOT NULL, user_id INT NOT NULL, message_id INT NOT NULL DEFAULT 0,
+    PRIMARY KEY(studio_id,conversation_id,user_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tatuei_bot_notes (
+    id INT AUTO_INCREMENT PRIMARY KEY, studio_id INT NOT NULL, conversation_id INT NOT NULL,
+    actor_id INT NOT NULL, body TEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY bot_note_scope(studio_id,conversation_id,id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tatuei_bot_attachments (
+    message_id INT PRIMARY KEY, studio_id INT NOT NULL, conversation_id INT NOT NULL,
+    name VARCHAR(180) NOT NULL, mime VARCHAR(100) NOT NULL, encrypted_data MEDIUMTEXT NOT NULL,
+    KEY bot_attachment_scope(studio_id,conversation_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS tatuei_bot_settings (
  studio_id INT PRIMARY KEY, enabled TINYINT NOT NULL DEFAULT 0,
  ai_secret TEXT NULL, ai_model VARCHAR(100) NOT NULL DEFAULT 'gpt-4.1-mini', ai_daily_limit INT NOT NULL DEFAULT 200, ai_day VARCHAR(10) NULL, ai_used INT NOT NULL DEFAULT 0,
@@ -134,18 +164,51 @@ export async function ensureNativeBotSchema() {
       async c => {
         for (const ddl of BOT_DDL) await c.query(ddl);
         for (const [table, column, definition] of [
-          ['tatuei_bot_settings','wa_integration_id','INT NULL'],
-          ['whatsapp_integrations','encrypted_provider_config','TEXT NULL'],
-          ['whatsapp_integrations','connection_state',"VARCHAR(24) NOT NULL DEFAULT 'unconfigured'"],
-          ['whatsapp_integrations','webhook_ready','TINYINT NOT NULL DEFAULT 0'],
+          ["tatuei_bot_settings", "wa_integration_id", "INT NULL"],
+          ["tatuei_bot_conversations", "pause_until", "DATETIME NULL"],
+          ["tatuei_bot_conversations", "paused_by", "INT NULL"],
+          ["tatuei_bot_conversations", "closed_at", "DATETIME NULL"],
+          ["tatuei_bot_conversations", "assistant_id", "INT NULL"],
+          ["tatuei_bot_conversations", "assigned_user_id", "INT NULL"],
+          ["tatuei_bot_conversations", "labels", "JSON NULL"],
+          ["tatuei_bot_messages", "source_instance", "VARCHAR(100) NULL"],
+          ["whatsapp_integrations", "encrypted_provider_config", "TEXT NULL"],
+          [
+            "whatsapp_integrations",
+            "connection_state",
+            "VARCHAR(24) NOT NULL DEFAULT 'unconfigured'",
+          ],
+          [
+            "whatsapp_integrations",
+            "webhook_ready",
+            "TINYINT NOT NULL DEFAULT 0",
+          ],
         ]) {
-          const columns=await rows('SHOW COLUMNS FROM `'+table+'` LIKE ?',[column],c);
-          if(!columns.length) await c.query('ALTER TABLE `'+table+'` ADD COLUMN `'+column+'` '+definition);
+          const columns = await rows(
+            "SHOW COLUMNS FROM `" + table + "` LIKE ?",
+            [column],
+            c
+          );
+          if (!columns.length)
+            await c.query(
+              "ALTER TABLE `" +
+                table +
+                "` ADD COLUMN `" +
+                column +
+                "` " +
+                definition
+            );
         }
-        const {migrateLegacyBotChannels}=await import('../messaging/channels');
+        const { migrateLegacyBotChannels } =
+          await import("../messaging/channels");
         await c.beginTransaction();
-        try { await migrateLegacyBotChannels(c); await c.commit(); }
-        catch(e) { await c.rollback(); throw e; }
+        try {
+          await migrateLegacyBotChannels(c);
+          await c.commit();
+        } catch (e) {
+          await c.rollback();
+          throw e;
+        }
         schemaReady = true;
       },
       30
