@@ -350,7 +350,7 @@ describe("recebimento oficial Meta", () => {
     await receiveMetaWebhook(request(p), response());
     expect(db.exec).not.toHaveBeenCalled();
   });
-  it("persiste mensagem no estúdio correto usando horário original da Meta", async () => {
+  it("persiste mensagem antiga sem reexecutar automação, mantendo horário original da Meta", async () => {
     const p = payload();
     p.entry[0].changes[0].value.messages[0].timestamp = String(
       Math.floor((Date.now() - 90000000) / 1000)
@@ -366,7 +366,7 @@ describe("recebimento oficial Meta", () => {
       11,
       "client",
       "Olá",
-      "received",
+      "processed",
       "wamid.inbound",
     ]);
     const update = db.exec.mock.calls.find(c =>
@@ -416,9 +416,11 @@ describe("configuração Meta pelo CRM", () => {
     });
   });
   it("orienta clientes antigos ao cadastro único sem criar credenciais paralelas", async () => {
-    await expect(caller().saveMetaWhatsapp(credentials)).rejects.toMatchObject({code:"BAD_REQUEST"});
+    await expect(caller().saveMetaWhatsapp(credentials)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
     expect(db.exec).not.toHaveBeenCalled();
-    const snapshot=await caller().snapshot({});
+    const snapshot = await caller().snapshot({});
     expect(JSON.stringify(snapshot)).not.toContain(credentials.accessToken);
     expect(JSON.stringify(snapshot)).not.toContain(credentials.appSecret);
   });

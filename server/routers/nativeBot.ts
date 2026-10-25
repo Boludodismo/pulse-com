@@ -1,3 +1,8 @@
+import { inboxProcedures } from "../nativeBot/inboxRouter";
+import { inboxChanged } from "../nativeBot/events";
+import { attachmentSchema } from "../../shared/botInbox";
+import { saveAttachment, validateAttachment } from "../nativeBot/attachments";
+import { isQrBot } from "../nativeBot/qr";
 import { assertPrivateConnectionAccess } from "../messaging/privateConnectionAccess";
 import { bindBotChannel, verifyChannel } from "../messaging/channels";
 import {
@@ -57,9 +62,11 @@ import {
 const ownerInput = z.object({
   artistId: z.number().int().nonnegative().optional(),
 });
-const base = tenantProcedure.use(async ({ ctx, next }) => {
+const base = tenantProcedure.use(async ({ ctx, next, type }) => {
   assertBotSchema();
-  return next({ ctx });
+  const result = await next({ ctx });
+  if (type === "mutation" && result.ok) inboxChanged(ctx.studioId);
+  return result;
 });
 const idInput = z.object({ id: z.number().int().positive() });
 function publicConnection(s: Awaited<ReturnType<typeof settings>>) {
@@ -71,7 +78,11 @@ function publicConnection(s: Awaited<ReturnType<typeof settings>>) {
     aiUsed: s.ai_used,
     aiDay: s.ai_day,
     whatsappConfigured: !!s.wa_secret,
-    whatsappProvider: isMetaBot(s) ? ("meta" as const) : ("zapi" as const),
+    whatsappProvider: isQrBot(s)
+      ? ("qr" as const)
+      : isMetaBot(s)
+        ? ("meta" as const)
+        : ("zapi" as const),
     metaPhoneNumberId: isMetaBot(s) ? s.wa_instance!.slice(5) : null,
     metaWebhookUrl: isMetaBot(s) ? metaWebhookUrl(s) : null,
     metaVerifyToken: isMetaBot(s) ? s.webhook_key : null,
@@ -107,6 +118,7 @@ async function lockThread<T>(
   return result;
 }
 export const nativeBotRouter = router({
+  ...inboxProcedures,
   access: base.query(async ({ ctx }) => {
     const id = assertBotScope(ctx.user);
     const s = await settings(ctx.studioId),
@@ -115,14 +127,15 @@ export const nativeBotRouter = router({
     return {
       manager,
       enabled: !!s.enabled,
-      allowed: manager || (!!s.enabled && p.enabled),
+      allowed: manager || p.enabled,
       artistId: ctx.user.artistId,
       permissions: p.permissions,
     };
   }),
   snapshot: base.input(ownerInput).query(async ({ ctx, input }) => {
     const a = await accessBot(ctx.user, input.artistId);
-    if(a.manager && a.settings.wa_integration_id) await assertPrivateConnectionAccess(ctx.user,ctx.studioId);
+    if (a.manager && (a.settings.wa_integration_id || isQrBot(a.settings)))
+      await assertPrivateConnectionAccess(ctx.user, ctx.studioId);
     const artists = await rows<{ id: number; name: string; active: number }>(
       "SELECT id,name,active FROM artists WHERE studioId=? AND active=1" +
         (a.manager ? "" : " AND id=?") +
@@ -206,13 +219,18 @@ export const nativeBotRouter = router({
       assertBotManager(ctx.user);
       await accessBot(ctx.user);
       await seedProfile(ctx.studioId, 0);
+      if (input.enabled)
+        await exec(
+          "UPDATE tatuei_bot_messages SET status='processed' WHERE studio_id=? AND role='client' AND status='received'",
+          [ctx.studioId]
+        );
       await exec("UPDATE tatuei_bot_settings SET enabled=? WHERE studio_id=?", [
         input.enabled ? 1 : 0,
         ctx.studioId,
       ]);
       if (!input.enabled)
         await exec(
-          "UPDATE tatuei_bot_messages SET status='canceled',error='Módulo pausado pelo estúdio.' WHERE studio_id=? AND status='queued'",
+          "UPDATE tatuei_bot_messages SET status='canceled',error='Módulo pausado pelo estúdio.' WHERE studio_id=? AND role='bot' AND status='queued'",
           [ctx.studioId]
         );
       await botAudit(
@@ -447,6 +465,9 @@ export const nativeBotRouter = router({
     .input(
       z.object({
         search: z.string().max(100).default(""),
+        filter: z
+          .enum(["all", "bot", "human", "unread", "mine", "closed"])
+          .default("all"),
         offset: z.number().int().min(0).default(0),
       })
     )
@@ -465,8 +486,16 @@ export const nativeBotRouter = router({
         artistName: string | null;
         lastBody: string | null;
         lastStatus: string | null;
+        pause_until: string | null;
+        closed_at: string | null;
+        assigned_user_id: number | null;
+        unread: number;
       }>(
-        `SELECT c.*,a.name artistName,(SELECT body FROM tatuei_bot_messages m WHERE m.conversation_id=c.id AND m.studio_id=c.studio_id ORDER BY m.id DESC LIMIT 1) lastBody,(SELECT status FROM tatuei_bot_messages m WHERE m.conversation_id=c.id AND m.studio_id=c.studio_id ORDER BY m.id DESC LIMIT 1) lastStatus FROM tatuei_bot_conversations c LEFT JOIN artists a ON a.id=c.artist_id AND a.studioId=c.studio_id WHERE c.studio_id=? ${a.manager ? "" : "AND c.artist_id=? AND (c.client_id IS NULL OR EXISTS(SELECT 1 FROM clients cl WHERE cl.id=c.client_id AND cl.studioId=c.studio_id AND cl.artistId=c.artist_id AND cl.isArchived=0))"} AND (c.name LIKE ? OR c.phone LIKE ?) ORDER BY c.updated_at DESC LIMIT 60 OFFSET ?`,
+        `SELECT c.*,a.name artistName,(SELECT COUNT(*) FROM tatuei_bot_messages unread WHERE unread.studio_id=c.studio_id AND unread.conversation_id=c.id AND unread.role='client' AND unread.id>COALESCE((SELECT message_id FROM tatuei_bot_reads r WHERE r.studio_id=c.studio_id AND r.conversation_id=c.id AND r.user_id=${ctx.user.id}),0)) unread,(SELECT body FROM tatuei_bot_messages m WHERE m.conversation_id=c.id AND m.studio_id=c.studio_id ORDER BY m.id DESC LIMIT 1) lastBody,(SELECT status FROM tatuei_bot_messages m WHERE m.conversation_id=c.id AND m.studio_id=c.studio_id ORDER BY m.id DESC LIMIT 1) lastStatus FROM tatuei_bot_conversations c LEFT JOIN artists a ON a.id=c.artist_id AND a.studioId=c.studio_id WHERE c.studio_id=? ${a.manager ? "" : "AND c.artist_id=? AND (c.client_id IS NULL OR EXISTS(SELECT 1 FROM clients cl WHERE cl.id=c.client_id AND cl.studioId=c.studio_id AND cl.artistId=c.artist_id AND cl.isArchived=0))"} AND ${input.filter === "closed" ? "c.closed_at IS NOT NULL" : "c.closed_at IS NULL"}
+        ${input.filter === "bot" || input.filter === "human" ? `AND c.mode='${input.filter}'` : ""}
+        ${input.filter === "mine" ? `AND c.assigned_user_id=${ctx.user.id}` : ""}
+        ${input.filter === "unread" ? `AND EXISTS(SELECT 1 FROM tatuei_bot_messages unread WHERE unread.studio_id=c.studio_id AND unread.conversation_id=c.id AND unread.role='client' AND unread.id>COALESCE((SELECT message_id FROM tatuei_bot_reads r WHERE r.studio_id=c.studio_id AND r.conversation_id=c.id AND r.user_id=${ctx.user.id}),0))` : ""}
+        AND (c.name LIKE ? OR c.phone LIKE ?) ORDER BY c.updated_at DESC LIMIT 60 OFFSET ?`,
         [
           a.studioId,
           ...(a.manager ? [] : [a.artistId]),
@@ -476,22 +505,26 @@ export const nativeBotRouter = router({
         ]
       );
     }),
-  thread: base.input(idInput).query(async ({ ctx, input }) => {
-    const cv = await scopedBotConversation(ctx.user, input.id);
-    const messages = await rows<{
-      id: number;
-      role: string;
-      body: string;
-      status: string;
-      error: string | null;
-      created_at: string;
-      due_at: string;
-    }>(
-      "SELECT id,role,body,status,error,created_at,due_at FROM tatuei_bot_messages WHERE studio_id=? AND conversation_id=? ORDER BY id DESC LIMIT 150",
-      [ctx.studioId, input.id]
-    );
-    return { conversation: cv, messages: messages.reverse() };
-  }),
+  thread: base
+    .input(idInput.extend({ beforeId: z.number().int().positive().optional() }))
+    .query(async ({ ctx, input }) => {
+      const cv = await scopedBotConversation(ctx.user, input.id);
+      const messages = await rows<{
+        id: number;
+        role: string;
+        body: string;
+        status: string;
+        error: string | null;
+        created_at: string;
+        due_at: string;
+        attachmentName: string | null;
+        attachmentMime: string | null;
+      }>(
+        "SELECT id,role,body,status,error,created_at,due_at,(SELECT name FROM tatuei_bot_attachments a WHERE a.message_id=tatuei_bot_messages.id AND a.studio_id=tatuei_bot_messages.studio_id) attachmentName,(SELECT mime FROM tatuei_bot_attachments a WHERE a.message_id=tatuei_bot_messages.id AND a.studio_id=tatuei_bot_messages.studio_id) attachmentMime FROM tatuei_bot_messages WHERE studio_id=? AND conversation_id=? AND id<? ORDER BY id DESC LIMIT 150",
+        [ctx.studioId, input.id, input.beforeId || Number.MAX_SAFE_INTEGER]
+      );
+      return { conversation: cv, messages: messages.reverse() };
+    }),
   openConversation: base
     .input(z.object({ clientId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
@@ -517,13 +550,36 @@ export const nativeBotRouter = router({
     .mutation(async ({ ctx, input }) =>
       lockThread(input.id, async c => {
         const cv = await scopedBotConversation(ctx.user, input.id, c);
+        if (cv.closed_at && input.mode === "bot")
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Reabra o atendimento antes de ativar o bot.",
+          });
         if (cv.opted_out && input.mode === "bot")
           throw new TRPCError({
             code: "BAD_REQUEST",
             message:
               "O cliente pode liberar o atendimento enviando: retomar atendimento. Isso não reativa autorizações de automações.",
           });
-        await botThreadMode(cv, input.mode, c);
+        await c.beginTransaction();
+        try {
+          await rows(
+            "SELECT id FROM tatuei_bot_conversations WHERE id=? AND studio_id=? FOR UPDATE",
+            [cv.id, ctx.studioId],
+            c
+          );
+          if (input.mode === "bot")
+            await exec(
+              "UPDATE tatuei_bot_messages SET status='processed' WHERE studio_id=? AND conversation_id=? AND role='client' AND status='received'",
+              [ctx.studioId, cv.id],
+              c
+            );
+          await botThreadMode(cv, input.mode, c);
+          await c.commit();
+        } catch (e) {
+          await c.rollback();
+          throw e;
+        }
         await botAudit(
           ctx.studioId,
           cv.artist_id,
@@ -538,7 +594,8 @@ export const nativeBotRouter = router({
   send: base
     .input(
       idInput.extend({
-        body: z.string().trim().min(1).max(4000),
+        body: z.string().trim().max(4000),
+        attachment: attachmentSchema.optional(),
         requestId: z.string().uuid(),
       })
     )
@@ -546,10 +603,40 @@ export const nativeBotRouter = router({
       lockThread(input.id, async c => {
         const cv = await scopedBotConversation(ctx.user, input.id, c),
           s = await settings(ctx.studioId, c);
-        if (!s.enabled || s.wa_status !== "connected" || !s.webhook_ready)
+        if (!input.body && !input.attachment)
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Ative o módulo e conecte o WhatsApp antes de enviar.",
+            message: "Escreva uma mensagem ou selecione um arquivo.",
+          });
+        if (cv.closed_at)
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Reabra o atendimento para responder.",
+          });
+        if (input.attachment) {
+          if (!isQrBot(s) && !isMetaBot(s))
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Anexos disponíveis nos conectores QR próprio e Meta.",
+            });
+          try {
+            validateAttachment(input.attachment);
+          } catch {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Arquivo inválido ou maior que 5 MB.",
+            });
+          }
+        }
+        if (isQrBot(s) && process.env.NATIVE_BOT_QR_ENABLED !== "true")
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "O conector QR está desabilitado no servidor.",
+          });
+        if (s.wa_status !== "connected" || !s.webhook_ready)
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Conecte o WhatsApp antes de enviar.",
           });
         if (cv.opted_out)
           throw new TRPCError({
@@ -588,19 +675,39 @@ export const nativeBotRouter = router({
             message:
               "Registre a autorização do cliente ou aguarde uma mensagem dele antes de iniciar o atendimento.",
           });
-        const next =
-          cv.mode === "human" ? cv : await botThreadMode(cv, "human", c);
-        await cancelBotQueue(next, c);
-        await queueBotMessage(
-          next,
-          input.body,
-          {
-            role: "staff",
-            eventKey: "manual:" + input.requestId,
-            origin: "manual",
-          },
-          c
-        );
+        await c.beginTransaction();
+        try {
+          const next =
+            cv.mode === "human" ? cv : await botThreadMode(cv, "human", c);
+          await exec(
+            "UPDATE tatuei_bot_conversations SET pause_until=NULL,paused_by=? WHERE id=? AND studio_id=?",
+            [ctx.user.id, cv.id, ctx.studioId],
+            c
+          );
+          await cancelBotQueue(next, c);
+          const messageId = await queueBotMessage(
+            next,
+            input.body || `[Arquivo: ${input.attachment!.name}]`,
+            {
+              role: "staff",
+              eventKey: "manual:" + input.requestId,
+              origin: "manual",
+            },
+            c
+          );
+          if (messageId && input.attachment)
+            await saveAttachment(
+              messageId,
+              ctx.studioId,
+              cv.id,
+              input.attachment,
+              c
+            );
+          await c.commit();
+        } catch (e) {
+          await c.rollback();
+          throw e;
+        }
         return { ok: true };
       })
     ),
@@ -681,24 +788,35 @@ export const nativeBotRouter = router({
       );
       return { ok: true };
     }),
-  selectWhatsappChannel: base.input(z.object({id:z.number().int().positive().nullable()})).mutation(async ({ctx,input})=>{
-    assertBotManager(ctx.user);
-    await assertPrivateConnectionAccess(ctx.user,ctx.studioId);
-    await accessBot(ctx.user);
-    return bindBotChannel(ctx.studioId,input.id);
-  }),
+  selectWhatsappChannel: base
+    .input(z.object({ id: z.number().int().positive().nullable() }))
+    .mutation(async ({ ctx, input }) => {
+      assertBotManager(ctx.user);
+      await assertPrivateConnectionAccess(ctx.user, ctx.studioId);
+      await accessBot(ctx.user);
+      return bindBotChannel(ctx.studioId, input.id);
+    }),
   // Old clients must not create a second, independent set of credentials.
-  saveMetaWhatsapp: base.input(metaCredentialsSchema).mutation(async({ctx})=>{
+  saveMetaWhatsapp: base
+    .input(metaCredentialsSchema)
+    .mutation(async ({ ctx }) => {
+      assertBotManager(ctx.user);
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "Atualize a página e configure o WhatsApp em Canais conectados.",
+      });
+    }),
+  saveWhatsapp: base.input(waCredentialsSchema).mutation(async ({ ctx }) => {
     assertBotManager(ctx.user);
-    throw new TRPCError({code:"BAD_REQUEST",message:"Atualize a página e configure o WhatsApp em Canais conectados."});
-  }),
-  saveWhatsapp: base.input(waCredentialsSchema).mutation(async({ctx})=>{
-    assertBotManager(ctx.user);
-    throw new TRPCError({code:"BAD_REQUEST",message:"Atualize a página e configure o WhatsApp em Canais conectados."});
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Atualize a página e configure o WhatsApp em Canais conectados.",
+    });
   }),
   qr: base.mutation(async ({ ctx }) => {
     assertBotManager(ctx.user);
-    await assertPrivateConnectionAccess(ctx.user,ctx.studioId);
+    await assertPrivateConnectionAccess(ctx.user, ctx.studioId);
     const a = await accessBot(ctx.user);
     try {
       return await getBotQr(a.settings);
@@ -708,11 +826,20 @@ export const nativeBotRouter = router({
   }),
   verifyWhatsapp: base.mutation(async ({ ctx }) => {
     assertBotManager(ctx.user);
-    await assertPrivateConnectionAccess(ctx.user,ctx.studioId);
+    await assertPrivateConnectionAccess(ctx.user, ctx.studioId);
     const a = await accessBot(ctx.user);
-    if(a.settings.wa_integration_id) {
-      const result=await verifyChannel(ctx.studioId,a.settings.wa_integration_id,true);
-      return {connected:result.success,webhookReady:!!result.webhookReady};
+    if (isQrBot(a.settings))
+      return {
+        connected: a.settings.wa_status === "connected",
+        webhookReady: !!a.settings.webhook_ready,
+      };
+    if (a.settings.wa_integration_id) {
+      const result = await verifyChannel(
+        ctx.studioId,
+        a.settings.wa_integration_id,
+        true
+      );
+      return { connected: result.success, webhookReady: !!result.webhookReady };
     }
     try {
       if (isMetaBot(a.settings)) {
@@ -772,9 +899,14 @@ export const nativeBotRouter = router({
   }),
   removeWhatsapp: base.mutation(async ({ ctx }) => {
     assertBotManager(ctx.user);
-    await assertPrivateConnectionAccess(ctx.user,ctx.studioId);
-    const shared=await settings(ctx.studioId);
-    if(shared.wa_integration_id) return bindBotChannel(ctx.studioId,null);
+    await assertPrivateConnectionAccess(ctx.user, ctx.studioId);
+    const shared = await settings(ctx.studioId);
+    if (isQrBot(shared)) {
+      const { disconnectQr } = await import("../nativeBot/qr");
+      await disconnectQr(ctx.studioId);
+      return { ok: true };
+    }
+    if (shared.wa_integration_id) return bindBotChannel(ctx.studioId, null);
     await accessBot(ctx.user);
     await exec(
       "UPDATE tatuei_bot_settings SET wa_secret=NULL,wa_instance=NULL,wa_status='unconfigured',wa_phone=NULL,webhook_key=NULL,webhook_ready=0 WHERE studio_id=?",

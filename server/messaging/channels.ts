@@ -338,7 +338,8 @@ export async function bindBotChannel(studioId: number, id: number | null) {
       c
     );
     if (!s) throw fail("O módulo de conexões ainda não está pronto.");
-    if (s.wa_integration_id === id) return { ok: true };
+    if (s.wa_integration_id === id && !s.wa_instance?.startsWith("qr:"))
+      return { ok: true };
     if (id) {
       const row = await channelById(studioId, id, c);
       if (row.provider === "botconversa")
@@ -347,6 +348,10 @@ export async function bindBotChannel(studioId: number, id: number | null) {
         );
       if (!channelBotSettings(s, row).wa_secret)
         throw fail("Complete as credenciais do canal antes de vinculá-lo.");
+    }
+    if (s.wa_instance?.startsWith("qr:")) {
+      const { disconnectQr } = await import("../nativeBot/qr");
+      await disconnectQr(studioId);
     }
     await c.beginTransaction();
     try {
@@ -382,6 +387,7 @@ export async function migrateLegacyBotChannels(c: BotConnection) {
     c
   );
   for (const s of legacy) {
+    if (s.wa_instance?.startsWith("qr:")) continue;
     let credentials: any;
     try {
       credentials = JSON.parse(openBotSecret(s.wa_secret!, s.studio_id));
