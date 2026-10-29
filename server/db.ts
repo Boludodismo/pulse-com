@@ -3,6 +3,7 @@ import {
   desc,
   and,
   gte,
+  gt,
   lte,
   or,
   like,
@@ -1840,6 +1841,7 @@ export async function getAppointmentsForWhatsAppReminder(
   if (!db) return [];
 
   const now = new Date();
+  if (daysBefore < 0) return [];
   // Calcular o dia alvo (hoje + daysBefore)
   const targetStart = new Date(
     now.getFullYear(),
@@ -1890,6 +1892,7 @@ export async function getAppointmentsForWhatsAppReminder(
     .where(
       and(
         gte(appointments.date, toLocalDateStr(targetStart)),
+        gt(appointments.date, toLocalDateStr(now)),
         lte(appointments.date, toLocalDateStr(targetEnd)),
         or(
           eq(appointments.status, "agendado"),
@@ -4939,7 +4942,12 @@ export async function getPendingRemindersToSend(): Promise<
     .where(
       and(
         eq(appointmentReminders.status, "pending"),
+        // Não recuperar lembretes vencidos de dias anteriores.
+        gte(appointmentReminders.scheduledAt, toLocalDateStr(new Date(new Date().setHours(0, 0, 0, 0)))),
         lte(appointmentReminders.scheduledAt, now),
+        // Somente consultas ainda futuras e válidas.
+        gt(appointments.date, now),
+        or(eq(appointments.status, "agendado"), eq(appointments.status, "confirmado"), eq(appointments.status, "reagendado")),
       ),
     )
     .orderBy(appointmentReminders.scheduledAt);
