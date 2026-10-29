@@ -1841,6 +1841,7 @@ export async function getAppointmentsForWhatsAppReminder(
   if (!db) return [];
 
   const now = new Date();
+  if (daysBefore < 0) return [];
   // Calcular o dia alvo (hoje + daysBefore)
   const targetStart = new Date(
     now.getFullYear(),
@@ -1891,6 +1892,7 @@ export async function getAppointmentsForWhatsAppReminder(
     .where(
       and(
         gte(appointments.date, toLocalDateStr(targetStart)),
+        gt(appointments.date, toLocalDateStr(now)),
         lte(appointments.date, toLocalDateStr(targetEnd)),
         or(
           eq(appointments.status, "agendado"),
