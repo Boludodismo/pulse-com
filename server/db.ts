@@ -4939,7 +4939,12 @@ export async function getPendingRemindersToSend(): Promise<
     .where(
       and(
         eq(appointmentReminders.status, "pending"),
+        // Não recuperar lembretes vencidos de dias anteriores.
+        gte(appointmentReminders.scheduledAt, toLocalDateStr(new Date(new Date().setHours(0, 0, 0, 0)))),
         lte(appointmentReminders.scheduledAt, now),
+        // Somente consultas ainda futuras e válidas.
+        gt(appointments.date, now),
+        or(eq(appointments.status, "agendado"), eq(appointments.status, "confirmado"), eq(appointments.status, "reagendado")),
       ),
     )
     .orderBy(appointmentReminders.scheduledAt);
