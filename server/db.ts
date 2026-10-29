@@ -3,6 +3,7 @@ import {
   desc,
   and,
   gte,
+  gt,
   lte,
   or,
   like,
