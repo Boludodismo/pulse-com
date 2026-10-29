@@ -1,15 +1,37 @@
-// Preconfigured storage helpers for Manus WebDev templates
-// Uses the Biz-provided storage proxy (Authorization: Bearer <token>)
+// Storage helpers for Manus proxy and standalone S3-compatible providers.
 
-import { ENV } from './_core/env';
+import { createHmac, timingSafeEqual, randomUUID } from "crypto";
+import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { ENV } from "./_core/env";
 
-type StorageConfig = { baseUrl: string; apiKey: string };
+type ManusStorageConfig = { baseUrl: string; apiKey: string };
 
-function getStorageConfig(): StorageConfig {
-  if (ENV.storageProvider === "disabled") {
-    throw new Error("Storage is disabled (STORAGE_PROVIDER=disabled)");
+function ensureSecretConfigured() {
+  if (!ENV.cookieSecret) {
+    throw new Error("JWT_SECRET is required for secure storage links");
   }
+}
 
+function storageToken(key: string): string {
+  ensureSecretConfigured();
+  return createHmac("sha256", ENV.cookieSecret).update(normalizeKey(key)).digest("hex");
+}
+
+export function verifyStorageAccessToken(key: string, token: string): boolean {
+  if (!ENV.cookieSecret || !key || !token) return false;
+  const expected = Buffer.from(storageToken(key), "utf8");
+  const received = Buffer.from(token, "utf8");
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
+function buildStableProxyUrl(key: string): string {
+  const normalized = normalizeKey(key);
+  const query = `key=${encodeURIComponent(normalized)}&token=${encodeURIComponent(storageToken(normalized))}`;
+  return `${ENV.appBaseUrl || ""}/api/storage?${query}`;
+}
+
+function getManusStorageConfig(): ManusStorageConfig {
   const baseUrl = ENV.forgeApiUrl;
   const apiKey = ENV.forgeApiKey;
 
@@ -22,13 +44,37 @@ function getStorageConfig(): StorageConfig {
   return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
 }
 
+let s3Client: S3Client | null = null;
+
+function getS3Config() {
+  if (!ENV.s3Endpoint || !ENV.s3AccessKeyId || !ENV.s3SecretAccessKey || !ENV.s3Bucket) {
+    throw new Error(
+      "S3 storage credentials missing: set AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_S3_BUCKET_NAME"
+    );
+  }
+
+  if (!s3Client) {
+    s3Client = new S3Client({
+      region: ENV.s3Region || "auto",
+      endpoint: ENV.s3Endpoint,
+      forcePathStyle: ENV.s3UrlStyle === "path",
+      credentials: {
+        accessKeyId: ENV.s3AccessKeyId,
+        secretAccessKey: ENV.s3SecretAccessKey,
+      },
+    });
+  }
+
+  return { client: s3Client, bucket: ENV.s3Bucket };
+}
+
 function buildUploadUrl(baseUrl: string, relKey: string): URL {
   const url = new URL("v1/storage/upload", ensureTrailingSlash(baseUrl));
   url.searchParams.set("path", normalizeKey(relKey));
   return url;
 }
 
-async function buildDownloadUrl(
+async function buildManusDownloadUrl(
   baseUrl: string,
   relKey: string,
   apiKey: string
@@ -42,6 +88,10 @@ async function buildDownloadUrl(
     method: "GET",
     headers: buildAuthHeaders(apiKey),
   });
+  if (!response.ok) {
+    const message = await response.text().catch(() => response.statusText);
+    throw new Error(`Storage download URL failed (${response.status}): ${message}`);
+  }
   return (await response.json()).url;
 }
 
@@ -76,12 +126,31 @@ export async function storagePut(
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream"
 ): Promise<{ key: string; url: string }> {
+  const key = normalizeKey(relKey);
+
   if (ENV.storageProvider === "disabled") {
     console.warn("[Storage] Upload skipped - storage is disabled");
-    return { key: relKey, url: "" };
+    return { key, url: "" };
   }
-  const { baseUrl, apiKey } = getStorageConfig();
-  const key = normalizeKey(relKey);
+
+  if (ENV.storageProvider === "s3") {
+    const { client, bucket } = getS3Config();
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: data,
+        ContentType: contentType,
+      })
+    );
+    return { key, url: buildStableProxyUrl(key) };
+  }
+
+  if (ENV.storageProvider !== "manus") {
+    throw new Error(`Unsupported STORAGE_PROVIDER: ${ENV.storageProvider}`);
+  }
+
+  const { baseUrl, apiKey } = getManusStorageConfig();
   const uploadUrl = buildUploadUrl(baseUrl, key);
   const formData = toFormData(data, contentType, key.split("/").pop() ?? key);
   const response = await fetch(uploadUrl, {
@@ -100,15 +169,47 @@ export async function storagePut(
   return { key, url };
 }
 
-export async function storageGet(relKey: string): Promise<{ key: string; url: string; }> {
+export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
+  const key = normalizeKey(relKey);
+
   if (ENV.storageProvider === "disabled") {
     console.warn("[Storage] Download skipped - storage is disabled");
-    return { key: relKey, url: "" };
+    return { key, url: "" };
   }
-  const { baseUrl, apiKey } = getStorageConfig();
-  const key = normalizeKey(relKey);
+
+  if (ENV.storageProvider === "s3") {
+    const { client, bucket } = getS3Config();
+    const url = await getSignedUrl(
+      client,
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+      { expiresIn: 300 }
+    );
+    return { key, url };
+  }
+
+  if (ENV.storageProvider !== "manus") {
+    throw new Error(`Unsupported STORAGE_PROVIDER: ${ENV.storageProvider}`);
+  }
+
+  const { baseUrl, apiKey } = getManusStorageConfig();
   return {
     key,
-    url: await buildDownloadUrl(baseUrl, key, apiKey),
+    url: await buildManusDownloadUrl(baseUrl, key, apiKey),
   };
+}
+
+// Fail startup before receiving traffic if the dedicated bucket is misconfigured.
+export async function checkS3Storage(): Promise<void> {
+  if (ENV.storageProvider !== "s3") throw new Error("S3 is required for storage validation");
+  ensureSecretConfigured();
+  const { client, bucket } = getS3Config();
+  const key = `_healthcheck/${randomUUID()}.txt`;
+  const marker = `crm-storage-check:${randomUUID()}`;
+  await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: marker, ContentType: "text/plain" }));
+  try {
+    const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (await result.Body?.transformToString() !== marker) throw new Error("S3 read verification failed");
+  } finally {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+  }
 }

@@ -5,6 +5,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerLocalAuthRoutes, ensureLocalAdmin } from "./localAuth";
 import { ENV } from "./env";
+import { storageGet, verifyStorageAccessToken, checkS3Storage } from "../storage";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -16,6 +17,10 @@ import { normalizePublicBaseUrl } from "@shared/const";
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  if (process.env.STORAGE_STARTUP_CHECK === "true") {
+    await checkS3Storage();
+    console.log("[Storage] S3 write/read/delete check passed");
+  }
   try {
     const updated = await db.backfillAnamneseSubmissionRisks();
     if (updated > 0) console.log(`[Anamnese] ${updated} ficha(s) antiga(s) classificada(s).`);
@@ -28,6 +33,24 @@ async function startServer() {
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  // Stable proxy for private S3-compatible storage objects.
+  // The URL contains an HMAC token, so files remain private without storing expiring URLs in the DB.
+  app.get("/api/storage", async (req, res) => {
+    try {
+      const key = typeof req.query.key === "string" ? req.query.key : "";
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      if (!key || !token || !verifyStorageAccessToken(key, token)) {
+        return res.status(403).json({ error: "Acesso ao arquivo não autorizado." });
+      }
+
+      const { url } = await storageGet(key);
+      if (!url) return res.status(404).json({ error: "Arquivo indisponível." });
+      return res.redirect(302, url);
+    } catch (error) {
+      console.error("[Storage] Failed to serve object", error);
+      return res.status(404).json({ error: "Arquivo não encontrado." });
+    }
+  });
   // Auth routes based on AUTH_MODE
   if (ENV.authMode === "local") {
     console.log("[Auth] Using local authentication mode");
